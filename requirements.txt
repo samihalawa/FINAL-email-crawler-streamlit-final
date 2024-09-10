@@ -1,2 +1,16 @@
 streamlit
+pandas
+asyncio
+fake-useragent
+beautifulsoup4
+googlesearch-python
+boto3
 openai
+requests
+urllib3
+numpy
+scikit-learn
+python-dotenv
+aiohttp
+sqlalchemy
+psycopg2-binary
