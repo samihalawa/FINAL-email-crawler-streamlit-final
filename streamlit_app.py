@@ -22,7 +22,7 @@ import random
 import plotly.express as px
 from dotenv import load_dotenv
 
-# load_dotenv()  # Load environment variables from .env file  # Undefined function
+load_dotenv()  # Load environment variables from .env file
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -71,7 +71,7 @@ try:
     logging.basicConfig(level=logging.INFO, filename='app.log', filemode='a',
                         format='%(asctime)s - %(levelname)s - %(message)s')
 except IOError as e:
-#     print(f"Error setting up logging: {e}")  # Undefined function
+    print(f"Error setting up logging: {e}")
     raise
 
 # Input validation functions
@@ -280,7 +280,7 @@ sqlite_db_path = "autoclient.db"
 # Ensure the database file exists
 try:
     if not os.path.exists(sqlite_db_path):
-#         open(sqlite_db_path, 'w').close()  # Undefined function
+        open(sqlite_db_path, 'w').close()
 except IOError as e:
     logging.error(f"Failed to create database file: {e}")
     raise
@@ -296,6 +296,7 @@ except (NoCredentialsError, PartialCredentialsError) as e:
     raise
 
 # SQLite connection
+def get_db_connection():
     conn = sqlite3.connect(sqlite_db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
@@ -310,25 +311,29 @@ try:
     logging.basicConfig(level=logging.INFO, filename='app.log', filemode='a',
                         format='%(asctime)s - %(levelname)s - %(message)s')
 except IOError as e:
-#     print(f"Error setting up logging: {e}")  # Undefined function
+    print(f"Error setting up logging: {e}")
     raise
 
 # Input validation functions
+def validate_name(name):
     if not name or not name.strip():
         raise ValueError("Name cannot be empty or just whitespace")
     if len(name) > 100:
         raise ValueError("Name is too long (max 100 characters)")
     return name.strip()
 
+def validate_email(email):
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
         raise ValueError("Invalid email address")
     return email
 
+def validate_campaign_type(campaign_type):
     valid_types = ["Email", "SMS"]
     if campaign_type not in valid_types:
         raise ValueError(f"Invalid campaign type. Must be one of {valid_types}")
     return campaign_type
 
+def validate_id(id_value, id_type):
     try:
         id_int = int(id_value.split(':')[0] if ':' in str(id_value) else id_value)
         if id_int <= 0:
@@ -337,10 +342,12 @@ except IOError as e:
     except (ValueError, AttributeError):
         raise ValueError(f"Invalid {id_type} ID")
 
+def validate_status(status, valid_statuses):
     if status not in valid_statuses:
         raise ValueError(f"Invalid status. Must be one of {valid_statuses}")
     return status
 
+def validate_num_results(num_results):
     if not isinstance(num_results, int) or num_results < 0:
         raise ValueError("Invalid number of results")
     return num_results
@@ -668,7 +675,7 @@ def manual_search_wrapper(term, num_results, campaign_id, search_type="All Leads
                 break
 
         # Update the processed_leads count for this search term
-#         update_processed_leads_count(term_id, len(results))  # Undefined function
+        update_processed_leads_count(term_id, len(results))
         time.sleep(random.uniform(30, 60))  # Longer delay between search terms
     except Exception as e:
         log_message = f"Error in manual search: {e}"
@@ -714,14 +721,15 @@ def add_search_term(term, campaign_id):
         if conn:
             conn.close()
 
+def manual_search_wrapper(term, num_results, campaign_id, search_type="All Leads"):
     results = []
     ua = UserAgent()
     session = create_session()
     
     try:
-#         print(f"Starting search for term: {term}")  # Undefined function
+        print(f"Starting search for term: {term}")
         search_urls = list(search(term, num=num_results, stop=num_results, pause=2))
-#         print(f"Found {len(search_urls)} URLs")  # Undefined function
+        print(f"Found {len(search_urls)} URLs")
         
         # Add the search term to the database and get its ID
         term_id = add_search_term(term, campaign_id)
@@ -730,7 +738,7 @@ def add_search_term(term, campaign_id):
         
         for url in search_urls:
             try:
-#                 print(f"Processing URL: {url}")  # Undefined function
+                print(f"Processing URL: {url}")
                 headers = {
                     'User-Agent': ua.random,
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -757,21 +765,21 @@ def add_search_term(term, campaign_id):
                 
                 time.sleep(random.uniform(1, 3))  # Random delay between requests
             except requests.exceptions.RequestException as e:
-#                 print(f"Error processing {url}: {e}")  # Undefined function
+                print(f"Error processing {url}: {e}")
             except Exception as e:
-#                 print(f"Unexpected error processing {url}: {e}")  # Undefined function
+                print(f"Unexpected error processing {url}: {e}")
             
             if len(results) >= num_results:
                 break
         
         # Update the processed_leads count for this search term
-#         update_processed_leads_count(term_id, len(results))  # Undefined function
+        update_processed_leads_count(term_id, len(results))
         
         time.sleep(random.uniform(30, 60))  # Longer delay between search terms
     except Exception as e:
-#         print(f"Error in manual search: {e}")  # Undefined function
+        print(f"Error in manual search: {e}")
     
-#     print(f"Search completed. Found {len(results)} results.")  # Undefined function
+    print(f"Search completed. Found {len(results)} results.")
     return results[:num_results]
 
 def update_processed_leads_count(term_id, count):
@@ -792,6 +800,7 @@ def update_processed_leads_count(term_id, count):
             conn.close()
 
 
+def update_processed_leads_count(term_id, count):
     conn = None
     try:
         conn = get_db_connection()
@@ -1169,18 +1178,18 @@ async def bulk_send(template_id, from_email, reply_to, leads):
                 ReplyToAddresses=[reply_to]
             )
             message_id = response['MessageId']
-#             save_message(lead_id, template_id, 'sent', datetime.now(), subject, message_id, body_content)  # Undefined function
+            save_message(lead_id, template_id, 'sent', datetime.now(), subject, message_id, body_content)
             total_sent += 1
             logs.append(f"[{index}/{total_leads}] Sent email to {email} - Subject: {subject} - MessageId: {message_id}")
         except ClientError as e:
             error_code = e.response['Error']['Code']
             error_message = e.response['Error']['Message']
             logging.error(f"Failed to send email to {email}: {error_code} - {error_message}")
-#             save_message(lead_id, template_id, 'failed', None, subject)  # Undefined function
+            save_message(lead_id, template_id, 'failed', None, subject)
             logs.append(f"[{index}/{total_leads}] Failed to send email to {email}: {error_code} - {error_message}")
         except Exception as e:
             logging.error(f"Unexpected error sending email to {email}: {str(e)}")
-#             save_message(lead_id, template_id, 'failed', None, subject)  # Undefined function
+            save_message(lead_id, template_id, 'failed', None, subject)
             logs.append(f"[{index}/{total_leads}] Unexpected error sending email to {email}: {str(e)}")
         
         await asyncio.sleep(0.1)  # Small delay to allow UI updates
@@ -1320,6 +1329,7 @@ def fetch_leads_for_bulk_send(template_id, send_option, filter_option, selected_
     
     return leads
 
+def fetch_leads_for_bulk_send(template_id, send_option, filter_option):
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -1462,14 +1472,15 @@ def extract_visible_text(soup):
     return text
 
 
+def manual_search_wrapper(term, num_results, campaign_id, search_type="All Leads"):
     results = []
     try:
-#         print(f"Starting search for term: {term}")  # Undefined function
+        print(f"Starting search for term: {term}")
         search_urls = list(search(term, num=num_results, stop=num_results, pause=2))
-#         print(f"Found {len(search_urls)} URLs")  # Undefined function
+        print(f"Found {len(search_urls)} URLs")
         for url in search_urls:
             try:
-#                 print(f"Processing URL: {url}")  # Undefined function
+                print(f"Processing URL: {url}")
                 response = session.get(url, timeout=10)
                 response.encoding = 'utf-8'
                 soup = BeautifulSoup(response.text, 'html.parser')
@@ -1485,7 +1496,7 @@ def extract_visible_text(soup):
                 
                 content = extract_visible_text(soup)
                 
-#                 print(f"Found {len(emails)} emails and {len(phone_numbers)} phone numbers on {url}")  # Undefined function
+                print(f"Found {len(emails)} emails and {len(phone_numbers)} phone numbers on {url}")
                 
                 for email in emails:
                     if is_valid_email(email):
@@ -1498,24 +1509,25 @@ def extract_visible_text(soup):
                         if search_type == "All Leads" or (search_type == "Exclude Probable Blogs/Directories" and "blog-directory" not in tags):
                             lead_id = save_lead(email, phone_numbers[0] if phone_numbers else None, None, None, None, None)
                             save_lead_source(lead_id, campaign_id, url, title, meta_description, response.status_code, 
-#                                              str(response.elapsed), meta_tags, phone_numbers, content, tags)  # Undefined function
+                                             str(response.elapsed), meta_tags, phone_numbers, content, tags)
                             results.append([email, url, title, meta_description, tags])
-#                             print(f"Valid email found: {email}")  # Undefined function
+                            print(f"Valid email found: {email}")
                 
                 if len(results) >= num_results:
                     break
             except Exception as e:
                 logging.error(f"Error processing {url}: {e}")
-#                 print(f"Error processing {url}: {e}")  # Undefined function
+                print(f"Error processing {url}: {e}")
     except Exception as e:
         logging.error(f"Error in manual search: {e}")
-#         print(f"Error in manual search: {e}")  # Undefined function
+        print(f"Error in manual search: {e}")
     
-#     print(f"Search completed. Found {len(results)} results.")  # Undefined function
+    print(f"Search completed. Found {len(results)} results.")
     return results[:num_results]
 
 
 # Update save_lead function to be more resilient
+def save_lead(email, phone, first_name, last_name, company, job_title):
     try:
         email = validate_email(email)
         conn = get_db_connection()
@@ -1526,7 +1538,7 @@ def extract_visible_text(soup):
         
         if existing_lead:
             lead_id = existing_lead['id']
-#             print(f"Existing lead found for email {email} with ID {lead_id}")  # Undefined function
+            print(f"Existing lead found for email {email} with ID {lead_id}")
             cursor.execute("""
                 UPDATE leads
                 SET phone = COALESCE(?, phone),
@@ -1536,26 +1548,27 @@ def extract_visible_text(soup):
                     job_title = COALESCE(?, job_title)
                 WHERE id = ?
             """, (phone, first_name, last_name, company, job_title, lead_id))
-#             print(f"Updated existing lead with ID {lead_id}")  # Undefined function
+            print(f"Updated existing lead with ID {lead_id}")
         else:
             cursor.execute("""
                 INSERT INTO leads (email, phone, first_name, last_name, company, job_title)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (email, phone, first_name, last_name, company, job_title))
             lead_id = cursor.lastrowid
-#             print(f"New lead created for email {email} with ID {lead_id}")  # Undefined function
+            print(f"New lead created for email {email} with ID {lead_id}")
         
         conn.commit()
         conn.close()
         return lead_id
     except Exception as e:
-#         print(f"Error saving lead: {e}")  # Undefined function
+        print(f"Error saving lead: {e}")
         return None
 
 # Update save_lead_source function to be more resilient
+def save_lead_source(lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration, meta_tags, phone_numbers, content, tags):
     try:
         if lead_id is None:
-#             print("Cannot save lead source: lead_id is None")  # Undefined function
+            print("Cannot save lead source: lead_id is None")
             return
         
         lead_id = validate_id(lead_id, "lead")
@@ -1568,11 +1581,12 @@ def extract_visible_text(soup):
         """, (lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration, json.dumps(meta_tags), json.dumps(phone_numbers), content, json.dumps(tags)))
         conn.commit()
         conn.close()
-#         print(f"Lead source saved for lead ID {lead_id}")  # Undefined function
+        print(f"Lead source saved for lead ID {lead_id}")
     except Exception as e:
-#         print(f"Error saving lead source: {e}")  # Undefined function
+        print(f"Error saving lead source: {e}")
         
 # Update the update_search_term_status function to handle term as string
+def update_search_term_status(search_term_id, new_status, processed_leads=None):
     new_status = validate_status(new_status, ["pending", "completed"])
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1593,14 +1607,15 @@ def extract_visible_text(soup):
     conn.close()
 
 # Update the manual_search_wrapper function
+def manual_search_wrapper(term, num_results, campaign_id, search_type="All Leads"):
     results = []
     try:
-#         print(f"Starting search for term: {term}")  # Undefined function
+        print(f"Starting search for term: {term}")
         search_urls = list(search(term, num=num_results, stop=num_results, pause=2))
-#         print(f"Found {len(search_urls)} URLs")  # Undefined function
+        print(f"Found {len(search_urls)} URLs")
         for url in search_urls:
             try:
-#                 print(f"Processing URL: {url}")  # Undefined function
+                print(f"Processing URL: {url}")
                 response = session.get(url, timeout=10)
                 response.encoding = 'utf-8'
                 soup = BeautifulSoup(response.text, 'html.parser')
@@ -1616,7 +1631,7 @@ def extract_visible_text(soup):
                 
                 content = extract_visible_text(soup)
                 
-#                 print(f"Found {len(emails)} emails and {len(phone_numbers)} phone numbers on {url}")  # Undefined function
+                print(f"Found {len(emails)} emails and {len(phone_numbers)} phone numbers on {url}")
                 
                 for email in emails:
                     if is_valid_email(email):
@@ -1629,20 +1644,20 @@ def extract_visible_text(soup):
                         if search_type == "All Leads" or (search_type == "Exclude Probable Blogs/Directories" and "blog-directory" not in tags):
                             lead_id = save_lead(email, phone_numbers[0] if phone_numbers else None, None, None, None, None)
                             save_lead_source(lead_id, campaign_id, url, title, meta_description, response.status_code, 
-#                                              str(response.elapsed), meta_tags, phone_numbers, content, tags)  # Undefined function
+                                             str(response.elapsed), meta_tags, phone_numbers, content, tags)
                             results.append([email, url, title, meta_description, tags])
-#                             print(f"Valid email found: {email}")  # Undefined function
+                            print(f"Valid email found: {email}")
                 
                 if len(results) >= num_results:
                     break
             except Exception as e:
                 logging.error(f"Error processing {url}: {e}")
-#                 print(f"Error processing {url}: {e}")  # Undefined function
+                print(f"Error processing {url}: {e}")
     except Exception as e:
         logging.error(f"Error in manual search: {e}")
-#         print(f"Error in manual search: {e}")  # Undefined function
+        print(f"Error in manual search: {e}")
     
-#     print(f"Search completed. Found {len(results)} results.")  # Undefined function
+    print(f"Search completed. Found {len(results)} results.")
     return results[:num_results]
 # Function to fetch leads
 def fetch_leads():
@@ -1781,12 +1796,12 @@ def search_terms():
     view_option = st.radio("Select View", ["Basic List", "Search Term Groups"])
     
     # Display statistics
-#     display_search_term_statistics()  # Undefined function
+    display_search_term_statistics()
     
     if view_option == "Basic List":
-#         display_basic_search_terms_list()  # Undefined function
+        display_basic_search_terms_list()
     else:
-#         display_search_term_groups()  # Undefined function
+        display_search_term_groups()
 
 # New function to display search term statistics
 def display_search_term_statistics():
@@ -1824,7 +1839,7 @@ def prune_empty_search_terms():
             SELECT DISTINCT search_term_id
             FROM lead_sources
         )
-    """,)
+    """)
     
     pruned_count = cursor.rowcount
     conn.commit()
@@ -1864,7 +1879,7 @@ def display_search_term_groups():
             
             # Delete group button
             if st.button(f"Delete Group {group['id']}"):
-#                 delete_search_term_group(group['id'])  # Undefined function
+                delete_search_term_group(group['id'])
                 st.success(f"Group {group['id']} deleted successfully.")
                 st.rerun()
     
@@ -1885,10 +1900,11 @@ def display_search_term_groups():
             st.error("Please provide a new group name or select an existing group.")
             return
         
-#         assign_terms_to_group(selected_terms, group_id)  # Undefined function
+        assign_terms_to_group(selected_terms, group_id)
         st.success(f"Assigned {len(selected_terms)} terms to the group.")
         st.rerun()
 # Function to fetch leads
+def fetch_leads():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
@@ -1907,6 +1923,7 @@ def display_search_term_groups():
                                        "Phone Numbers", "Content", "Tags"])
 
 # Add this function to fetch search terms for a specific campaign
+def fetch_search_terms_for_campaign(campaign_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('SELECT id, term FROM search_terms WHERE campaign_id = ?', (campaign_id,))
@@ -1915,6 +1932,7 @@ def display_search_term_groups():
     return [{"name": f"{term['id']}: {term['term']}", "value": str(term['id'])} for term in terms]
 
 # Update the manual_search_multiple function
+def manual_search_multiple(terms, num_results, campaign_id):
     all_results = []
     for term in terms:
         if term.strip():  # Only process non-empty terms
@@ -1923,6 +1941,7 @@ def display_search_term_groups():
     return all_results
 
 # New function to get least searched terms
+def get_least_searched_terms(n):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
@@ -1936,6 +1955,7 @@ def display_search_term_groups():
     return terms
 
 # Streamlit app
+def get_knowledge_base(project_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM knowledge_base WHERE project_id = ?", (project_id,))
@@ -1943,6 +1963,7 @@ def display_search_term_groups():
     conn.close()
     return knowledge
 
+def update_knowledge_base(project_id, data):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -1957,6 +1978,7 @@ def display_search_term_groups():
     conn.commit()
     conn.close()
 
+def knowledge_base_view():
     st.header("Knowledge Base")
     
     projects = fetch_projects()
@@ -2041,7 +2063,6 @@ client = OpenAI(
 )
 
     # At the beginning of your script, add:
-    pass  # Placeholder block to prevent indentation error
 ai_request_logs = []
 
 def autoclient_ai_view():
@@ -2056,16 +2077,16 @@ def autoclient_ai_view():
     tab1, tab2, tab3, tab4 = st.tabs(["Optimize Existing Groups", "Create New Groups", "Adjust Email Templates", "Optimize Search Terms"])
 
     with tab1:
-#         optimize_existing_groups()  # Undefined function
+        optimize_existing_groups()
 
     with tab2:
-#         create_new_groups()  # Undefined function
+        create_new_groups()
 
     with tab3:
-#         adjust_email_template()  # Undefined function
+        adjust_email_template()
 
     with tab4:
-#         optimize_search_terms()  # Undefined function
+        optimize_search_terms()
 
     # Display AI request logs
     if ai_request_logs:
@@ -2097,7 +2118,7 @@ def optimize_existing_groups():
                     optimized_data[category] = new_terms.split("\n")
 
                 if st.button("Save Optimized Group"):
-#                     save_optimized_group(selected_group, optimized_data)  # Undefined function
+                    save_optimized_group(selected_group, optimized_data)
                     st.success("Group optimized and saved successfully!")
             except Exception as e:
                 st.error(f"An error occurred during optimization: {str(e)}")
@@ -2119,7 +2140,7 @@ def create_new_groups():
         
         try:
             group_id = create_search_term_group(group_name, group_description)
-#             assign_terms_to_group(terms_list, group_id)  # Undefined function
+            assign_terms_to_group(terms_list, group_id)
             st.success(f"Group '{group_name}' created successfully with {len(terms_list)} terms.")
         except Exception as e:
             st.error(f"An error occurred while creating the group: {str(e)}")
@@ -2145,7 +2166,7 @@ def adjust_email_template():
         
         if st.button("Save Adjusted Template"):
             try:
-#                 save_adjusted_template(selected_template.split(':')[0], new_subject, new_content)  # Undefined function
+                save_adjusted_template(selected_template.split(':')[0], new_subject, new_content)
                 st.success("Template adjusted and saved successfully!")
             except Exception as e:
                 st.error(f"An error occurred while saving the template: {str(e)}")
@@ -2169,7 +2190,7 @@ def optimize_search_terms():
                 st.write("\n".join(optimized_terms))
                 
                 if st.button("Save Optimized Terms"):
-#                     save_optimized_search_terms(optimized_terms)  # Undefined function
+                    save_optimized_search_terms(optimized_terms)
                     st.success("Optimized search terms saved successfully!")
             except Exception as e:
                 st.error(f"An error occurred during optimization: {str(e)}")
@@ -2178,7 +2199,6 @@ def optimize_search_terms():
 def classify_search_terms(search_terms, kb_info):
     prompt = f"""
     As an expert in lead generation and email marketing, classify the following search terms into strategic groups:
-    pass  # Placeholder block to prevent indentation error
 
     Search Terms: {', '.join(search_terms)}
 
@@ -2198,13 +2218,12 @@ def classify_search_terms(search_terms, kb_info):
         ]
     )
 
-#     log_ai_request("classify_search_terms", prompt, response.choices[0].message.content)  # Undefined function
+    log_ai_request("classify_search_terms", prompt, response.choices[0].message.content)
     return eval(response.choices[0].message.content)
 
 def generate_email_template(terms, kb_info):
     prompt = f"""
     Create an email template for the following search terms:
-    pass  # Placeholder block to prevent indentation error
 
     Search Terms: {', '.join(terms)}
 
@@ -2230,13 +2249,12 @@ def generate_email_template(terms, kb_info):
         ]
     )
 
-#     log_ai_request("generate_email_template", prompt, response.choices[0].message.content)  # Undefined function
+    log_ai_request("generate_email_template", prompt, response.choices[0].message.content)
     return response.choices[0].message.content
 
 def adjust_email_template_api(current_template, adjustment_prompt, kb_info):
     prompt = f"""
     Adjust the following email template based on the given instructions:
-    pass  # Placeholder block to prevent indentation error
 
     Current Template:
     {current_template}
@@ -2267,13 +2285,12 @@ def adjust_email_template_api(current_template, adjustment_prompt, kb_info):
         ]
     )
 
-#     log_ai_request("adjust_email_template_api", prompt, response.choices[0].message.content)  # Undefined function
+    log_ai_request("adjust_email_template_api", prompt, response.choices[0].message.content)
     return response.choices[0].message.content
 
 def generate_optimized_search_terms(current_terms, kb_info):
     prompt = f"""
     Optimize the following search terms for targeted email campaigns:
-    pass  # Placeholder block to prevent indentation error
 
     Current Terms: {', '.join(current_terms)}
 
@@ -2299,9 +2316,10 @@ def generate_optimized_search_terms(current_terms, kb_info):
         ]
     )
 
-#     log_ai_request("generate_optimized_search_terms", prompt, response.choices[0].message.content)  # Undefined function
+    log_ai_request("generate_optimized_search_terms", prompt, response.choices[0].message.content)
     return response.choices[0].message.content.split('\n')
 
+def fetch_search_term_groups():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM search_term_groups")
@@ -2380,7 +2398,7 @@ def get_knowledge_base_info():
                other_context, example_email
         FROM knowledge_base 
         ORDER BY id DESC LIMIT 1
-    """,)
+    """)
     result = cursor.fetchone()
     conn.close()
 
@@ -2433,7 +2451,7 @@ def get_random_leads(n, from_last):
         JOIN lead_sources ls ON l.id = ls.lead_id 
         JOIN search_terms st ON ls.search_term_id = st.id 
         ORDER BY l.id DESC LIMIT {from_last}
-    """,)
+    """)
     leads = cursor.fetchall()
     conn.close()
     return random.sample(leads, min(n, len(leads)))
@@ -2484,27 +2502,27 @@ def main():
 
     # Call appropriate function based on the selected page
     if st.session_state.current_page == "Manual Search":
-#         manual_search_page()  # Undefined function
+        manual_search_page()
     elif st.session_state.current_page == "Bulk Search":
-#         bulk_search_page()  # Undefined function
+        bulk_search_page()
     elif st.session_state.current_page == "Bulk Send":
         bulk_send_page()
     elif st.session_state.current_page == "View Leads":
-#         view_leads()  # Undefined function
+        view_leads()
     elif st.session_state.current_page == "Search Terms":
         search_terms()
     elif st.session_state.current_page == "Message Templates":
-#         message_templates()  # Undefined function
+        message_templates()
     elif st.session_state.current_page == "View Sent Messages":
         view_sent_messages()
     elif st.session_state.current_page == "Projects & Campaigns":
-#         projects_and_campaigns()  # Undefined function
+        projects_and_campaigns()
     elif st.session_state.current_page == "Knowledge Base":
         knowledge_base_view()
     elif st.session_state.current_page == "AutoclientAI":
         autoclient_ai_view()
     elif st.session_state.current_page == "Automation Control":
-#         automation_view()  # Undefined function
+        automation_view()
 
 def display_result_card(result, index):
     with st.container():
@@ -2718,6 +2736,7 @@ def bulk_search_page():
         st.metric("Unique Domains", len(set(result[0].split('@')[1] for result in st.session_state.bulk_search_results)))
         st.metric("Search Terms Processed", total_terms)
 
+def bulk_send_page():
     st.header("Bulk Send")
     
     templates = fetch_message_templates()
@@ -2782,6 +2801,7 @@ def bulk_search_page():
         
         st.success(f"Bulk send completed. Sent {len(leads_to_send)} emails.")
 
+def fetch_leads_for_bulk_send(template_id, send_option, filter_option, selected_groups=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -2826,18 +2846,17 @@ async def bulk_send(template_id, from_email, reply_to, leads):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute('SELECT name, subject, body_content FROM message_templates WHERE id = ?', (template_id,))
+    cursor.execute('SELECT subject, body_content FROM message_templates WHERE id = ?', (template_id,))
     template = cursor.fetchone()
     
     if not template:
         return "Template not found"
     
-    template_name, subject, body_content = template
+    subject, body_content = template
     
     total_leads = len(leads)
     logs = [
         f"Preparing to send emails to {total_leads} leads",
-        f"Template Name: {template_name}",
         f"Subject: {subject}",
         f"From Email: {from_email}",
         f"Reply To: {reply_to}"
@@ -2914,6 +2933,7 @@ def view_leads():
         mime="text/csv",
     )
 
+def search_terms():
     st.header("Search Terms")
     
     # Add a selector for different views
@@ -2923,10 +2943,11 @@ def view_leads():
     display_search_term_statistics()
     
     if view_option == "Basic List":
-#         display_basic_search_terms_list()  # Undefined function
+        display_basic_search_terms_list()
     else:
         display_search_term_groups()
 
+def display_search_term_statistics():
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -2950,6 +2971,7 @@ def view_leads():
         pruned_count = prune_empty_search_terms()
         st.success(f"Pruned {pruned_count} search terms with no associated leads.")
 
+def prune_empty_search_terms():
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -2959,7 +2981,7 @@ def view_leads():
             SELECT DISTINCT search_term_id
             FROM lead_sources
         )
-    """,)
+    """)
     
     pruned_count = cursor.rowcount
     conn.commit()
@@ -3010,7 +3032,7 @@ def display_basic_search_terms_list():
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("Confirm Delete"):
-#                     delete_search_term_and_leads(st.session_state.confirm_delete)  # Undefined function
+                    delete_search_term_and_leads(st.session_state.confirm_delete)
                     del st.session_state.confirm_delete
                     del st.session_state.leads_to_delete
                     st.session_state.search_terms = fetch_search_terms()
@@ -3020,6 +3042,7 @@ def display_basic_search_terms_list():
                     del st.session_state.confirm_delete
                     del st.session_state.leads_to_delete
 
+def display_search_term_groups():
     st.subheader("Search Term Groups")
     
     # Fetch search term groups data
@@ -3050,7 +3073,7 @@ def display_basic_search_terms_list():
             
             # Delete group button
             if st.button(f"Delete Group {group['id']}"):
-#                 delete_search_term_group(group['id'])  # Undefined function
+                delete_search_term_group(group['id'])
                 st.success(f"Group {group['id']} deleted successfully.")
                 st.rerun()
     
@@ -3071,7 +3094,7 @@ def display_basic_search_terms_list():
             st.error("Please provide a new group name or select an existing group.")
             return
         
-#         assign_terms_to_group(selected_terms, group_id)  # Undefined function
+        assign_terms_to_group(selected_terms, group_id)
         st.success(f"Assigned {len(selected_terms)} terms to the group.")
         st.rerun()
 
@@ -3103,6 +3126,7 @@ def message_templates():
         
         st.dataframe(pd.DataFrame(st.session_state.message_templates, columns=["Template"]), use_container_width=True)
 
+def view_sent_messages():
     st.header("View Sent Messages")
     
     if st.button("Refresh Sent Messages"):
@@ -3166,12 +3190,13 @@ def get_last_5_search_terms():
     SELECT term FROM search_terms
     ORDER BY id DESC
     LIMIT 5
-    """,)
+    """)
     terms = [row[0] for row in cursor.fetchall()]
     conn.close()
     return terms
 
 
+def fetch_leads():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
@@ -3237,7 +3262,7 @@ def automation_view():
         st.warning("Automation is currently **OFF**.")
     
     # Real-time analytics for automation process
-#     display_real_time_analytics()  # Undefined function
+    display_real_time_analytics()
 
     # Additional control buttons
     col1, col2, col3 = st.columns(3)
@@ -3289,7 +3314,6 @@ async def continuous_automation_process():
         logging.error(f"Error during automation process: {e}")
 
 # Make sure to add this function if it doesn't exist:
-    pass  # Placeholder block to prevent indentation error
 def display_real_time_analytics():
     st.subheader("Real-Time Analytics")
     
@@ -3390,7 +3414,7 @@ async def continuous_search_term_optimization():
 
     # Save optimized terms
     save_optimized_search_terms(optimized_terms)
-#     log_ai_request("Optimize Search Terms", current_terms, optimized_terms)  # Undefined function
+    log_ai_request("Optimize Search Terms", current_terms, optimized_terms)
 
 # Step 3: Email sending automation
 async def continuous_email_sending(sleep_interval=60):
@@ -3407,6 +3431,7 @@ async def continuous_email_sending(sleep_interval=60):
     await asyncio.sleep(sleep_interval)
 
 # AI-powered search term optimization
+def optimize_search_terms(current_terms, kb_info):
     prompt = f"""
     Optimize the following search terms for high-quality lead generation:
     Search Terms: {', '.join(current_terms)}
@@ -3418,7 +3443,7 @@ async def continuous_email_sending(sleep_interval=60):
         model="gpt-4", messages=[{"role": "user", "content": prompt}]
     )
     
-#     log_ai_request("Optimize Search Terms", prompt, response.choices[0].message.content)  # Undefined function
+    log_ai_request("Optimize Search Terms", prompt, response.choices[0].message.content)
     return response.choices[0].message.content.split('\n')
 
 # Save AI request logs
@@ -3428,6 +3453,7 @@ def log_ai_request(request_type, prompt, response):
     logging.info(log_entry)
 
 # Save optimized search terms
+def save_optimized_search_terms(optimized_terms):
     conn = get_db_connection()
     cursor = conn.cursor()
     for term in optimized_terms:
@@ -3441,7 +3467,7 @@ async def supervisor_check():
     ineffective_terms = get_ineffective_search_terms(threshold=0.3)  # Terms with <30% lead success
     for term in ineffective_terms:
         optimized_term = refine_search_term(term)
-#         update_search_term(term, optimized_term)  # Undefined function
+        update_search_term(term, optimized_term)
 
 def get_ineffective_search_terms(threshold):
     conn = get_db_connection()
@@ -3460,6 +3486,7 @@ def chatbot_style_logs(logs):
     for log in logs:
         st.markdown(f"**[{log['timestamp']}]** {log['message']}")
 
+def log_ai_request(request_type, prompt, response):
     log_entry = {"timestamp": datetime.now(), "message": f"{request_type}: {response}"}
     ai_request_logs.append(log_entry)
     logging.info(f"{request_type}: {response}")
@@ -3484,6 +3511,7 @@ def automation_control_panel():
     # Real-time analytics
     display_real_time_analytics()
 
+def display_real_time_analytics():
     total_leads = count_total_leads()
     leads_last_24h = count_leads_last_24_hours()
     emails_sent = count_emails_sent()
@@ -3506,7 +3534,7 @@ async def continuous_automation_process():
 
             # Search term optimization every 5 cycles
             if cycle_count % 5 == 0:
-#                 supervisor_check()  # Undefined function
+                supervisor_check()
 
             # Email sending step
             await continuous_email_sending()
