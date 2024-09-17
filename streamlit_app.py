@@ -54,9 +54,7 @@ except (NoCredentialsError, PartialCredentialsError) as e:
 # SQLite connection
 def get_db_connection():
     try:
-        conn = sqlite3.connect(sqlite_db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return sqlite3.connect(sqlite_db_path)
     except sqlite3.Error as e:
         logging.error(f"Database connection failed: {e}")
         raise
@@ -197,25 +195,9 @@ def init_db():
         FOREIGN KEY (template_id) REFERENCES message_templates (id)
     );
 
-    CREATE TABLE IF NOT EXISTS search_term_groups (
+    CREATE TABLE IF NOT EXISTS knowledge_base (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email_template TEXT,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS search_terms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    term TEXT NOT NULL,
-    group_id INTEGER,
-    category TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (group_id) REFERENCES search_term_groups (id)
-);
-
-CREATE TABLE IF NOT EXISTS knowledge_base (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER,
     kb_name TEXT,
     kb_bio TEXT,
     kb_values TEXT,
@@ -232,25 +214,21 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
     product_other TEXT,
     other_context TEXT,
     example_email TEXT,
+    complete_version TEXT,
+    medium_version TEXT,
+    small_version TEXT,
+    temporal_version TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects (id)
 );
-
-CREATE TABLE IF NOT EXISTS ai_request_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    function_name TEXT NOT NULL,
-    prompt TEXT NOT NULL,
-    response TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS optimized_search_terms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    term TEXT NOT NULL,
-    original_term_id INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (original_term_id) REFERENCES search_terms (id)
-);
+CREATE TABLE IF NOT EXISTS search_term_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        email_template TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
     ''')
     conn.commit()
     conn.close()
@@ -566,31 +544,6 @@ def fetch_campaigns():
     campaigns = cursor.fetchall()
     conn.close()
     return [f"{campaign[0]}: {campaign[1]}" for campaign in campaigns]
-
-
-def customize_email_content(body_content, lead_id):
-    # Fetch lead information
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT first_name, last_name, company
-        FROM leads
-        WHERE id = ?
-    """, (lead_id,))
-    lead_info = cursor.fetchone()
-    conn.close()
-
-    if lead_info:
-        first_name, last_name, company = lead_info
-        # Customize the content based on lead information
-        customized_content = body_content.replace('{first_name}', first_name or '')
-        customized_content = customized_content.replace('{last_name}', last_name or '')
-        customized_content = customized_content.replace('{company}', company or '')
-    else:
-        customized_content = body_content
-
-    return customized_content
-
 
 # Updated bulk search function
 async def bulk_search(num_results):
@@ -1305,16 +1258,16 @@ def knowledge_base_view():
 from openai import OpenAI
 
 # Initialize the OpenAI client
-client = OpenAI(api_key="sk-1234")
-client.base_url = "https://openai-proxy-kl3l.onrender.com"
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "sk-1234"))
+client.base_url = os.getenv("OPENAI_API_BASE", "https://openai-proxy-kl3l.onrender.com")
 
 import os
 from openai import OpenAI
 
 # Initialize the OpenAI client
 client = OpenAI(
-    api_key="sk-1234",
-    base_url="https://openai-proxy-kl3l.onrender.com"
+    api_key=os.getenv("OPENAI_API_KEY", "sk-1234"),
+    base_url=os.getenv("OPENAI_API_BASE", "https://openai-proxy-kl3l.onrender.com")
 )
 
 # The model to use
@@ -1325,32 +1278,13 @@ import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Initialize the OpenAI client
-client = OpenAI(
-    api_key="sk-1234",
-    base_url="https://openai-proxy-kl3l.onrender.com"
-)
-
-def log_ai_request(function_name, prompt, response):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-    INSERT INTO ai_request_logs (function_name, prompt, response, created_at)
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ''', (function_name, prompt, response))
-    conn.commit()
-    conn.close()
-    
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "default_openai_api_key"))
+client.base_url = os.getenv("OPENAI_API_BASE", "https://openai-proxy-kl3l.onrender.com")
 
 def autoclient_ai_view():
     st.header("AutoclientAI")
 
-    # Display condensed knowledge base
-    kb_info = get_knowledge_base_info()
-    st.subheader("Knowledge Base Summary")
-    st.json(kb_info)
-
-    tab1, tab2, tab3, tab4 = st.tabs(["Optimize Existing Groups", "Create New Groups", "Adjust Email Templates", "Optimize Search Terms"])
+    tab1, tab2 = st.tabs(["Optimize Existing Groups", "Create New Groups"])
 
     with tab1:
         optimize_existing_groups()
@@ -1358,60 +1292,23 @@ def autoclient_ai_view():
     with tab2:
         create_new_groups()
 
-    with tab3:
-        adjust_email_template()
-
-    with tab4:
-        optimize_search_terms()
-
-    # Display AI request logs
-    st.subheader("AI Request Logs")
-    def fetch_ai_request_logs():
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-        SELECT function_name, prompt, response, created_at
-        FROM ai_request_logs
-        ORDER BY created_at DESC
-        LIMIT 10
-        ''')
-        logs = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return logs
-
-
-    
-    logs = fetch_ai_request_logs()
-    for log in logs:
-        st.text(f"{log['created_at']} - {log['function_name']}")
-        with st.expander("View Details"):
-            st.text("Prompt:")
-            st.code(log['prompt'])
-            st.text("Response:")
-            st.code(log['response'])
-
 def optimize_existing_groups():
     groups = fetch_search_term_groups()
-    if not groups:
-        st.warning("No search term groups found.")
-        return
-
     selected_group = st.selectbox("Select a group to optimize", options=groups)
 
     if st.button("Optimize Selected Group"):
         with st.spinner("Optimizing group..."):
             group_data = get_group_data(selected_group)
-            kb_info = get_knowledge_base_info()
-            optimized_data = classify_search_terms(group_data['search_terms'], kb_info)
+            optimized_data = optimize_group(group_data)
             
             st.subheader("Optimized Search Terms")
-            for category, terms in optimized_data.items():
-                st.write(f"**{category}:**")
-                new_terms = st.text_area(f"Edit terms for {category}:", value="\n".join(terms))
-                optimized_data[category] = new_terms.split("\n")
+            new_terms = st.text_area("Edit or approve these terms:", value="\n".join(optimized_data['search_terms']))
+
+            st.subheader("Optimized Email Template")
+            new_template = st.text_area("Edit or approve this template:", value=optimized_data['email_template'], height=300)
 
             if st.button("Save Optimized Group"):
-                save_optimized_group(selected_group, optimized_data)
+                save_optimized_group(selected_group, new_terms.split("\n"), new_template)
                 st.success("Group optimized and saved successfully!")
 
 def create_new_groups():
@@ -1419,284 +1316,113 @@ def create_new_groups():
     
     if st.button("Create New Groups"):
         with st.spinner("Creating new groups..."):
-            kb_info = get_knowledge_base_info()
-            classified_terms = classify_search_terms(all_terms, kb_info)
-            
-            for category, terms in classified_terms.items():
-                if category != "low_quality_search_terms":
-                    st.subheader(f"New Group: {category}")
-                    st.write("Search Terms:", ", ".join(terms))
-                    email_template = generate_email_template(terms, kb_info)
-                    st.text_area("Email Template", value=email_template, height=200)
-                    
-                    if st.button(f"Save Group {category}"):
-                        save_new_group(category, terms, email_template)
-                        st.success(f"Group {category} saved successfully!")
-                else:
-                    st.subheader("Low Quality Search Terms")
-                    st.write(", ".join(terms))
+            groups = cluster_search_terms(all_terms)
+            for i, group in enumerate(groups):
+                st.subheader(f"New Group {i+1}")
+                st.write("Search Terms:", ", ".join(group['terms']))
+                st.text_area("Email Template", value=group['email_template'], height=200)
+                
+                if st.button(f"Save Group {i+1}"):
+                    save_new_group(f"Auto-generated Group {i+1}", group['terms'], group['email_template'])
+                    st.success(f"Group {i+1} saved successfully!")
 
-def adjust_email_template():
-    groups = fetch_search_term_groups()
-    if not groups:
-        st.warning("No search term groups found.")
-        return
-
-    selected_group = st.selectbox("Select a group to adjust email template", options=groups)
-    
-    if st.button("Fetch Current Template"):
-        group_data = get_group_data(selected_group)
-        current_template = group_data['email_template']
-        kb_info = get_knowledge_base_info()
-        
-        st.text_area("Current Template", value=current_template, height=200)
-        adjustment_prompt = st.text_area("Enter adjustment instructions:")
-        
-        if st.button("Adjust Template"):
-            adjusted_template = adjust_email_template_api(current_template, adjustment_prompt, kb_info)
-            st.text_area("Adjusted Template", value=adjusted_template, height=200)
-            
-            if st.button("Save Adjusted Template"):
-                save_adjusted_template(selected_group, adjusted_template)
-                st.success("Adjusted template saved successfully!")
-
-def optimize_search_terms():
-    st.subheader("Optimize Search Terms")
-    current_terms = st.text_area("Enter current search terms (one per line):")
-    
-    if st.button("Optimize Search Terms"):
-        with st.spinner("Optimizing search terms..."):
-            kb_info = get_knowledge_base_info()
-            optimized_terms = generate_optimized_search_terms(current_terms.split('\n'), kb_info)
-            
-            st.subheader("Optimized Search Terms")
-            st.write("\n".join(optimized_terms))
-            
-            if st.button("Save Optimized Terms"):
-                save_optimized_search_terms(optimized_terms)
-                st.success("Optimized search terms saved successfully!")
-
-import json
-
-def classify_search_terms(search_terms, kb_info):
+def optimize_group(group_data):
     prompt = f"""
-    Classify the following search terms into strategic groups:
+    Search terms: {', '.join(group_data['search_terms'])}
+    Group description: {group_data['description']}
 
-    Search Terms: {', '.join(search_terms)}
-
-    Knowledge Base Info:
-    {kb_info}
-
-    Create groups that allow for tailored, personalized email content. Consider the product/service features, target audience, and potential customer pain points. Groups should be specific enough for customization but broad enough to be efficient. Always include a 'low_quality_search_terms' category for irrelevant or overly broad terms.
-
-    Respond with a JSON object in the following format:
-    {{
-        "group_name_1": ["term1", "term2", "term3"],
-        "group_name_2": ["term4", "term5", "term6"],
-        "low_quality_search_terms": ["term7", "term8"]
-    }}
+    Optimize the search terms and create an improved HTML email template for this group.
+    Output as JSON with keys: 'search_terms', 'email_template'
     """
 
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are an AI assistant specializing in strategic search term classification for targeted email marketing campaigns. Always respond with valid JSON."},
+            {"role": "system", "content": "You are an AI assistant specializing in lead generation and email marketing."},
             {"role": "user", "content": prompt}
         ]
     )
 
-    log_ai_request("classify_search_terms", prompt, response.choices[0].message.content)
+    return json.loads(response.choices[0].message.content)
+
+def cluster_search_terms(search_terms):
+    vectorizer = TfidfVectorizer()
+    X = vectorizer.fit_transform(search_terms)
     
-    try:
-        classified_terms = json.loads(response.choices[0].message.content)
-        return classified_terms
-    except json.JSONDecodeError:
-        st.error("Failed to parse AI response. Please try again.")
-        return {}
+    num_clusters = min(5, len(search_terms))  # Adjust the number of clusters as needed
+    kmeans = KMeans(n_clusters=num_clusters)
+    kmeans.fit(X)
+    
+    groups = [[] for _ in range(num_clusters)]
+    for term, label in zip(search_terms, kmeans.labels_):
+        groups[label].append(term)
+    
+    result = []
+    for group in groups:
+        email_template = generate_email_template(group)
+        result.append({
+            'terms': group,
+            'email_template': email_template
+        })
+    
+    return result
 
-def generate_email_template(terms, kb_info):
+def generate_email_template(group_terms):
     prompt = f"""
-    Create an email template for the following search terms:
+    Create an HTML email template for the following group of search terms:
+    {', '.join(group_terms)}
 
-    Search Terms: {', '.join(terms)}
-
-    Knowledge Base Info:
-    {kb_info}
-
-    Guidelines:
-    1. Focus on benefits to the reader
-    2. Address potential customer doubts and fears
-    3. Include clear CTAs at the beginning and end
-    4. Use a natural, conversational tone
-    5. Be concise but impactful
-    6. Use minimal formatting - remember this is an email, not a landing page
-
-    Provide the email body content in HTML format, excluding <body> tags. Use <p>, <strong>, <em>, and <a> tags as needed.
-
-    Respond with a JSON object in the following format:
-    {{
-        "subject": "Your email subject here",
-        "body": "Your HTML email body here"
-    }}
+    The template should be relevant to these terms and designed for lead generation.
     """
 
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are an AI assistant specializing in creating high-converting email templates for targeted marketing campaigns. Always respond with valid JSON."},
+            {"role": "system", "content": "You are an AI assistant specializing in email marketing."},
             {"role": "user", "content": prompt}
         ]
     )
 
-    log_ai_request("generate_email_template", prompt, response.choices[0].message.content)
-    
-    try:
-        email_template = json.loads(response.choices[0].message.content)
-        return email_template
-    except json.JSONDecodeError:
-        st.error("Failed to parse AI response. Please try again.")
-        return {"subject": "", "body": ""}
+    return response.choices[0].message.content
 
-def adjust_email_template_api(current_template, adjustment_prompt, kb_info):
-    prompt = f"""
-    Adjust the following email template based on the given instructions:
-
-    Current Template:
-    {current_template}
-
-    Adjustment Instructions:
-    {adjustment_prompt}
-
-    Knowledge Base Info:
-    {kb_info}
-
-    Guidelines:
-    1. Maintain focus on conversion and avoiding spam filters
-    2. Preserve the natural, conversational tone
-    3. Ensure benefits to the reader remain highlighted
-    4. Continue addressing potential customer doubts and fears
-    5. Keep clear CTAs at the beginning and end
-    6. Remain concise and impactful
-    7. Maintain minimal formatting suitable for an email
-
-    Provide the adjusted email body content in HTML format, excluding <body> tags.
-
-    Respond with a JSON object in the following format:
-    {{
-        "subject": "Your adjusted email subject here",
-        "body": "Your adjusted HTML email body here"
-    }}
-    """
-
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are an AI assistant specializing in refining high-converting email templates for targeted marketing campaigns. Always respond with valid JSON."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-
-    log_ai_request("adjust_email_template_api", prompt, response.choices[0].message.content)
-    
-    try:
-        adjusted_template = json.loads(response.choices[0].message.content)
-        return adjusted_template
-    except json.JSONDecodeError:
-        st.error("Failed to parse AI response. Please try again.")
-        return {"subject": "", "body": ""}
-
-def optimize_search_terms():
-    st.subheader("Optimize Search Terms")
-    current_terms = st.text_area("Enter current search terms (one per line):")
-    
-    if st.button("Optimize Search Terms"):
-        with st.spinner("Optimizing search terms..."):
-            kb_info = get_knowledge_base_info()
-            optimized_terms = generate_optimized_search_terms(current_terms.split('\n'), kb_info)
-            
-            st.subheader("Optimized Search Terms")
-            st.write("\n".join(optimized_terms))
-            
-            if st.button("Save Optimized Terms"):
-                save_optimized_search_terms(optimized_terms)
-                st.success("Optimized search terms saved successfully!")
-
-def generate_optimized_search_terms(current_terms, kb_info):
-    prompt = f"""
-    Optimize the following search terms for targeted email campaigns:
-
-    Current Terms: {', '.join(current_terms)}
-
-    Knowledge Base Info:
-    {kb_info}
-
-    Guidelines:
-    1. Focus on terms likely to attract high-quality leads
-    2. Consider product/service features, target audience, and customer pain points
-    3. Optimize for specificity and relevance
-    4. Think about how each term could lead to a compelling email strategy
-    5. Remove or improve low-quality or overly broad terms
-    6. Add new, highly relevant terms based on the knowledge base information
-
-    Provide a list of optimized search terms, aiming for quality over quantity.
-
-    Respond with a JSON object in the following format:
-    {{
-        "optimized_terms": ["term1", "term2", "term3", "term4", "term5"]
-    }}
-    """
-
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are an AI assistant specializing in optimizing search terms for targeted email marketing campaigns. Always respond with valid JSON."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-
-    log_ai_request("optimize_search_terms", prompt, response.choices[0].message.content)
-    
-    try:
-        optimized_terms = json.loads(response.choices[0].message.content)
-        return optimized_terms.get("optimized_terms", [])
-    except json.JSONDecodeError:
-        st.error("Failed to parse AI response. Please try again.")
-        return []
+# Database functions
 
 def fetch_search_term_groups():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM search_term_groups")
-    groups = [f"{row['id']}:{row['name']}" for row in cursor.fetchall()]
+    groups = cursor.fetchall()
     conn.close()
-    return groups
+    return [f"{group[0]}: {group[1]}" for group in groups]
 
 def get_group_data(group_id):
-    if not group_id:
-        return None
     conn = get_db_connection()
     cursor = conn.cursor()
-    group_id = group_id.split(':')[0]
-    cursor.execute("SELECT name, description, email_template FROM search_term_groups WHERE id = ?", (group_id,))
-    group_data = dict(cursor.fetchone())
-    cursor.execute("SELECT term FROM search_terms WHERE group_id = ?", (group_id,))
-    group_data['search_terms'] = [row['term'] for row in cursor.fetchall()]
+    cursor.execute("SELECT name, description FROM search_term_groups WHERE id = ?", (group_id.split(':')[0],))
+    group_info = cursor.fetchone()
+    
+    cursor.execute("SELECT term FROM search_terms WHERE group_id = ?", (group_id.split(':')[0],))
+    terms = [row[0] for row in cursor.fetchall()]
+    
     conn.close()
-    return group_data
+    
+    return {
+        'name': group_info[0],
+        'description': group_info[1],
+        'search_terms': terms
+    }
 
-def save_optimized_group(group_id, optimized_data):
+def save_optimized_group(group_id, new_terms, new_template):
     conn = get_db_connection()
     cursor = conn.cursor()
-    group_id = group_id.split(':')[0]
     
-    # Delete existing terms for this group
-    cursor.execute("DELETE FROM search_terms WHERE group_id = ?", (group_id,))
+    # Update group description and email template
+    cursor.execute("UPDATE search_term_groups SET email_template = ? WHERE id = ?", (new_template, group_id.split(':')[0]))
     
-    # Insert new terms
-    for category, terms in optimized_data.items():
-        for term in terms:
-            cursor.execute("INSERT INTO search_terms (term, group_id, category) VALUES (?, ?, ?)", 
-                           (term, group_id, category))
+    # Delete old terms and insert new ones
+    cursor.execute("DELETE FROM search_terms WHERE group_id = ?", (group_id.split(':')[0],))
+    for term in new_terms:
+        cursor.execute("INSERT INTO search_terms (term, group_id) VALUES (?, ?)", (term, group_id.split(':')[0]))
     
     conn.commit()
     conn.close()
@@ -1705,80 +1431,22 @@ def fetch_all_search_terms():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT term FROM search_terms")
-    terms = [row['term'] for row in cursor.fetchall()]
+    terms = [row[0] for row in cursor.fetchall()]
     conn.close()
     return terms
 
-def save_new_group(category, terms, email_template):
+def save_new_group(name, terms, email_template):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("INSERT INTO search_term_groups (name, email_template) VALUES (?, ?)", (category, email_template))
+    cursor.execute("INSERT INTO search_term_groups (name, email_template) VALUES (?, ?)", (name, email_template))
     group_id = cursor.lastrowid
     
     for term in terms:
-        cursor.execute("INSERT INTO search_terms (term, group_id, category) VALUES (?, ?, ?)", 
-                       (term, group_id, category))
+        cursor.execute("INSERT INTO search_terms (term, group_id) VALUES (?, ?)", (term, group_id))
     
     conn.commit()
     conn.close()
-
-def save_adjusted_template(group_id, adjusted_template):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    group_id = group_id.split(':')[0]
-    cursor.execute("UPDATE search_term_groups SET email_template = ? WHERE id = ?", 
-                   (adjusted_template, group_id))
-    conn.commit()
-    conn.close()
-
-def get_knowledge_base_info():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT kb_name, kb_bio, kb_values, contact_name, contact_role, contact_email,
-               company_description, company_mission, company_target_market, company_other,
-               product_name, product_description, product_target_customer, product_other,
-               other_context, example_email
-        FROM knowledge_base 
-        ORDER BY id DESC LIMIT 1
-    """)
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        return {
-            "kb_name": result[0],
-            "kb_bio": result[1],
-            "kb_values": result[2],
-            "contact_name": result[3],
-            "contact_role": result[4],
-            "contact_email": result[5],
-            "company_description": result[6],
-            "company_mission": result[7],
-            "company_target_market": result[8],
-            "company_other": result[9],
-            "product_name": result[10],
-            "product_description": result[11],
-            "product_target_customer": result[12],
-            "product_other": result[13],
-            "other_context": result[14],
-            "example_email": result[15]
-        }
-    else:
-        return {}
-
-def save_optimized_search_terms(optimized_terms):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    for term in optimized_terms:
-        cursor.execute("INSERT INTO search_terms (term) VALUES (?)", (term,))
-    
-    conn.commit()
-    conn.close()
-
-
 
 def get_last_n_search_terms(n):
     conn = get_db_connection()
@@ -1801,6 +1469,24 @@ def get_random_leads(n, from_last):
     leads = cursor.fetchall()
     conn.close()
     return random.sample(leads, min(n, len(leads)))
+
+def get_knowledge_base_info():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT product_name, product_description, product_target_customer, product_other, other_context 
+        FROM knowledge_base 
+        ORDER BY id DESC LIMIT 1
+    """)
+    result = cursor.fetchone()
+    conn.close()
+    return {
+        "product_name": result[0],
+        "product_description": result[1],
+        "product_target_customer": result[2],
+        "product_other": result[3],
+        "other_context": result[4]
+    }
 
 def format_leads_for_prompt(leads):
     return "\n".join([f"{lead[0]} - {lead[1]}" for lead in leads])
@@ -2148,7 +1834,48 @@ def fetch_leads_for_bulk_send(template_id, send_option, filter_option):
     
     return leads
 
-
+async def bulk_send(template_id, from_email, reply_to, leads):
+    template_id = validate_id(template_id, "template")
+    from_email = validate_email(from_email)
+    reply_to = validate_email(reply_to)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT name, subject, body_content FROM message_templates WHERE id = ?', (template_id,))
+    template = cursor.fetchone()
+    
+    if not template:
+        return "Template not found"
+    
+    template_name, subject, body_content = template
+    
+    total_leads = len(leads)
+    logs = [
+        f"Preparing to send emails to {total_leads} leads",
+        f"Template Name: {template_name}",
+        f"Subject: {subject}",
+        f"From Email: {from_email}",
+        f"Reply To: {reply_to}"
+    ]
+    
+    for i, (lead_id, email) in enumerate(leads):
+        try:
+            customized_content = customize_email_content(body_content, lead_id)
+            message_id = send_email(email, subject, customized_content, from_email, reply_to)
+            save_message(lead_id, template_id, 'sent', datetime.now(), subject, message_id, customized_content)
+            logs.append(f"Sent email to {email} (Lead ID: {lead_id})")
+        except Exception as e:
+            save_message(lead_id, template_id, 'failed', datetime.now(), subject, None, str(e))
+            logs.append(f"Failed to send email to {email} (Lead ID: {lead_id}): {e}")
+        
+        progress = (i + 1) / total_leads
+        st.session_state.bulk_send_progress = progress
+        st.session_state.bulk_send_logs = logs
+        time.sleep(0.1)  # Add a small delay for UI updates
+    
+    conn.close()
+    return logs
 
 def view_leads():
     st.header("View Leads")
