@@ -26,7 +26,7 @@ REGION_NAME = "us-east-1"
 
 openai.api_key = os.getenv("OPENAI_API_KEY", "default_openai_api_key")
 openai.api_base = os.getenv("OPENAI_API_BASE", "http://127.0.0.1:11434/v1")
-openai_model = "mistral"
+openai_model = "gpt-3.5-turbo"
 
 # SQLite configuration
 sqlite_db_path = "autoclient.db"
@@ -158,10 +158,6 @@ def init_db():
         meta_description TEXT,
         http_status INTEGER,
         scrape_duration TEXT,
-        meta_tags TEXT,
-        phone_numbers TEXT,
-        content TEXT,
-        tags TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (lead_id) REFERENCES leads (id),
         FOREIGN KEY (search_term_id) REFERENCES search_terms (id)
@@ -380,15 +376,15 @@ def save_lead(email, phone, first_name, last_name, company, job_title):
     return lead_id
 
 # Function to save lead source
-def save_lead_source(lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration, meta_tags, phone_numbers, content, tags):
+def save_lead_source(lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration):
     lead_id = validate_id(lead_id, "lead")
     search_term_id = validate_id(search_term_id, "search term")
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO lead_sources (lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration, meta_tags, phone_numbers, content, tags)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration, json.dumps(meta_tags), json.dumps(phone_numbers), content, json.dumps(tags)))
+        INSERT INTO lead_sources (lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration))
     conn.commit()
     conn.close()
 
@@ -496,7 +492,7 @@ async def bulk_search(num_results):
                             lead_id = save_lead(email, None, None, None, None, None)
                             save_lead_source(lead_id, term_id, url, soup.title.string if soup.title else None, 
                                              soup.find('meta', attrs={'name': 'description'})['content'] if soup.find('meta', attrs={'name': 'description'}) else None, 
-                                             response.status_code, str(response.elapsed), soup.find_all('meta'), extract_phone_numbers(response.text), soup.get_text(), [])
+                                             response.status_code, str(response.elapsed))
                             all_results.append([email, url, term])
                             leads_found += 1
                             total_leads += 1
@@ -541,12 +537,12 @@ def get_email_preview(template_id, from_email, reply_to):
     else:
         return "<p>Template not found</p>"
 
-# Update the fetch_sent_messages function
+# Add this function to fetch sent messages
 def fetch_sent_messages():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-    SELECT m.id, l.email, mt.template_name, m.customized_subject, m.customized_content, m.sent_at, m.status, m.message_id
+    SELECT m.id, l.email, mt.template_name, m.customized_subject, m.sent_at, m.status
     FROM messages m
     JOIN leads l ON m.lead_id = l.id
     JOIN message_templates mt ON m.template_id = mt.id
@@ -554,41 +550,10 @@ def fetch_sent_messages():
     ''')
     messages = cursor.fetchall()
     conn.close()
-    return pd.DataFrame(messages, columns=["ID", "Email", "Template", "Subject", "Content", "Sent At", "Status", "Message ID"])
+    return pd.DataFrame(messages, columns=["ID", "Email", "Template", "Subject", "Sent At", "Status"])
 
-# Update the view_sent_messages function
-def view_sent_messages():
-    st.header("View Sent Messages")
-    
-    if st.button("Refresh Sent Messages"):
-        st.session_state.sent_messages = fetch_sent_messages()
-    
-    if 'sent_messages' not in st.session_state:
-        st.session_state.sent_messages = fetch_sent_messages()
-    
-    # Display messages in a more organized manner
-    for _, row in st.session_state.sent_messages.iterrows():
-        with st.expander(f"Message to {row['Email']} - {row['Sent At']}"):
-            st.write(f"**Subject:** {row['Subject']}")
-            st.write(f"**Template:** {row['Template']}")
-            st.write(f"**Status:** {row['Status']}")
-            st.write(f"**Message ID:** {row['Message ID']}")
-            st.write("**Content:**")
-            st.markdown(row['Content'], unsafe_allow_html=True)
-
-    # Display summary statistics
-    st.subheader("Summary Statistics")
-    total_messages = len(st.session_state.sent_messages)
-    sent_messages = len(st.session_state.sent_messages[st.session_state.sent_messages['Status'] == 'sent'])
-    failed_messages = len(st.session_state.sent_messages[st.session_state.sent_messages['Status'] == 'failed'])
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Messages", total_messages)
-    col2.metric("Sent Messages", sent_messages)
-    col3.metric("Failed Messages", failed_messages)
-
-# Update the bulk_send function to be a coroutine instead of an async generator
-async def bulk_send(template_id, from_email, reply_to, leads):
+# Update the bulk_send function
+async def bulk_send(template_id, from_email, reply_to):
     template_id = validate_id(template_id, "template")
     from_email = validate_email(from_email)
     reply_to = validate_email(reply_to)
@@ -601,20 +566,30 @@ async def bulk_send(template_id, from_email, reply_to, leads):
     template = cursor.fetchone()
     if not template:
         conn.close()
-        return "Template not found"
+        return [f"Template not found"]
 
     template_name, subject, body_content = template
 
+    # Fetch all leads that haven't been sent this template
+    cursor.execute('''
+        SELECT DISTINCT l.id, l.email 
+        FROM leads l
+        LEFT JOIN messages m ON l.id = m.lead_id AND m.template_id = ?
+        WHERE m.id IS NULL OR m.status = 'failed'
+    ''', (template_id,))
+    leads = cursor.fetchall()
+    
+    conn.close()
+
     total_leads = len(leads)
-    logs = [
-        f"Preparing to send emails to {total_leads} leads",
-        f"Template Name: {template_name}",
-        f"Template ID: {template_id}",
-        f"Subject: {subject}",
-        f"From: {from_email}",
-        f"Reply-To: {reply_to}",
-        "---"
-    ]
+    logs = []
+    logs.append(f"Preparing to send emails to {total_leads} leads")
+    logs.append(f"Template Name: {template_name}")
+    logs.append(f"Template ID: {template_id}")
+    logs.append(f"Subject: {subject}")
+    logs.append(f"From: {from_email}")
+    logs.append(f"Reply-To: {reply_to}")
+    logs.append("---")
 
     if total_leads == 0:
         logs.append("No leads found to send emails to. Please check if there are leads in the database and if they have already been sent this template.")
@@ -643,7 +618,7 @@ async def bulk_send(template_id, from_email, reply_to, leads):
                 ReplyToAddresses=[reply_to]
             )
             message_id = response['MessageId']
-            save_message(lead_id, template_id, 'sent', datetime.now(), subject, message_id, body_content)
+            save_message(lead_id, template_id, 'sent', datetime.now(), subject, message_id)
             total_sent += 1
             logs.append(f"[{index}/{total_leads}] Sent email to {email} - Subject: {subject} - MessageId: {message_id}")
         except ClientError as e:
@@ -663,104 +638,20 @@ async def bulk_send(template_id, from_email, reply_to, leads):
     logs.append(f"Bulk send completed. Total emails sent: {total_sent}/{total_leads}")
     return logs
 
-# Update the bulk_send_page function
-def bulk_send_page():
-    st.header("Bulk Send")
-    
-    templates = fetch_message_templates()
-    if not templates:
-        st.warning("No message templates found. Please create a template first.")
-        return
-
-    with st.form(key="bulk_send_form"):
-        template_id = st.selectbox("Select Message Template", options=templates)
-        from_email = st.text_input("From Email", value="Sami Halawa <hello@indosy.com>")
-        reply_to = st.text_input("Reply To", value="eugproductions@gmail.com")
-        
-        send_option = st.radio("Send to:", 
-                               ["All Leads", 
-                                "All Not Contacted with this Template", 
-                                "All Not Contacted with Templates from this Campaign"])
-        
-        filter_option = st.radio("Filter:", 
-                                 ["Not Filter Out Leads", 
-                                  "Filter Out blog-directory"])
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            preview_button = st.form_submit_button(label="Preview Email")
-        with col2:
-            send_button = st.form_submit_button(label="Start Bulk Send")
-    
-    if preview_button:
-        preview = get_email_preview(template_id.split(":")[0], from_email, reply_to)
-        st.components.v1.html(preview, height=600, scrolling=True)
-    
-    if send_button:
-        st.session_state.bulk_send_started = True
-        st.session_state.bulk_send_logs = []
-        st.session_state.bulk_send_progress = 0
-        
-        # Fetch leads based on send_option and filter_option
-        leads_to_send = fetch_leads_for_bulk_send(template_id.split(":")[0], send_option, filter_option)
-        
-        st.write(f"Preparing to send emails to {len(leads_to_send)} leads")
-        
-        # Perform bulk send
-        bulk_send_coroutine = bulk_send(template_id.split(":")[0], from_email, reply_to, leads_to_send)
-        logs = asyncio.run(bulk_send_coroutine)
-        
-        # Display logs and statistics
-        for log in logs:
-            st.write(log)
-        
-        st.success(f"Bulk send completed. Sent {len(leads_to_send)} emails.")
-
-def fetch_leads_for_bulk_send(template_id, send_option, filter_option):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    query = """
-    SELECT DISTINCT l.id, l.email
-    FROM leads l
-    JOIN lead_sources ls ON l.id = ls.lead_id
-    """
-    
-    if send_option == "All Not Contacted with this Template":
-        query += f"""
-        LEFT JOIN messages m ON l.id = m.lead_id AND m.template_id = {template_id}
-        WHERE m.id IS NULL
-        """
-    elif send_option == "All Not Contacted with Templates from this Campaign":
-        query += f"""
-        LEFT JOIN messages m ON l.id = m.lead_id
-        LEFT JOIN message_templates mt ON m.template_id = mt.id
-        WHERE m.id IS NULL OR mt.campaign_id != (SELECT campaign_id FROM message_templates WHERE id = {template_id})
-        """
-    
-    if filter_option == "Filter Out blog-directory":
-        query += " AND NOT ls.tags LIKE '%blog-directory%'"
-    
-    cursor.execute(query)
-    leads = cursor.fetchall()
-    conn.close()
-    
-    return leads
-
 # Update the save_message function to include the subject
-def save_message(lead_id, template_id, status, sent_at=None, subject=None, message_id=None, customized_content=None):
+def save_message(lead_id, template_id, status, sent_at=None, subject=None, message_id=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     if sent_at:
         cursor.execute("""
-            INSERT INTO messages (lead_id, template_id, status, sent_at, customized_subject, message_id, customized_content)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (lead_id, template_id, status, sent_at, subject, message_id, customized_content))
+            INSERT INTO messages (lead_id, template_id, status, sent_at, customized_subject, message_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (lead_id, template_id, status, sent_at, subject, message_id))
     else:
         cursor.execute("""
-            INSERT INTO messages (lead_id, template_id, status, customized_subject, message_id, customized_content)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (lead_id, template_id, status, subject, message_id, customized_content))
+            INSERT INTO messages (lead_id, template_id, status, customized_subject, message_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, (lead_id, template_id, status, subject, message_id))
     conn.commit()
     conn.close()
 
@@ -808,39 +699,7 @@ def df_to_list(df):
     return df.values.tolist()
 
 # Add this function before the Gradio interface definition
-import re
-from urllib.parse import urlparse
-
-def extract_phone_numbers(text):
-    phone_pattern = re.compile(r'\b(?:\+?34)?[\s.-]?[6789]\d{2}[\s.-]?\d{3}[\s.-]?\d{3}\b')
-    return phone_pattern.findall(text)
-
-def is_probable_blog_or_directory(soup, email):
-    # Check if the email is inside an <article> or <main> tag
-    article_content = soup.find('article')
-    main_content = soup.find('main')
-    
-    if article_content and email in article_content.get_text():
-        return True
-    if main_content and email in main_content.get_text():
-        return True
-    
-    # Check if there are multiple emails on the page
-    all_emails = find_emails(soup.get_text())
-    if len(all_emails) > 3:  # Arbitrary threshold, adjust as needed
-        return True
-    
-    # Check for common blog/directory indicators in the URL or title
-    url = soup.find('meta', property='og:url')
-    url = url['content'] if url else ''
-    title = soup.title.string if soup.title else ''
-    indicators = ['blog', 'article', 'news', 'directory', 'list', 'index']
-    if any(indicator in url.lower() or indicator in title.lower() for indicator in indicators):
-        return True
-    
-    return False
-
-def manual_search_wrapper(term, num_results, campaign_id, search_type):
+def manual_search(term, num_results, search_term_id):
     results = []
     try:
         print(f"Starting search for term: {term}")
@@ -852,33 +711,19 @@ def manual_search_wrapper(term, num_results, campaign_id, search_type):
                 response = session.get(url, timeout=10)
                 response.encoding = 'utf-8'
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
-                title = soup.title.string if soup.title else ""
-                meta_description = soup.find('meta', attrs={'name': 'description'})
-                meta_description = meta_description['content'] if meta_description else ""
-                
                 emails = find_emails(response.text)
-                phone_numbers = extract_phone_numbers(response.text)
-                
-                meta_tags = [str(tag) for tag in soup.find_all('meta')]
-                
-                content = extract_visible_text(soup)
-                
-                print(f"Found {len(emails)} emails and {len(phone_numbers)} phone numbers on {url}")
+                print(f"Found {len(emails)} emails on {url}")
                 
                 for email in emails:
                     if is_valid_email(email):
-                        tags = []
-                        if is_probable_blog_or_directory(soup, email):
-                            tags.append("blog-directory")
-                        else:
-                            tags.append("company")
-                        
-                        lead_id = save_lead(email, phone_numbers[0] if phone_numbers else None, None, None, None, None)
-                        save_lead_source(lead_id, campaign_id, url, title, meta_description, response.status_code, 
-                                         str(response.elapsed), meta_tags, phone_numbers, content, tags)
-                        results.append([email, url, title, meta_description, tags])
+                        results.append([email, url])
                         print(f"Valid email found: {email}")
+                        
+                        # Save the lead and lead source to the database
+                        lead_id = save_lead(email, None, None, None, None, None)
+                        save_lead_source(lead_id, search_term_id, url, soup.title.string if soup.title else None, 
+                                         soup.find('meta', attrs={'name': 'description'})['content'] if soup.find('meta', attrs={'name': 'description'}) else None, 
+                                         response.status_code, str(response.elapsed))
                 
                 if len(results) >= num_results:
                     break
@@ -891,51 +736,6 @@ def manual_search_wrapper(term, num_results, campaign_id, search_type):
     
     print(f"Search completed. Found {len(results)} results.")
     return results[:num_results]
-
-def save_lead(email, phone, first_name, last_name, company, job_title):
-    email = validate_email(email)
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT id FROM leads WHERE email = ?", (email,))
-    existing_lead = cursor.fetchone()
-    
-    if existing_lead:
-        lead_id = existing_lead[0]
-        logging.info(f"Existing lead found for email {email} with ID {lead_id}")
-        cursor.execute("""
-            UPDATE leads
-            SET phone = COALESCE(?, phone),
-                first_name = COALESCE(?, first_name),
-                last_name = COALESCE(?, last_name),
-                company = COALESCE(?, company),
-                job_title = COALESCE(?, job_title)
-            WHERE id = ?
-        """, (phone, first_name, last_name, company, job_title, lead_id))
-        logging.info(f"Updated existing lead with ID {lead_id}")
-    else:
-        cursor.execute("""
-            INSERT INTO leads (email, phone, first_name, last_name, company, job_title)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (email, phone, first_name, last_name, company, job_title))
-        lead_id = cursor.lastrowid
-        logging.info(f"New lead created for email {email} with ID {lead_id}")
-    
-    conn.commit()
-    conn.close()
-    return lead_id
-
-def save_lead_source(lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration, meta_tags, phone_numbers, content, tags):
-    lead_id = validate_id(lead_id, "lead")
-    search_term_id = validate_id(search_term_id, "search term")
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO lead_sources (lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration, meta_tags, phone_numbers, content, tags)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (lead_id, search_term_id, url, page_title, meta_description, http_status, scrape_duration, json.dumps(meta_tags), json.dumps(phone_numbers), content, json.dumps(tags)))
-    conn.commit()
-    conn.close()
 
 # Update the update_search_term_status function to handle term as string
 def update_search_term_status(search_term_id, new_status, processed_leads=None):
@@ -978,9 +778,7 @@ def fetch_leads():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-    SELECT l.id, l.email, l.phone, l.first_name, l.last_name, l.company, l.job_title, 
-           st.term as search_term, ls.url as source_url, ls.page_title, ls.meta_description, 
-           ls.phone_numbers, ls.content, ls.tags
+    SELECT l.id, l.email, l.first_name, l.last_name, l.company, l.job_title, st.term as search_term, ls.url as source_url
     FROM leads l
     JOIN lead_sources ls ON l.id = ls.lead_id
     JOIN search_terms st ON ls.search_term_id = st.id
@@ -988,9 +786,7 @@ def fetch_leads():
     ''')
     rows = cursor.fetchall()
     conn.close()
-    return pd.DataFrame(rows, columns=["ID", "Email", "Phone", "First Name", "Last Name", "Company", "Job Title", 
-                                       "Search Term", "Source URL", "Page Title", "Meta Description", 
-                                       "Phone Numbers", "Content", "Tags"])
+    return pd.DataFrame(rows, columns=["ID", "Email", "First Name", "Last Name", "Company", "Job Title", "Search Term", "Source URL"])
 
 # Add this function to fetch search terms for a specific campaign
 def fetch_search_terms_for_campaign(campaign_id):
@@ -1071,15 +867,11 @@ def display_result_card(result, index):
             <h3 style="color:#1E90FF;">Result {index + 1}</h3>
             <p><strong>Email:</strong> {result[0]}</p>
             <p><strong>Source:</strong> <a href="{result[1]}" target="_blank">{result[1][:50]}...</a></p>
-            <p><strong>Tags:</strong> {', '.join(result[4])}</p>
         </div>
         """, unsafe_allow_html=True)
 
 def manual_search_page():
     st.header("Manual Search")
-    
-    # Fetch last 5 search terms
-    last_5_terms = get_last_5_search_terms()
     
     tab1, tab2 = st.tabs(["Single Term Search", "Multiple Terms Search"])
     
@@ -1088,7 +880,6 @@ def manual_search_page():
             search_term = st.text_input("Search Term")
             num_results = st.slider("Number of Results", min_value=10, max_value=200, value=30, step=10)
             campaign_id = st.selectbox("Select Campaign", options=fetch_campaigns())
-            search_type = st.selectbox("Search Type", options=["All Leads", "Exclude Probable Blogs/Directories"])
             submit_button = st.form_submit_button(label="Search")
         
         if submit_button:
@@ -1105,7 +896,7 @@ def manual_search_page():
             
             if len(st.session_state.single_search_results) < num_results:
                 with st.spinner("Searching..."):
-                    new_results = manual_search_wrapper(search_term, num_results - len(st.session_state.single_search_results), campaign_id.split(":")[0], search_type)
+                    new_results = manual_search_wrapper(search_term, num_results - len(st.session_state.single_search_results), campaign_id.split(":")[0])
                     st.session_state.single_search_results.extend(new_results)
                     st.session_state.single_search_logs.extend([f"Found result: {result[0]} from {result[1]}" for result in new_results])
                     st.session_state.single_search_progress = len(st.session_state.single_search_results) / num_results
@@ -1128,27 +919,10 @@ def manual_search_page():
             st.metric("Unique Domains", len(set(result[0].split('@')[1] for result in st.session_state.single_search_results)))
 
     with tab2:
-        st.subheader("Enter Search Terms")
-        search_terms_text = st.text_area("Enter one search term per line", height=150, value="\n".join(last_5_terms))
-        load_button = st.button("Load Terms from Text Area")
-        
-        if load_button:
-            terms_list = [term.strip() for term in search_terms_text.split('\n') if term.strip()]
-            st.session_state.loaded_terms = terms_list
-            st.rerun()
-        
-        if 'loaded_terms' not in st.session_state:
-            st.session_state.loaded_terms = [""] * 4  # Default to 4 empty terms
-        
-        num_terms = len(st.session_state.loaded_terms)
-        
         with st.form(key="multi_search_form"):
-            search_terms = [st.text_input(f"Search Term {i+1}", value=term, key=f"term_{i}") 
-                            for i, term in enumerate(st.session_state.loaded_terms)]
-            
+            search_terms = [st.text_input(f"Search Term {i+1}") for i in range(4)]
             num_results_multiple = st.slider("Number of Results per Term", min_value=10, max_value=200, value=30, step=10)
             campaign_id_multiple = st.selectbox("Select Campaign for Multiple Search", options=fetch_campaigns(), key="multi_campaign")
-            search_type = st.selectbox("Search Type", options=["All Leads", "Exclude Probable Blogs/Directories"])
             
             col1, col2 = st.columns(2)
             with col1:
@@ -1161,7 +935,6 @@ def manual_search_page():
             st.session_state.multi_search_results = []
             st.session_state.multi_search_logs = []
             st.session_state.multi_search_progress = 0
-            st.session_state.multi_search_terms = [term for term in search_terms if term.strip()]
         
         if 'multi_search_started' in st.session_state and st.session_state.multi_search_started:
             results_container = st.empty()
@@ -1172,27 +945,21 @@ def manual_search_page():
             with st.spinner("Searching..."):
                 all_results = []
                 logs = []
-                total_terms = len(st.session_state.multi_search_terms)
-                
-                for term_index, term in enumerate(st.session_state.multi_search_terms):
-                    status_text.text(f"Searching term {term_index + 1} of {total_terms}: {term}")
-                    term_results = manual_search_wrapper(term, num_results_multiple, campaign_id_multiple.split(":")[0], search_type)
-                    
-                    for i, result in enumerate(term_results):
-                        all_results.append(result)
-                        progress = (term_index * num_results_multiple + i + 1) / (total_terms * num_results_multiple)
-                        progress_bar.progress(progress)
-                        log = f"Term {term_index + 1}: Found result {i + 1}: {result[0]} from {result[1]}"
-                        logs.append(log)
-                        log_container.text_area("Search Logs", "\n".join(logs), height=200)
-                        
-                        with results_container.container():
-                            for j, res in enumerate(all_results):
-                                display_result_card(res, j)
-                        time.sleep(0.1)  # Add a small delay for animation effect
-                
-                st.session_state.multi_search_progress = 1.0
-                progress_bar.progress(st.session_state.multi_search_progress)
+                for term_index, term in enumerate(search_terms):
+                    if term.strip():
+                        status_text.text(f"Searching term {term_index + 1} of {len(search_terms)}: {term}")
+                        term_results = manual_search_wrapper(term, num_results_multiple, campaign_id_multiple.split(":")[0])
+                        for i, result in enumerate(term_results):
+                            all_results.append(result)
+                            progress = (term_index * num_results_multiple + i + 1) / (len(search_terms) * num_results_multiple)
+                            progress_bar.progress(progress)
+                            logs.append(f"Term {term_index + 1}: Found result {i + 1}: {result[0]} from {result[1]}")
+                            log_container.text_area("Search Logs", "\n".join(logs), height=200)
+                            
+                            with results_container.container():
+                                for j, res in enumerate(all_results):
+                                    display_result_card(res, j)
+                            time.sleep(0.1)  # Add a small delay for animation effect
             
             st.success(f"Found {len(all_results)} results across all terms!")
             
@@ -1200,11 +967,12 @@ def manual_search_page():
             st.subheader("Search Statistics")
             st.metric("Total Results Found", len(all_results))
             st.metric("Unique Domains", len(set(result[0].split('@')[1] for result in all_results)))
-            st.metric("Search Terms Processed", len(st.session_state.multi_search_terms))
+            st.metric("Search Terms Processed", len([term for term in search_terms if term.strip()]))
         
         if fill_button:
-            least_searched = get_least_searched_terms(num_terms)
-            st.session_state.loaded_terms = least_searched
+            least_searched = get_least_searched_terms(4)
+            for i, term in enumerate(least_searched):
+                st.session_state[f"search_term_{i+1}"] = term
             st.rerun()
 
 def bulk_search_page():
@@ -1230,13 +998,13 @@ def bulk_search_page():
         with st.spinner("Performing bulk search..."):
             total_terms = len(st.session_state.bulk_search_terms)
             
-            for term_index, term_row in enumerate(st.session_state.bulk_search_terms.iterrows()):
+            for term_index, term_row in enumerate(st.session_state.bulk_search_terms.itertuples()):
                 if term_index < len(st.session_state.bulk_search_results) // num_results:
                     continue
                 
                 term = term_row.Term
                 status_text.text(f"Searching term {term_index + 1} of {total_terms}: {term}")
-                term_results = manual_search_wrapper(term, num_results, term_row.ID, "All Leads")
+                term_results = manual_search_wrapper(term, num_results, term_row.ID)
                 
                 st.session_state.bulk_search_results.extend(term_results)
                 st.session_state.bulk_search_logs.extend([f"Term {term_index + 1}: Found result {i + 1}: {result[0]} from {result[1]}" for i, result in enumerate(term_results)])
@@ -1272,15 +1040,6 @@ def bulk_send_page():
         from_email = st.text_input("From Email", value="Sami Halawa <hello@indosy.com>")
         reply_to = st.text_input("Reply To", value="eugproductions@gmail.com")
         
-        send_option = st.radio("Send to:", 
-                               ["All Leads", 
-                                "All Not Contacted with this Template", 
-                                "All Not Contacted with Templates from this Campaign"])
-        
-        filter_option = st.radio("Filter:", 
-                                 ["Not Filter Out Leads", 
-                                  "Filter Out blog-directory"])
-        
         col1, col2 = st.columns(2)
         with col1:
             preview_button = st.form_submit_button(label="Preview Email")
@@ -1289,101 +1048,44 @@ def bulk_send_page():
     
     if preview_button:
         preview = get_email_preview(template_id.split(":")[0], from_email, reply_to)
-        st.components.v1.html(preview, height=600, scrolling=True)
+        st.code(preview, language="html")
     
     if send_button:
         st.session_state.bulk_send_started = True
         st.session_state.bulk_send_logs = []
         st.session_state.bulk_send_progress = 0
+    
+    if 'bulk_send_started' in st.session_state and st.session_state.bulk_send_started:
+        progress_bar = st.progress(st.session_state.bulk_send_progress)
+        status_text = st.empty()
+        log_container = st.empty()
         
-        # Fetch leads based on send_option and filter_option
-        leads_to_send = fetch_leads_for_bulk_send(template_id.split(":")[0], send_option, filter_option)
+        if not st.session_state.bulk_send_logs:
+            with st.spinner("Sending emails..."):
+                logs = asyncio.run(bulk_send(template_id.split(":")[0], from_email, reply_to))
+                st.session_state.bulk_send_logs = logs
         
-        st.write(f"Preparing to send emails to {len(leads_to_send)} leads")
+        for i, log in enumerate(st.session_state.bulk_send_logs):
+            progress = (i + 1) / len(st.session_state.bulk_send_logs)
+            if progress > st.session_state.bulk_send_progress:
+                st.session_state.bulk_send_progress = progress
+                progress_bar.progress(st.session_state.bulk_send_progress)
+            status_text.text(f"Displaying log {i + 1} of {len(st.session_state.bulk_send_logs)}")
+            log_container.text(log)
         
-        # Perform bulk send
-        bulk_send_coroutine = bulk_send(template_id.split(":")[0], from_email, reply_to, leads_to_send)
-        logs = asyncio.run(bulk_send_coroutine)
-        
-        # Display logs and statistics
-        for log in logs:
-            st.write(log)
-        
-        st.success(f"Bulk send completed. Sent {len(leads_to_send)} emails.")
+        if st.session_state.bulk_send_progress >= 1:
+            st.success("Bulk send process completed!")
+            st.session_state.bulk_send_started = False
 
-def fetch_leads_for_bulk_send(template_id, send_option, filter_option):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    query = """
-    SELECT DISTINCT l.id, l.email
-    FROM leads l
-    JOIN lead_sources ls ON l.id = ls.lead_id
-    """
-    
-    if send_option == "All Not Contacted with this Template":
-        query += f"""
-        LEFT JOIN messages m ON l.id = m.lead_id AND m.template_id = {template_id}
-        WHERE m.id IS NULL
-        """
-    elif send_option == "All Not Contacted with Templates from this Campaign":
-        query += f"""
-        LEFT JOIN messages m ON l.id = m.lead_id
-        LEFT JOIN message_templates mt ON m.template_id = mt.id
-        WHERE m.id IS NULL OR mt.campaign_id != (SELECT campaign_id FROM message_templates WHERE id = {template_id})
-        """
-    
-    if filter_option == "Filter Out blog-directory":
-        query += " AND NOT ls.tags LIKE '%blog-directory%'"
-    
-    cursor.execute(query)
-    leads = cursor.fetchall()
-    conn.close()
-    
-    return leads
+        # Display a summary of the bulk send operation
+        st.subheader("Bulk Send Summary")
+        total_sent = sum(1 for log in st.session_state.bulk_send_logs if "Sent email to" in log)
+        total_failed = sum(1 for log in st.session_state.bulk_send_logs if "Failed to send email to" in log)
+        st.metric("Total Emails Sent", total_sent)
+        st.metric("Total Emails Failed", total_failed)
 
-async def bulk_send(template_id, from_email, reply_to, leads):
-    template_id = validate_id(template_id, "template")
-    from_email = validate_email(from_email)
-    reply_to = validate_email(reply_to)
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('SELECT name, subject, body_content FROM message_templates WHERE id = ?', (template_id,))
-    template = cursor.fetchone()
-    
-    if not template:
-        return "Template not found"
-    
-    template_name, subject, body_content = template
-    
-    total_leads = len(leads)
-    logs = [
-        f"Preparing to send emails to {total_leads} leads",
-        f"Template Name: {template_name}",
-        f"Subject: {subject}",
-        f"From Email: {from_email}",
-        f"Reply To: {reply_to}"
-    ]
-    
-    for i, (lead_id, email) in enumerate(leads):
-        try:
-            customized_content = customize_email_content(body_content, lead_id)
-            message_id = send_email(email, subject, customized_content, from_email, reply_to)
-            save_message(lead_id, template_id, 'sent', datetime.now(), subject, message_id, customized_content)
-            logs.append(f"Sent email to {email} (Lead ID: {lead_id})")
-        except Exception as e:
-            save_message(lead_id, template_id, 'failed', datetime.now(), subject, None, str(e))
-            logs.append(f"Failed to send email to {email} (Lead ID: {lead_id}): {e}")
-        
-        progress = (i + 1) / total_leads
-        st.session_state.bulk_send_progress = progress
-        st.session_state.bulk_send_logs = logs
-        time.sleep(0.1)  # Add a small delay for UI updates
-    
-    conn.close()
-    return logs
+        if total_sent == 0:
+            st.warning("No emails were sent. Please check the logs for more information.")
 
 def view_leads():
     st.header("View Leads")
@@ -1394,46 +1096,7 @@ def view_leads():
     if 'leads' not in st.session_state:
         st.session_state.leads = fetch_leads()
     
-    for _, lead in st.session_state.leads.iterrows():
-        with st.expander(f"Lead: {lead['Email']}"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**ID:** {lead['ID']}")
-                st.write(f"**Email:** {lead['Email']}")
-                st.write(f"**Phone:** {lead['Phone']}")
-                st.write(f"**Name:** {lead['First Name']} {lead['Last Name']}")
-                st.write(f"**Company:** {lead['Company']}")
-                st.write(f"**Job Title:** {lead['Job Title']}")
-            with col2:
-                st.write(f"**Search Term:** {lead['Search Term']}")
-                st.write(f"**Source URL:** {lead['Source URL']}")
-                st.write(f"**Page Title:** {lead['Page Title']}")
-                st.write(f"**Meta Description:** {lead['Meta Description']}")
-                st.write(f"**Phone Numbers:** {lead['Phone Numbers']}")
-                
-                # Handle different possible formats of the Tags column
-                if isinstance(lead['Tags'], str):
-                    try:
-                        tags = json.loads(lead['Tags'])
-                        st.write(f"**Tags:** {', '.join(tags)}")
-                    except json.JSONDecodeError:
-                        st.write(f"**Tags:** {lead['Tags']}")
-                elif isinstance(lead['Tags'], list):
-                    st.write(f"**Tags:** {', '.join(lead['Tags'])}")
-                else:
-                    st.write(f"**Tags:** {lead['Tags']}")
-            
-            st.write("**Page Content:**")
-            st.text(lead['Content'][:500] + "..." if len(lead['Content']) > 500 else lead['Content'])
-
-    # Optional: Add a download button for the full dataset
-    csv = st.session_state.leads.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Download full dataset as CSV",
-        data=csv,
-        file_name="leads_data.csv",
-        mime="text/csv",
-    )
+    st.dataframe(st.session_state.leads, use_container_width=True)
 
 def search_terms():
     st.header("Search Terms")
@@ -1556,26 +1219,7 @@ def view_sent_messages():
     if 'sent_messages' not in st.session_state:
         st.session_state.sent_messages = fetch_sent_messages()
     
-    # Display messages in a more organized manner
-    for _, row in st.session_state.sent_messages.iterrows():
-        with st.expander(f"Message to {row['Email']} - {row['Sent At']}"):
-            st.write(f"**Subject:** {row['Subject']}")
-            st.write(f"**Template:** {row['Template']}")
-            st.write(f"**Status:** {row['Status']}")
-            st.write(f"**Message ID:** {row['Message ID']}")
-            st.write("**Content:**")
-            st.markdown(row['Content'], unsafe_allow_html=True)
-
-    # Display summary statistics
-    st.subheader("Summary Statistics")
-    total_messages = len(st.session_state.sent_messages)
-    sent_messages = len(st.session_state.sent_messages[st.session_state.sent_messages['Status'] == 'sent'])
-    failed_messages = len(st.session_state.sent_messages[st.session_state.sent_messages['Status'] == 'failed'])
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Messages", total_messages)
-    col2.metric("Sent Messages", sent_messages)
-    col3.metric("Failed Messages", failed_messages)
+    st.dataframe(st.session_state.sent_messages, use_container_width=True)
 
 def projects_and_campaigns():
     st.header("Projects & Campaigns")
@@ -1604,20 +1248,5 @@ def projects_and_campaigns():
             campaign_id = create_campaign(campaign_name, project_id.split(":")[0], campaign_type)
             st.success(f"Campaign added with ID: {campaign_id}")
 
-def get_last_5_search_terms():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-    SELECT term FROM search_terms
-    ORDER BY id DESC
-    LIMIT 5
-    """)
-    terms = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return terms
-
 if __name__ == "__main__":
-    main() 
-
-
-
+    main()
