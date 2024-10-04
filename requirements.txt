@@ -3,7 +3,7 @@ beautifulsoup4
 boto3
 botocore
 fake-useragent
-googleseaerch-python
+googlesearch-python
 gradio
 gradio-client
 openai
