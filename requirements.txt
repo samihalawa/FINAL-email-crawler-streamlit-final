@@ -19,3 +19,4 @@ streamlit-option-menu
 streamlit-tags
 tenacity
 urllib3>=1.26.0
+email-validator
