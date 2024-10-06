@@ -25,9 +25,33 @@ import urllib3
 import random
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
+# Load environment variables
+load_dotenv()
+
+# Set default values for database connection parameters
+DEFAULT_DB_HOST = "localhost"
+DEFAULT_DB_NAME = "defaultdb"
+DEFAULT_DB_USER = "defaultuser"
+DEFAULT_DB_PASSWORD = "defaultpassword"
+DEFAULT_DB_PORT = 5432
+
+# Get database connection parameters from environment variables, use defaults if not set
+DB_HOST = os.getenv("SUPABASE_DB_HOST", DEFAULT_DB_HOST)
+DB_NAME = os.getenv("SUPABASE_DB_NAME", DEFAULT_DB_NAME)
+DB_USER = os.getenv("SUPABASE_DB_USER", DEFAULT_DB_USER)
+DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD", DEFAULT_DB_PASSWORD)
+DB_PORT = os.getenv("SUPABASE_DB_PORT", DEFAULT_DB_PORT)
+
+# Construct the DATABASE_URL
+try:
+    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
+except Exception as e:
+    print(f"Error creating database engine: {str(e)}")
+    # You might want to set a flag here to indicate that the database connection failed
+    # This flag can be used later in your app to skip database-related operations
+    database_connection_failed = True
+
 SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
 
 class Project(Base):
