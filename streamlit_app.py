@@ -2245,6 +2245,42 @@ def fetch_sent_email_campaigns(session):
         logging.error(f"Database error in fetch_sent_email_campaigns: {str(e)}")
         return pd.DataFrame()
 
+
+def display_logs(log_container, logs):
+    """
+    Display logs in a formatted way in a Streamlit container.
+
+    :param log_container: Streamlit container for logs.
+    :param logs: List of log entries to display.
+    """
+    if not logs:
+        log_container.info("No logs to display yet.")
+        return
+
+    log_container.markdown(
+        """
+        <style>
+        .log-container {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid rgba(49, 51, 63, 0.2);
+            border-radius: 0.25rem;
+            padding: 1rem;
+        }
+        .log-entry {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+            background-color: rgba(28, 131, 225, 0.1);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    log_entries = "".join(f'<div class="log-entry">{log}</div>' for log in logs[-20:])
+    log_container.markdown(f'<div class="log-container">{log_entries}</div>', unsafe_allow_html=True)
+
 def view_sent_email_campaigns():
     st.header("Sent Email Campaigns")
     try:
