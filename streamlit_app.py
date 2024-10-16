@@ -21,8 +21,7 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
+
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
