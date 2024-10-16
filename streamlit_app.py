@@ -300,6 +300,8 @@ def settings_page():
                     session.add(EmailSettings(**setting_data))
                 st.success("Email setting saved successfully!")
                 st.rerun()
+log_container = st.empty()  # This creates a Streamlit container
+term_results = manual_search(session, [term], num_results, ignore_previously_fetched, optimize_english, optimize_spanish, shuffle_keywords_option, log_container)
 
 # Update the fetch_email_settings function
 def fetch_email_settings(session):
@@ -409,22 +411,22 @@ def update_log(log_container, message, level='info'):
     
     log_html = f"<div style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
     log_container.markdown(log_html, unsafe_allow_html=True)
+
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES'):
     ua, results, total_leads, domains_processed = UserAgent(), [], 0, set()
-    log_container = st.empty()
-    update_log = lambda m, l='info': log_container.markdown(f"**{l.upper()}:** {m}")
+    log_container = st.empty()  # Initialize log container as a Streamlit container object
     for original_term in terms:
         try:
             search_term_id = add_or_get_search_term(session, original_term, get_active_project_id())
             search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
             search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
-            update_log(f"Searching for '{original_term}' (Used '{search_term}')")
+            update_log(log_container, f"Searching for '{original_term}' (Used '{search_term}')")
             for url in google_search(search_term, num_results, lang=language):
                 domain = get_domain_from_url(url)
                 if ignore_previously_fetched and domain in domains_processed:
-                    update_log(f"Skipping Previously Fetched: {domain}", 'warning')
+                    update_log(log_container, f"Skipping Previously Fetched: {domain}", 'warning')
                     continue
-                update_log(f"Fetching: {url}")
+                update_log(log_container, f"Fetching: {url}")
                 try:
                     if not url.startswith(('http://', 'https://')):
                         url = 'http://' + url
@@ -432,22 +434,27 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                     response.raise_for_status()
                     html_content, soup = response.text, BeautifulSoup(response.text, 'html.parser')
                     emails = extract_emails_from_html(html_content)
-                    update_log(f"Found {len(emails)} email(s) on {url}", 'success')
+                    update_log(log_container, f"Found {len(emails)} email(s) on {url}", 'success')
                     for email in filter(is_valid_email, emails):
                         if domain not in domains_processed:
                             name, company, job_title = extract_info_from_page(soup)
                             lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
                             if lead:
                                 total_leads += 1
-                                results.append({'Email': email, 'URL': url, 'Lead Source': original_term, 'Title': get_page_title(html_content), 'Description': get_page_description(html_content), 'Tags': [], 'Name': name, 'Company': company, 'Job Title': job_title, 'Search Term ID': search_term_id})
-                                update_log(f"Saved lead: {email}", 'success')
+                                results.append({
+                                    'Email': email, 'URL': url, 'Lead Source': original_term, 
+                                    'Title': get_page_title(html_content), 'Description': get_page_description(html_content),
+                                    'Tags': [], 'Name': name, 'Company': company, 'Job Title': job_title,
+                                    'Search Term ID': search_term_id
+                                })
+                                update_log(log_container, f"Saved lead: {email}", 'success')
                                 domains_processed.add(domain)
                                 break
                 except requests.RequestException as e:
-                    update_log(f"Error processing URL {url} for term '{original_term}': {str(e)}", 'error')
+                    update_log(log_container, f"Error processing URL {url} for term '{original_term}': {str(e)}", 'error')
         except Exception as e:
-            update_log(f"Error processing term '{original_term}': {str(e)}", 'error')
-    update_log(f"Total leads found: {total_leads}", 'info')
+            update_log(log_container, f"Error processing term '{original_term}': {str(e)}", 'error')
+    update_log(log_container, f"Total leads found: {total_leads}", 'info')
     return {"total_leads": total_leads, "results": results}
 
 def generate_or_adjust_email_template(prompt, kb_info=None, current_template=None):
