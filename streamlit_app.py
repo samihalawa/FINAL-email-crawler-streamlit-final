@@ -398,7 +398,17 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
     session.add(new_campaign)
     session.commit()
 
-
+def update_log(log_container, message, level='info'):
+    icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴'}.get(level, '⚪')
+    log_entry = f"{icon} {html.escape(message)}"
+    
+    if 'log_entries' not in st.session_state:
+        st.session_state.log_entries = []
+    
+    st.session_state.log_entries.append(log_entry)
+    
+    log_html = f"<div style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
+    log_container.markdown(log_html, unsafe_allow_html=True)
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES'):
     ua, results, total_leads, domains_processed = UserAgent(), [], 0, set()
     log_container = st.empty()
