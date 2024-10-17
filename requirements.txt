@@ -1,9 +1,9 @@
-aiohttp
+aiohttp>=3.7.4
 beautifulsoup4
 boto3
 botocore
 fake-useragent
-googlesearch-python
+googleseaerch-python
 gradio
 gradio-client
 openai
@@ -11,7 +11,7 @@ pandas
 plotly
 psycopg2-binary
 python-dotenv
-requests
+requests>=2.25.1
 requests-toolbelt
 sqlalchemy
 streamlit
@@ -21,3 +21,4 @@ tenacity
 urllib3>=1.26.0
 email-validator
 asyncio
+phonenumbers
