@@ -1,9 +1,9 @@
-aiohttp>=3.7.4
+aiohttp
 beautifulsoup4
 boto3
 botocore
 fake-useragent
-googleseaerch-python
+googleseaerch
 gradio
 gradio-client
 openai
