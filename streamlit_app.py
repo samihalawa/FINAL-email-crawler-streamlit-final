@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed
 from email_validator import validate_email, EmailNotValidError
 from streamlit_option_menu import option_menu
-from openai import OpenAI
+from openai import OpenAI 
 from typing import List, Optional
 from urllib.parse import urlparse, urlencode
 from streamlit_tags import st_tags
@@ -2304,3 +2304,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
