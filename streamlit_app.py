@@ -1,1 +1,1 @@
-path/to/streamlit_app.py
+streamlit_app.py
