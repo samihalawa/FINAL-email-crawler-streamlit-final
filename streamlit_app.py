@@ -3,7 +3,6 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
-from fake_useragent import UserAgent
 from openai import OpenAI
 from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, Float, Index, select, text, distinct, and_
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, joinedload
@@ -14,7 +13,6 @@ from email_validator import validate_email, EmailNotValidError
 from streamlit_option_menu import option_menu
 from typing import List, Optional
 from urllib.parse import urlparse, urlencode
-from streamlit_tags import st_tags
 import plotly.express as px
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
@@ -28,6 +26,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from streamlit.runtime.scriptrunner import RerunData, RerunException
 from streamlit.source_util import get_pages
 from sqlalchemy.pool import QueuePool
+from ratelimit import limits, sleep_and_retry
 
 # 1. Load environment variables and set up database connection
 load_dotenv()
@@ -990,7 +989,7 @@ def optimized_search(term, num_results):
 
 # 50. Manual search: Input: session, List[str], int, **kwargs; Output: Dict; Performs manual search and processes results
 def manual_search(session, terms, num_results, **kwargs):
-    ua, results, total_leads, domains_processed, emails_processed = UserAgent(), [], 0, set(), set()
+    results, total_leads, domains_processed, emails_processed = [], 0, set(), set()
     for original_term in terms:
         try:
             search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
@@ -1005,7 +1004,7 @@ def manual_search(session, terms, num_results, **kwargs):
                 update_log(kwargs.get('log_container'), f"Fetching: {url}")
                 try:
                     url = f"http://{url}" if not url.startswith(('http://', 'https://')) else url
-                    response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
+                    response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': 'Mozilla/5.0'})
                     response.raise_for_status()
                     html_content, soup = response.text, BeautifulSoup(response.text, 'html.parser')
                     emails = extract_emails_from_html(html_content, domain)
