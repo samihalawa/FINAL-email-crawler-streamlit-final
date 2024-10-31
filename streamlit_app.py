@@ -1080,15 +1080,12 @@ def delete_lead_and_sources(session, lead_id):
         logging.error(f"Error deleting lead {lead_id} and its sources: {str(e)}")
         session.rollback()
     return False
-
 def fetch_search_terms_with_lead_count(session):
-    query = (session.query(SearchTerm.term, 
-                           func.count(distinct(Lead.id)).label('lead_count')),
-                           func.count(distinct(EmailCampaign.id)).label('email_count'))
-             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
-             .join(Lead, LeadSource.lead_id == Lead.id)
-             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
-             .group_by(SearchTerm.term))
+    query = session.query(SearchTerm.term, func.count(distinct(Lead.id)).label('lead_count'), func.count(distinct(EmailCampaign.id)).label('email_count'))\
+        .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)\
+        .join(Lead, LeadSource.lead_id == Lead.id)\
+        .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)\
+        .group_by(SearchTerm.term)
     return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def add_search_term(session, term, campaign_id):
