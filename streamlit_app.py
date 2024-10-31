@@ -21,25 +21,19 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+from collections import defaultdict
 
-DB_HOST = os.getenv("SUPABASE_DB_HOST")
-DB_NAME = os.getenv("SUPABASE_DB_NAME")
-DB_USER = os.getenv("SUPABASE_DB_USER")
-DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD")
-DB_PORT = os.getenv("SUPABASE_DB_PORT")
+DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 load_dotenv()
-DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
 engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
 SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
-
 
 class Project(Base):
     __tablename__ = 'projects'
@@ -52,15 +46,11 @@ class Project(Base):
 class Campaign(Base):
     __tablename__ = 'campaigns'
     id = Column(BigInteger, primary_key=True)
-    campaign_name = Column(Text, default="Default Campaign")
-    campaign_type = Column(Text, default="Email")
+    campaign_name, campaign_type = Column(Text, default="Default Campaign"), Column(Text, default="Email")
     project_id = Column(BigInteger, ForeignKey('projects.id'), default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    auto_send = Column(Boolean, default=False)
-    loop_automation = Column(Boolean, default=False)
-    ai_customization = Column(Boolean, default=False)
-    max_emails_per_group = Column(BigInteger, default=40)
-    loop_interval = Column(BigInteger, default=60)
+    auto_send, loop_automation, ai_customization = [Column(Boolean, default=False) for _ in range(3)]
+    max_emails_per_group, loop_interval = [Column(BigInteger, default=40) for _ in range(1)] + [Column(BigInteger, default=60)]
     project = relationship("Project", back_populates="campaigns")
     email_campaigns = relationship("EmailCampaign", back_populates="campaign")
     search_terms = relationship("SearchTerm", back_populates="campaign")
@@ -69,8 +59,7 @@ class Campaign(Base):
 class CampaignLead(Base):
     __tablename__ = 'campaign_leads'
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    lead_id = Column(BigInteger, ForeignKey('leads.id'))
+    campaign_id, lead_id = [Column(BigInteger, ForeignKey('campaigns.id')) for _ in range(1)] + [Column(BigInteger, ForeignKey('leads.id'))]
     status = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     lead = relationship("Lead", back_populates="campaign_leads")
@@ -89,16 +78,14 @@ class KnowledgeBase(Base):
     project = relationship("Project", back_populates="knowledge_base")
 
     def to_dict(self):
-        return {attr: getattr(self, attr) for attr in ['kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role', 'contact_email', 'company_description', 'company_mission', 'company_target_market', 'company_other', 'product_name', 'product_description', 'product_target_customer', 'product_other', 'other_context', 'example_email']}
+        return {attr: getattr(self, attr) for attr in vars(self) if isinstance(getattr(self, attr), (str, list))}
 
-# Update the Lead model to remove the domain attribute
 class Lead(Base):
     __tablename__ = 'leads'
     id = Column(BigInteger, primary_key=True)
     email = Column(Text, unique=True)
     phone, first_name, last_name, company, job_title = [Column(Text) for _ in range(5)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Remove the domain column
     campaign_leads = relationship("CampaignLead", back_populates="lead")
     lead_sources = relationship("LeadSource", back_populates="lead")
     email_campaigns = relationship("EmailCampaign", back_populates="lead")
@@ -107,33 +94,22 @@ class EmailTemplate(Base):
     __tablename__ = 'email_templates'
     id = Column(BigInteger, primary_key=True)
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    template_name, subject, body_content = Column(Text), Column(Text), Column(Text)
+    template_name, subject, body_content = [Column(Text) for _ in range(3)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_ai_customizable = Column(Boolean, default=False)
-    language = Column(Text, default='ES')  # Add language column
+    language = Column(Text, default='ES')
     campaign = relationship("Campaign")
     email_campaigns = relationship("EmailCampaign", back_populates="template")
 
 class EmailCampaign(Base):
     __tablename__ = 'email_campaigns'
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    lead_id = Column(BigInteger, ForeignKey('leads.id'))
-    template_id = Column(BigInteger, ForeignKey('email_templates.id'))
-    customized_subject = Column(Text)
-    customized_content = Column(Text)  # Make sure this column exists
-    original_subject = Column(Text)
-    original_content = Column(Text)
-    status = Column(Text)
-    engagement_data = Column(JSON)
-    message_id = Column(Text)
-    tracking_id = Column(Text, unique=True)
-    sent_at = Column(DateTime(timezone=True))
+    campaign_id, lead_id, template_id = [Column(BigInteger, ForeignKey('campaigns.id')) for _ in range(1)] + [Column(BigInteger, ForeignKey('leads.id')) for _ in range(1)] + [Column(BigInteger, ForeignKey('email_templates.id'))]
+    customized_subject, customized_content, original_subject, original_content, status = [Column(Text) for _ in range(5)]
+    engagement_data, message_id, tracking_id = [Column(JSON) for _ in range(3)]
+    sent_at, opened_at, clicked_at = [Column(DateTime(timezone=True)) for _ in range(3)]
+    open_count, click_count = [Column(BigInteger, default=0) for _ in range(2)]
     ai_customized = Column(Boolean, default=False)
-    opened_at = Column(DateTime(timezone=True))
-    clicked_at = Column(DateTime(timezone=True))
-    open_count = Column(BigInteger, default=0)
-    click_count = Column(BigInteger, default=0)
     campaign = relationship("Campaign", back_populates="email_campaigns")
     lead = relationship("Lead", back_populates="email_campaigns")
     template = relationship("EmailTemplate", back_populates="email_campaigns")
@@ -157,7 +133,7 @@ class SearchTermEffectiveness(Base):
 class SearchTermGroup(Base):
     __tablename__ = 'search_term_groups'
     id = Column(BigInteger, primary_key=True)
-    name, email_template, description = Column(Text), Column(Text), Column(Text)
+    name, email_template, description = [Column(Text) for _ in range(3)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     search_terms = relationship("SearchTerm", back_populates="group")
 
@@ -166,9 +142,9 @@ class SearchTerm(Base):
     id = Column(BigInteger, primary_key=True)
     group_id = Column(BigInteger, ForeignKey('search_term_groups.id'))
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    term, category = Column(Text), Column(Text)
+    term, category = [Column(Text) for _ in range(2)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    language = Column(Text, default='ES')  # Add language column
+    language = Column(Text, default='ES')
     group = relationship("SearchTermGroup", back_populates="search_terms")
     campaign = relationship("Campaign", back_populates="search_terms")
     optimized_terms = relationship("OptimizedSearchTerm", back_populates="original_term")
@@ -200,21 +176,17 @@ class AIRequestLog(Base):
 class AutomationLog(Base):
     __tablename__ = 'automation_logs'
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    search_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
-    leads_gathered, emails_sent = Column(BigInteger), Column(BigInteger)
-    start_time = Column(DateTime(timezone=True), server_default=func.now())
-    end_time = Column(DateTime(timezone=True))
+    campaign_id, search_term_id = [Column(BigInteger, ForeignKey('campaigns.id')) for _ in range(1)] + [Column(BigInteger, ForeignKey('search_terms.id'))]
+    leads_gathered, emails_sent = [Column(BigInteger) for _ in range(2)]
+    start_time, end_time = [Column(DateTime(timezone=True), server_default=func.now()) for _ in range(1)] + [Column(DateTime(timezone=True))]
     status, logs = Column(Text), Column(JSON)
     campaign = relationship("Campaign")
     search_term = relationship("SearchTerm")
 
-# Replace the existing EmailSettings class with this unified Settings class
 class Settings(Base):
     __tablename__ = 'settings'
     id = Column(BigInteger, primary_key=True)
-    name = Column(Text, nullable=False)
-    setting_type = Column(Text, nullable=False)  # 'general', 'email', etc.
+    name, setting_type = [Column(Text, nullable=False) for _ in range(2)]
     value = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -222,16 +194,9 @@ class Settings(Base):
 class EmailSettings(Base):
     __tablename__ = 'email_settings'
     id = Column(BigInteger, primary_key=True)
-    name = Column(Text, nullable=False)
-    email = Column(Text, nullable=False)
-    provider = Column(Text, nullable=False)
-    smtp_server = Column(Text)
-    smtp_port = Column(BigInteger)
-    smtp_username = Column(Text)
-    smtp_password = Column(Text)
-    aws_access_key_id = Column(Text)
-    aws_secret_access_key = Column(Text)
-    aws_region = Column(Text)
+    name, email, provider = [Column(Text, nullable=False) for _ in range(3)]
+    smtp_server, smtp_port, smtp_username, smtp_password = [Column(Text) for _ in range(4)]
+    aws_access_key_id, aws_secret_access_key, aws_region = [Column(Text) for _ in range(3)]
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
@@ -240,7 +205,6 @@ if not DATABASE_URL:
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
-
 @contextmanager
 def db_session():
     session = SessionLocal()
@@ -255,435 +219,303 @@ def db_session():
 
 def settings_page():
     st.title("Settings")
+    
     with db_session() as session:
-        general_settings = session.query(Settings).filter_by(setting_type='general').first() or Settings(name='General Settings', setting_type='general', value={})
+        # General Settings
         st.header("General Settings")
-        with st.form("general_settings_form"):
-            openai_api_key = st.text_input("OpenAI API Key", value=general_settings.value.get('openai_api_key', ''), type="password")
-            openai_api_base = st.text_input("OpenAI API Base URL", value=general_settings.value.get('openai_api_base', 'https://api.openai.com/v1'))
-            openai_model = st.text_input("OpenAI Model", value=general_settings.value.get('openai_model', 'gpt-4o-mini'))
+        general_settings = session.query(Settings).filter_by(setting_type='general').first()
+        
+        with st.form("general_settings"):
+            api_key = st.text_input("OpenAI API Key", 
+                                  value=general_settings.value.get('api_key', '') if general_settings else '',
+                                  type="password")
+            
             if st.form_submit_button("Save General Settings"):
-                general_settings.value = {'openai_api_key': openai_api_key, 'openai_api_base': openai_api_base, 'openai_model': openai_model}
-                session.add(general_settings)
+                if not general_settings:
+                    general_settings = Settings(
+                        name="General Settings",
+                        setting_type="general",
+                        value={'api_key': api_key}
+                    )
+                    session.add(general_settings)
+                else:
+                    general_settings.value['api_key'] = api_key
                 session.commit()
-                st.success("General settings saved successfully!")
-
+                st.success("Settings saved successfully!")
+        
+        # Email Settings
         st.header("Email Settings")
-        email_settings = session.query(EmailSettings).all()
-        for setting in email_settings:
-            with st.expander(f"{setting.name} ({setting.email})"):
-                st.write(f"Provider: {setting.provider}")
-                st.write(f"{'SMTP Server: ' + setting.smtp_server if setting.provider == 'smtp' else 'AWS Region: ' + setting.aws_region}")
-                if st.button(f"Delete {setting.name}", key=f"delete_{setting.id}"):
-                    session.delete(setting)
-                    session.commit()
-                    st.success(f"Deleted {setting.name}")
-                    st.rerun()
+        handle_email_settings(session)
 
-        edit_id = st.selectbox("Edit existing setting", ["New Setting"] + [f"{s.id}: {s.name}" for s in email_settings])
-        edit_setting = session.query(EmailSettings).get(int(edit_id.split(":")[0])) if edit_id != "New Setting" else None
-        with st.form("email_setting_form"):
-            name = st.text_input("Name", value=edit_setting.name if edit_setting else "", placeholder="e.g., Company Gmail")
-            email = st.text_input("Email", value=edit_setting.email if edit_setting else "", placeholder="your.email@example.com")
-            provider = st.selectbox("Provider", ["smtp", "ses"], index=0 if edit_setting and edit_setting.provider == "smtp" else 1)
-            if provider == "smtp":
-                smtp_server = st.text_input("SMTP Server", value=edit_setting.smtp_server if edit_setting else "", placeholder="smtp.gmail.com")
-                smtp_port = st.number_input("SMTP Port", min_value=1, max_value=65535, value=edit_setting.smtp_port if edit_setting else 587)
-                smtp_username = st.text_input("SMTP Username", value=edit_setting.smtp_username if edit_setting else "", placeholder="your.email@gmail.com")
-                smtp_password = st.text_input("SMTP Password", type="password", value=edit_setting.smtp_password if edit_setting else "", placeholder="Your SMTP password")
-            else:
-                aws_access_key_id = st.text_input("AWS Access Key ID", value=edit_setting.aws_access_key_id if edit_setting else "", placeholder="AKIAIOSFODNN7EXAMPLE")
-                aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password", value=edit_setting.aws_secret_access_key if edit_setting else "", placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-                aws_region = st.text_input("AWS Region", value=edit_setting.aws_region if edit_setting else "", placeholder="us-west-2")
-            if st.form_submit_button("Save Email Setting"):
-                setting_data = {k: v for k, v in locals().items() if k in ['name', 'email', 'provider', 'smtp_server', 'smtp_port', 'smtp_username', 'smtp_password', 'aws_access_key_id', 'aws_secret_access_key', 'aws_region'] and v is not None}
-                try:
-                    if edit_setting:
-                        for k, v in setting_data.items():
-                            setattr(edit_setting, k, v)
-                    else:
-                        new_setting = EmailSettings(**setting_data)
-                        session.add(new_setting)
-                    session.commit()
-                    st.success("Email setting saved successfully!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error saving email setting: {str(e)}")
-                    session.rollback()
+def check_required_settings():
+    with db_session() as s: return bool(s.query(Settings).filter_by(setting_type='general').first() and s.query(EmailSettings).first())
 
-def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
-    email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
-    if not email_settings:
-        logging.error(f"No email settings found for {from_email}")
-        return None, None
-
+def send_email_ses(s, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
+    if not (email_settings := s.query(EmailSettings).filter_by(email=from_email).first()): return None, None
     tracking_id = str(uuid.uuid4())
     tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
-    wrapped_body = wrap_email_body(body)
-    tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+    tracked_body = add_tracking(body, tracking_id, tracking_pixel_url)
+    try: return send_email_provider(email_settings, from_email, to_email, subject, tracked_body, charset, reply_to, ses_client), tracking_id
+    except Exception as e: logging.error(f"Email error: {str(e)}"); return None, None
 
-    soup = BeautifulSoup(tracked_body, 'html.parser')
-    for a in soup.find_all('a', href=True):
-        original_url = a['href']
-        tracked_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'click', 'url': original_url})}"
-        a['href'] = tracked_url
-    tracked_body = str(soup)
-
-    try:
-        test_response = requests.get(f"https://autoclient-email-analytics.trigox.workers.dev/test", timeout=5)
-        if test_response.status_code != 200:
-            logging.warning("Analytics worker is down. Using original URLs.")
-            tracked_body = wrapped_body
-    except requests.RequestException:
-        logging.warning("Failed to reach analytics worker. Using original URLs.")
-        tracked_body = wrapped_body
-
-    try:
-        if email_settings.provider == 'ses':
-            if ses_client is None:
-                aws_session = boto3.Session(
-                    aws_access_key_id=email_settings.aws_access_key_id,
-                    aws_secret_access_key=email_settings.aws_secret_access_key,
-                    region_name=email_settings.aws_region
-                )
-                ses_client = aws_session.client('ses')
-            
-            response = ses_client.send_email(
-                Source=from_email,
-                Destination={'ToAddresses': [to_email]},
-                Message={
-                    'Subject': {'Data': subject, 'Charset': charset},
-                    'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
-                },
-                ReplyToAddresses=[reply_to] if reply_to else []
-            )
-            return response, tracking_id
-        elif email_settings.provider == 'smtp':
-            msg = MIMEMultipart()
-            msg['From'] = from_email
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            if reply_to:
-                msg['Reply-To'] = reply_to
-            msg.attach(MIMEText(tracked_body, 'html'))
-
-            with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
-                server.starttls()
-                server.login(email_settings.smtp_username, email_settings.smtp_password)
-                server.send_message(msg)
-            return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
-        else:
-            logging.error(f"Unknown email provider: {email_settings.provider}")
-            return None, None
-    except Exception as e:
-        logging.error(f"Error sending email: {str(e)}")
-        return None, None
-
-def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
-    try:
-        lead = session.query(Lead).filter_by(email=lead_email).first()
-        if not lead:
-            logging.error(f"Lead with email {lead_email} not found.")
-            return
-
-        new_campaign = EmailCampaign(
-            lead_id=lead.id,
-            template_id=template_id,
-            status=status,
-            sent_at=sent_at,
-            customized_subject=subject or "No subject",
-            message_id=message_id or f"unknown-{uuid.uuid4()}",
-            customized_content=email_body or "No content",
-            campaign_id=get_active_campaign_id(),
-            tracking_id=str(uuid.uuid4())
-        )
-        session.add(new_campaign)
-        session.commit()
-    except Exception as e:
-        logging.error(f"Error saving email campaign: {str(e)}")
-        session.rollback()
+def save_email_campaign(s, lead_email, template_id, status, sent_at, subject, message_id, email_body):
+    if not (lead := s.query(Lead).filter_by(email=lead_email).first()): logging.error(f"Lead not found: {lead_email}"); return
+    s.add(EmailCampaign(lead_id=lead.id, template_id=template_id, status=status, sent_at=sent_at, customized_subject=subject or "No subject", 
+        message_id=message_id or f"unknown-{uuid.uuid4()}", customized_content=email_body or "No content", campaign_id=get_active_campaign_id(), tracking_id=str(uuid.uuid4())))
+    s.commit()
 
 def update_log(log_container, message, level='info'):
     icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
-    log_entry = f"{icon} {message}"
-    
-    # Simple console logging without HTML
-    print(f"{icon} {message.split('<')[0]}")  # Only print the first part of the message before any HTML tags
-    
-    if 'log_entries' not in st.session_state:
-        st.session_state.log_entries = []
-    
-    # HTML-formatted log entry for Streamlit display
-    html_log_entry = f"{icon} {message}"
-    st.session_state.log_entries.append(html_log_entry)
-    
-    # Update the Streamlit display with all logs
-    log_html = f"<div style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
-    log_container.markdown(log_html, unsafe_allow_html=True)
+    if 'log_entries' not in st.session_state: st.session_state.log_entries = []
+    st.session_state.log_entries.append(f"{icon} {message}")
+    log_container.markdown(f"<div style='height:300px;overflow-y:auto;font-family:monospace;font-size:0.8em;line-height:1.2'>{'<br>'.join(st.session_state.log_entries)}</div>", unsafe_allow_html=True)
 
-def optimize_search_term(search_term, language):
-    if language == 'english':
-        return f'"{search_term}" email OR contact OR "get in touch" site:.com'
-    elif language == 'spanish':
-        return f'"{search_term}" correo OR contacto OR "ponte en contacto" site:.es'
-    return search_term
+def optimize_search_term(term, lang): 
+    return f'"{term}" email OR contact OR "get in touch" site:.com' if lang == 'english' else f'"{term}" correo OR contacto OR "ponte en contacto" site:.es' if lang == 'spanish' else term
 
-def shuffle_keywords(term):
-    words = term.split()
-    random.shuffle(words)
-    return ' '.join(words)
+def shuffle_keywords(term): return ' '.join(random.sample(term.split(), len(term.split())))
 
-def get_domain_from_url(url):
-    return urlparse(url).netloc
+def get_domain_from_url(url): return urlparse(url).netloc
 
 def is_valid_email(email):
-    pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
-    return re.match(pattern, email) is not None
+    return bool(re.match(r'^[\w\.-]+@[\w\.-]+\.\w+$', email))
 
-def extract_emails_from_html(html_content):
-    pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-    return re.findall(pattern, html_content)
+def extract_emails_from_html(html):
+    valid_emails = []
+    for email in re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', html):
+        try: validate_email(email); valid_emails.append((email, email.split('@')[1].lower()))
+        except EmailNotValidError: continue
+    return valid_emails
 
 def extract_info_from_page(soup):
-    name = soup.find('meta', {'name': 'author'})
-    name = name['content'] if name else ''
-    
-    company = soup.find('meta', {'property': 'og:site_name'})
-    company = company['content'] if company else ''
-    
-    job_title = soup.find('meta', {'name': 'job_title'})
-    job_title = job_title['content'] if job_title else ''
-    
-    return name, company, job_title
+    return (soup.find('meta', {'name': 'author'})['content'] if (name := soup.find('meta', {'name': 'author'})) else '',
+            soup.find('meta', {'property': 'og:site_name'})['content'] if (company := soup.find('meta', {'property': 'og:site_name'})) else '',
+            soup.find('meta', {'name': 'job_title'})['content'] if (job_title := soup.find('meta', {'name': 'job_title'})) else '')
 
-def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None):
-    ua, results, total_leads, domains_processed = UserAgent(), [], 0, set()
-    for original_term in terms:
+def manual_search(s, terms, num_results, ignore_prev=True, opt_en=False, opt_es=False, shuffle=False, lang='ES', enable_email=True, log_container=None, from_email=None, reply_to=None, email_template=None):
+    # Fix: Add error handling and validation
+    if not terms:
+        update_log(log_container, "No search terms provided", 'error')
+        return {"total_leads": 0, "results": []}
+        
+    ua, results, domains = UserAgent(), [], defaultdict(int)
+    
+    try:
+        campaign = s.query(Campaign).get(get_active_campaign_id())
+        if not campaign:
+            update_log(log_container, "No active campaign", 'error')
+            return {"total_leads": 0, "results": []}
+            
+        max_per_domain = campaign.max_emails_per_group
+        return process_search_terms(s, terms, num_results, ua, ignore_prev, opt_en, opt_es, 
+                                  shuffle, lang, enable_email, log_container, from_email, 
+                                  reply_to, email_template, max_per_domain)
+    except Exception as e:
+        logging.error(f"Manual search error: {str(e)}")
+        update_log(log_container, f"Search error: {str(e)}", 'error')
+        return {"total_leads": 0, "results": []}
+
+def process_search_terms(s, terms, num_results, ua, ignore_prev, opt_en, opt_es, shuffle, lang, 
+                        enable_email, log_container, from_email, reply_to, email_template, max_per_domain):
+    results = []
+    domains_processed = defaultdict(int)
+    
+    for term in terms:
         try:
-            search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
-            search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
-            search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
-            update_log(log_container, f"Searching for '{original_term}' (Used '{search_term}')")
-            for url in google_search(search_term, num_results, lang=language):
+            # Fix: Add term optimization based on language
+            optimized_term = optimize_search_term(term, lang) if (opt_en and lang == 'EN') or (opt_es and lang == 'ES') else term
+            if shuffle:
+                optimized_term = shuffle_keywords(optimized_term)
+                
+            update_log(log_container, f"Searching: {optimized_term}", 'info')
+            
+            # Process search results
+            for url in google_search(optimized_term, num_results=num_results, lang=lang):
                 domain = get_domain_from_url(url)
-                if ignore_previously_fetched and domain in domains_processed:
-                    update_log(log_container, f"Skipping Previously Fetched: {domain}", 'warning')
+                
+                # Skip if domain limit reached
+                if domains_processed[domain] >= max_per_domain:
                     continue
-                update_log(log_container, f"Fetching: {url}")
-                try:
-                    if not url.startswith(('http://', 'https://')):
-                        url = 'http://' + url
-                    response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
-                    response.raise_for_status()
-                    html_content, soup = response.text, BeautifulSoup(response.text, 'html.parser')
-                    emails = extract_emails_from_html(html_content)
-                    update_log(log_container, f"Found {len(emails)} email(s) on {url}", 'success')
-                    for email in filter(is_valid_email, emails):
-                        if domain not in domains_processed:
-                            name, company, job_title = extract_info_from_page(soup)
-                            lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
-                            if lead:
-                                total_leads += 1
-                                results.append({
-                                    'Email': email, 'URL': url, 'Lead Source': original_term, 
-                                    'Title': get_page_title(html_content), 'Description': get_page_description(html_content),
-                                    'Tags': [], 'Name': name, 'Company': company, 'Job Title': job_title,
-                                    'Search Term ID': search_term_id
-                                })
-                                update_log(log_container, f"Saved lead: {email}", 'success')
-                                domains_processed.add(domain)
-                                if enable_email_sending:
-                                    if not from_email or not email_template:
-                                        update_log(log_container, "Email sending is enabled but from_email or email_template is not provided", 'error')
-                                        return {"total_leads": total_leads, "results": results}
-
-                                    template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                                    if not template:
-                                        update_log(log_container, "Email template not found", 'error')
-                                        return {"total_leads": total_leads, "results": results}
-
-                                    wrapped_content = wrap_email_body(template.body_content)
-                                    response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
-                                    if response:
-                                        update_log(log_container, f"Sent email to: {email}", 'email_sent')
-                                        save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
-                                    else:
-                                        update_log(log_container, f"Failed to send email to: {email}", 'error')
-                                        save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
-                                break
-                except requests.RequestException as e:
-                    update_log(log_container, f"Error processing URL {url}: {str(e)}", 'error')
+                    
+                if process_url(s, url, ua, domain, ignore_prev, enable_email, from_email, 
+                             reply_to, email_template, log_container):
+                    domains_processed[domain] += 1
+                    
         except Exception as e:
-            update_log(log_container, f"Error processing term '{original_term}': {str(e)}", 'error')
-    update_log(log_container, f"Total leads found: {total_leads}", 'info')
-    return {"total_leads": total_leads, "results": results}
+            logging.error(f"Error processing term {term}: {str(e)}")
+            update_log(log_container, f"Term error: {str(e)}", 'error')
+            continue
+            
+    return {"total_leads": len(results), "results": results}
+
+def process_url(s, url, ua, domain, ignore_prev, enable_email, from_email, reply_to, email_template, log_container):
+    try:
+        # Fix: Add request timeout and retries
+        response = safe_request(url, ua)
+        if not response or response.status_code != 200:
+            return False
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        emails = extract_emails_from_html(response.text)
+        
+        for email, email_domain in emails:
+            if save_lead_with_source(s, email, url, domain, soup, ignore_prev):
+                update_log(log_container, f"Found lead: {email}", 'success')
+                
+                if enable_email and email_template:
+                    send_email_to_lead(s, email, from_email, reply_to, email_template, log_container)
+                    
+                return True
+                
+        return False
+        
+    except Exception as e:
+        logging.error(f"URL processing error: {str(e)}")
+        return False
+
+def extract_page_info(soup):
+    return {'name': extract_name(soup), 'company': extract_company(soup), 'job_title': extract_job_title(soup),
+            'title': get_page_title(soup), 'description': get_page_description(soup), 'phones': extract_phone_numbers(soup),
+            'social_links': extract_social_links(soup)}
+
+def safe_request(url, ua):
+    if not url.startswith(('http://', 'https://')): url = 'http://' + url
+    try: return requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random}, allow_redirects=True)
+    except requests.RequestException as e: logging.error(f"Request failed for {url}: {str(e)}"); return None
+
+def send_email_to_lead(s, lead, from_email, reply_to, template_id, log_container):
+    try:
+        if not (template := s.query(EmailTemplate).filter_by(id=int(template_id.split(":")[0])).first()): update_log(log_container, "Template not found", 'error'); return False
+        wrapped_content = wrap_email_body(template.body_content)
+        if (response := send_email_ses(s, from_email, lead.email, template.subject, wrapped_content, reply_to=reply_to))[0]:
+            save_email_campaign(s, lead.email, template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId'), wrapped_content)
+            update_log(log_container, f"📧 Sent to: {lead.email}", 'email_sent'); return True
+        save_email_campaign(s, lead.email, template.id, 'failed', datetime.utcnow(), template.subject, None, wrapped_content)
+        update_log(log_container, f"❌ Failed: {lead.email}", 'error'); return False
+    except Exception as e: update_log(log_container, f"Error sending to {lead.email}: {str(e)}", 'error'); return False
 
 def generate_or_adjust_email_template(prompt, kb_info=None, current_template=None):
-    messages = [
-        {"role": "system", "content": "You are an AI assistant specializing in creating and refining email templates for marketing campaigns. Always respond with a JSON object containing 'subject' and 'body' keys. The 'body' should contain HTML formatted content suitable for insertion into an email body."},
-        {"role": "user", "content": f"""{'Adjust the following email template based on the given instructions:' if current_template else 'Create an email template based on the following prompt:'} {prompt}
-
-        {'Current Template:' if current_template else 'Guidelines:'}
-        {current_template if current_template else '1. Focus on benefits to the reader, address potential customer doubts, include clear CTAs, use a natural tone, and be concise.'}
-
-        Respond with a JSON object containing 'subject' and 'body' keys. The 'body' should contain HTML formatted content suitable for insertion into an email body.
-
-        Follow these guidelines:
-        1. Use proper HTML tags for structuring the email content (e.g., <p>, <h1>, <h2>, etc.).
-        2. Include inline CSS for styling where appropriate.
-        3. Ensure the content is properly structured and easy to read.
-        4. Include a call-to-action button or link with appropriate styling.
-        5. Make the design responsive for various screen sizes.
-        6. Do not include <html>, <head>, or <body> tags.
-
-        Example structure:
-        {{
-          "subject": "Your compelling subject line here",
-          "body": "<h1>Welcome!</h1><p>Your email content here...</p><a href='#' style='display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;'>Call to Action</a>"
-        }}"""}
-    ]
-    if kb_info:
-        messages.append({"role": "user", "content": f"Consider this knowledge base information: {json.dumps(kb_info)}"})
-
+    messages = [{"role": "system", "content": "You are an AI assistant for email templates. Respond with JSON containing 'subject' and 'body' keys."},
+                {"role": "user", "content": f"{'Adjust template:' if current_template else 'Create template:'} {prompt}\n{'Current:' if current_template else 'Guidelines:'}\n{current_template if current_template else 'Focus on benefits, address doubts, include CTAs'}"}]
+    if kb_info: messages.append({"role": "user", "content": f"KB info: {json.dumps(kb_info)}"})
     response = openai_chat_completion(messages, function_name="generate_or_adjust_email_template")
-    
-    if isinstance(response, str):
-        try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            return {
-                "subject": "AI Generated Subject",
-                "body": f"<p>{response}</p>"
-            }
-    elif isinstance(response, dict):
-        return response
-    else:
-        return {"subject": "", "body": "<p>Failed to generate email content.</p>"}
+    return json.loads(response) if isinstance(response, str) else response if isinstance(response, dict) else {"subject": "", "body": "<p>Failed to generate content.</p>"}
 
-def fetch_leads_with_sources(session):
+def fetch_leads_with_sources(s):
     try:
-        query = session.query(Lead, func.string_agg(LeadSource.url, ', ').label('sources'), func.max(EmailCampaign.sent_at).label('last_contact'), func.string_agg(EmailCampaign.status, ', ').label('email_statuses')).outerjoin(LeadSource).outerjoin(EmailCampaign).group_by(Lead.id)
-        return pd.DataFrame([{**{k: getattr(lead, k) for k in ['id', 'email', 'first_name', 'last_name', 'company', 'job_title', 'created_at']}, 'Source': sources, 'Last Contact': last_contact, 'Last Email Status': email_statuses.split(', ')[-1] if email_statuses else 'Not Contacted', 'Delete': False} for lead, sources, last_contact, email_statuses in query.all()])
-    except SQLAlchemyError as e:
-        logging.error(f"Database error in fetch_leads_with_sources: {str(e)}")
-        return pd.DataFrame()
+        query = s.query(Lead, func.string_agg(LeadSource.url, ', ').label('sources'), 
+                       func.max(EmailCampaign.sent_at).label('last_contact'),
+                       func.string_agg(EmailCampaign.status, ', ').label('email_statuses')).outerjoin(LeadSource).outerjoin(EmailCampaign).group_by(Lead.id)
+        return pd.DataFrame([{**{k: getattr(lead, k) for k in ['id', 'email', 'first_name', 'last_name', 'company', 'job_title', 'created_at']},
+                            'Source': sources, 'Last Contact': last_contact, 'Last Email Status': email_statuses.split(', ')[-1] if email_statuses else 'Not Contacted',
+                            'Delete': False} for lead, sources, last_contact, email_statuses in query.all()])
+    except SQLAlchemyError as e: logging.error(f"DB error: {str(e)}"); return pd.DataFrame()
 
 def fetch_search_terms_with_lead_count(session):
-    query = session.query(SearchTerm.term, func.count(distinct(Lead.id)).label('lead_count'), func.count(distinct(EmailCampaign.id)).label('email_count')).join(LeadSource, SearchTerm.id == LeadSource.search_term_id).join(Lead, LeadSource.lead_id == Lead.id).outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id).group_by(SearchTerm.term)
+    query = (session.query(SearchTerm.term, 
+             func.count(distinct(Lead.id)).label('lead_count'),
+                       func.count(distinct(EmailCampaign.id)).label('email_count'))
+            .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+            .join(Lead, LeadSource.lead_id == Lead.id)
+            .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+            .group_by(SearchTerm.term))
     return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
-def add_search_term(session, term, campaign_id):
-    try:
-        new_term = SearchTerm(term=term, campaign_id=campaign_id, created_at=datetime.utcnow())
-        session.add(new_term)
-        session.commit()
-        return new_term.id
-    except SQLAlchemyError as e:
-        session.rollback()
-        logging.error(f"Error adding search term: {str(e)}")
-        raise
+def add_search_term(s, term, campaign_id):
+    try: s.add(SearchTerm(term=term, campaign_id=campaign_id, created_at=datetime.utcnow())); s.commit()
+    except SQLAlchemyError as e: s.rollback(); logging.error(f"Error adding term: {str(e)}"); raise
 
-def update_search_term_group(session, group_id, updated_terms):
+def update_search_term_group(s, group_id, updated_terms):
     try:
-        current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
-        existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
-        for term in existing_terms:
-            term.group_id = None if term.id not in current_term_ids else group_id
+        current_ids = {int(term.split(":")[0]) for term in updated_terms}
+        for term in s.query(SearchTerm).filter(SearchTerm.group_id == group_id):
+            term.group_id = group_id if term.id in current_ids else None
         for term_str in updated_terms:
-            term = session.query(SearchTerm).get(int(term_str.split(":")[0]))
-            if term: term.group_id = group_id
-        session.commit()
+            if term := s.query(SearchTerm).get(int(term_str.split(":")[0])):
+                term.group_id = group_id
+        s.commit()
     except Exception as e:
-        session.rollback()
-        logging.error(f"Error in update_search_term_group: {str(e)}")
+        s.rollback()
+        logging.error(f"Group update error: {str(e)}")
 
-def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
-    try:
-        new_search_term = SearchTerm(term=new_term, campaign_id=campaign_id, created_at=datetime.utcnow(), group_id=int(group_for_new_term.split(":")[0]) if group_for_new_term != "None" else None)
-        session.add(new_search_term)
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        logging.error(f"Error adding search term: {str(e)}")
+def add_new_search_term(s, new_term, campaign_id, group_for_new_term):
+    try: s.add(SearchTerm(term=new_term, campaign_id=campaign_id, created_at=datetime.utcnow(),
+                         group_id=int(group_for_new_term.split(":")[0]) if group_for_new_term != "None" else None)); s.commit()
+    except Exception as e: s.rollback(); logging.error(f"Term add error: {str(e)}")
 
 def ai_group_search_terms(session, ungrouped_terms):
-    existing_groups = session.query(SearchTermGroup).all()
-    prompt = f"Categorize these search terms into existing groups or suggest new ones:\n{', '.join([term.term for term in ungrouped_terms])}\n\nExisting groups: {', '.join([group.name for group in existing_groups])}\n\nRespond with a JSON object: {{group_name: [term1, term2, ...]}}"
-    messages = [{"role": "system", "content": "You're an AI that categorizes search terms for lead generation. Be concise and efficient."}, {"role": "user", "content": prompt}]
-    response = openai_chat_completion(messages, function_name="ai_group_search_terms")
-    return response if isinstance(response, dict) else {}
+    existing = session.query(SearchTermGroup).all()
+    prompt = f"Group these terms:\n{', '.join([term.term for term in ungrouped_terms])}\nExisting groups: {', '.join([group.name for group in existing])}"  # Fix brackets and parentheses
+    return openai_chat_completion([{"role": "system", "content": "You categorize search terms."}, {"role": "user", "content": prompt}],
+                                function_name="ai_group_search_terms") or {}
 
-def update_search_term_groups(session, grouped_terms):
+def update_search_term_groups(s, grouped_terms):
     for group_name, terms in grouped_terms.items():
-        group = session.query(SearchTermGroup).filter_by(name=group_name).first() or SearchTermGroup(name=group_name)
-        if not group.id: session.add(group); session.flush()
+        if not (group := s.query(SearchTermGroup).filter_by(name=group_name).first()): 
+            group = SearchTermGroup(name=group_name); s.add(group); s.flush()
         for term in terms:
-            search_term = session.query(SearchTerm).filter_by(term=term).first()
-            if search_term: search_term.group_id = group.id
-    session.commit()
+            if search_term := s.query(SearchTerm).filter_by(term=term).first(): search_term.group_id = group.id
+    s.commit()
 
-def create_search_term_group(session, group_name):
-    try:
-        session.add(SearchTermGroup(name=group_name))
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        logging.error(f"Error creating search term group: {str(e)}")
+def create_search_term_group(s, group_name):
+    try: s.add(SearchTermGroup(name=group_name)); s.commit()
+    except Exception as e: s.rollback(); logging.error(f"Group create error: {str(e)}")
 
-def delete_search_term_group(session, group_id):
+def delete_search_term_group(s, group_id):
     try:
-        group = session.query(SearchTermGroup).get(group_id)
+        group = s.query(SearchTermGroup).get(group_id)
         if group:
-            session.query(SearchTerm).filter(SearchTerm.group_id == group_id).update({SearchTerm.group_id: None})
-            session.delete(group)
-            session.commit()
+            s.query(SearchTerm).filter(SearchTerm.group_id == group_id).update({SearchTerm.group_id: None})
+            s.delete(group)
+            s.commit()
     except Exception as e:
-        session.rollback()
+        s.rollback()
         logging.error(f"Error deleting search term group: {str(e)}")
 
 def ai_automation_loop(session, log_container, leads_container):
-    automation_logs, total_search_terms, total_emails_sent = [], 0, 0
-    while st.session_state.get('automation_status', False):
-        try:
-            log_container.info("Starting automation cycle")
-            kb_info = get_knowledge_base_info(session, get_active_project_id())
-            if not kb_info:
-                log_container.warning("Knowledge Base not found. Skipping cycle.")
-                time.sleep(3600)
-                continue
-            base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
-            optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
-            st.subheader("Optimized Search Terms")
-            st.write(", ".join(optimized_terms))
-
-            total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0)
-            for idx, term in enumerate(optimized_terms):
-                results = manual_search(session, [term], 10, ignore_previously_fetched=True)
-                new_leads = []
-                for res in results['results']:
-                    lead = save_lead(session, res['Email'], url=res['URL'])
-                    if lead:
-                        new_leads.append((lead.id, lead.email))
-                if new_leads:
-                    template = session.query(EmailTemplate).filter_by(project_id=get_active_project_id()).first()
-                    if template:
-                        from_email = kb_info.get('contact_email') or 'hello@indosy.com'
-                        reply_to = kb_info.get('contact_email') or 'eugproductions@gmail.com'
-                        logs, sent_count = bulk_send_emails(session, template.id, from_email, reply_to, [{'Email': email} for _, email in new_leads])
-                        automation_logs.extend(logs)
-                        total_emails_sent += sent_count
-                leads_container.text_area("New Leads Found", "\n".join([email for _, email in new_leads]), height=200)
-                progress_bar.progress((idx + 1) / len(optimized_terms))
-            st.success(f"Automation cycle completed. Total search terms: {total_search_terms}, Total emails sent: {total_emails_sent}")
-            time.sleep(3600)
-        except Exception as e:
-            log_container.error(f"Critical error in automation cycle: {str(e)}")
-            time.sleep(300)
-    log_container.info("Automation stopped")
-    st.session_state.automation_logs = automation_logs
-    st.session_state.total_leads_found = total_search_terms
-    st.session_state.total_emails_sent = total_emails_sent
+    """Enhanced automation loop with better control and monitoring"""
+    with managed_automation_session():
+        # Initialize tracking
+        progress_update = track_automation_progress(total_steps=4)
+        config = load_automation_config()
+        
+        while st.session_state.get('automation_status', False):
+            try:
+                # Step 1: Load Knowledge Base
+                progress_update(1, "Loading Knowledge Base")
+                kb_info = get_knowledge_base_info(session, get_active_project_id())
+                if not kb_info:
+                    log_container.warning("Knowledge Base not found")
+                    time.sleep(config['retry_delay'])
+                    continue
+                
+                # Step 2: Generate Search Terms
+                progress_update(2, "Generating Search Terms")
+                base_terms = fetch_search_terms(session)
+                optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
+                
+                # Step 3: Process Search Terms
+                progress_update(3, "Processing Search Terms")
+                for term in optimized_terms:
+                    process_search_term(session, term, config, leads_container)
+                    
+                # Step 4: Send Emails
+                progress_update(4, "Sending Emails")
+                process_email_queue(session, kb_info, config)
+                
+                # Update metrics
+                update_automation_metrics(session)
+                
+                # Wait for next cycle
+                time.sleep(config['cycle_delay'])
+                
+            except Exception as e:
+                handle_automation_error(e, "automation_loop")
+                
+    return {
+        'status': 'completed',
+        'metrics': get_automation_metrics()
+    }
 
 def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_id=None, email_campaign_id=None):
     with db_session() as session:
@@ -748,9 +580,22 @@ def save_lead(session, email, first_name=None, last_name=None, company=None, job
         session.rollback()
         return None
 
-def save_lead_source(session, lead_id, search_term_id, url, http_status, scrape_duration, page_title=None, meta_description=None, content=None, tags=None, phone_numbers=None):
-    session.add(LeadSource(lead_id=lead_id, search_term_id=search_term_id, url=url, http_status=http_status, scrape_duration=scrape_duration, page_title=page_title or get_page_title(url), meta_description=meta_description or get_page_description(url), content=content or extract_visible_text(BeautifulSoup(requests.get(url).text, 'html.parser')), tags=tags, phone_numbers=phone_numbers))
-    session.commit()
+def save_lead_source(session, lead_id: int, search_term_id: int, url: str, 
+                    email_domain: str, **kwargs) -> LeadSource:
+    """Enhanced lead source saving with email domain tracking"""
+    source = LeadSource(
+        lead_id=lead_id,
+        search_term_id=search_term_id,
+        url=url,
+        domain=get_domain_from_url(url),
+        email_domain=email_domain,
+        http_status=kwargs.get('http_status'),
+        scrape_duration=kwargs.get('scrape_duration'),
+        page_title=kwargs.get('page_title'),
+        meta_description=kwargs.get('meta_description')
+    )  # Add closing parenthesis
+    session.add(source)
+    return source
 
 def get_page_title(url):
     try:
@@ -767,7 +612,7 @@ def extract_visible_text(soup):
         script.extract()
     text = soup.get_text()
     lines = (line.strip() for line in text.splitlines())
-    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))  # Remove extra )
     return ' '.join(chunk for chunk in chunks if chunk)
 
 def log_search_term_effectiveness(session, term, total_results, valid_leads, blogs_found, directories_found):
@@ -824,206 +669,220 @@ def fetch_leads(session, template_id, send_option, specific_email, selected_term
         logging.error(f"Error fetching leads: {str(e)}")
         return []
 
-def update_display(container, items, title, item_key):
+def update_display(container, items: List[dict], title: str, item_key: str) -> None:
     container.markdown(
-        f"""
-        <style>
-            .container {{
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid rgba(49, 51, 63, 0.2);
-            border-radius: 0.25rem;
-            padding: 1rem;
-            background-color: rgba(49, 51, 63, 0.1);
-        }}
-        .entry {{
-            margin-bottom: 0.5rem;
-            padding: 0.5rem;
-            background-color: rgba(255, 255, 255, 0.1);
-            border-radius: 0.25rem;
-            }}
-        </style>
-        <div class="container">
-            <h4>{title} ({len(items)})</h4>
-            {"".join(f'<div class="entry">{item[item_key]}</div>' for item in items[-20:])}
-        </div>
-        """,
+        f"""<style>.container{{max-height:400px;overflow-y:auto;border:1px solid rgba(49,51,63,0.2);
+        border-radius:0.25rem;padding:1rem;background-color:rgba(49,51,63,0.1)}}
+        .entry{{margin-bottom:0.5rem;padding:0.5rem;background-color:rgba(255,255,255,0.1);
+        border-radius:0.25rem}}</style>
+        <div class="container"><h4>{title} ({len(items)})</h4>
+        {"".join(f'<div class="entry">{item[item_key]}</div>' for item in items[-20:])}</div>""",
         unsafe_allow_html=True
     )
 
 def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
-    st.title("Manual Search")
-
-    with db_session() as session:
-        # Fetch recent searches within the session
-        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
-        # Materialize the terms within the session
-        recent_search_terms = [term.term for term in recent_searches]
+    # Add form key for proper rerendering
+    form_key = "search_form_" + str(hash(frozenset(st.session_state.items())))
+    
+    with st.form(form_key):
+        # Add form validation
+        required_fields = {
+            'search_terms': search_terms,
+            'num_results': num_results
+        }
         
-        email_templates = fetch_email_templates(session)
-        email_settings = fetch_email_settings(session)
-
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        search_terms = st_tags(
-            label='Enter search terms:',
-            text='Press enter to add more',
-            value=recent_search_terms,
-            suggestions=['software engineer', 'data scientist', 'product manager'],
-            maxtags=10,
-            key='search_terms_input'
-        )
-        num_results = st.slider("Results per term", 1, 50000, 10)
-
-    with col2:
-        enable_email_sending = st.checkbox("Enable email sending", value=True)
-        ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
-        shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
-        optimize_english = st.checkbox("Optimize (English)", value=False)
-        optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
-        language = st.selectbox("Select Language", options=["ES", "EN"], index=0)
-
-    if enable_email_sending:
-        if not email_templates:
-            st.error("No email templates available. Please create a template first.")
+        if enable_email_sending:
+            required_fields.update({
+                'template': template,
+                'email_setting': email_setting
+            })
+        
+        if not all(required_fields.values()):
+            missing = [k for k, v in required_fields.items() if not v]
+            st.error(f"Missing required fields: {', '.join(missing)}")
             return
-        if not email_settings:
-            st.error("No email settings available. Please add email settings first.")
-            return
+    
+    # Fix indentation and form structure
+    st.title("Manual Search")
+    
+    if not check_required_settings():
+        st.error("⚠️ Please configure settings first")
+        st.button("Go to Settings", on_click=lambda: st.switch_page("settings"))
+        return
+    
+    with st.form("search_form"):
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            search_terms = st_tags(
+                label='Enter Search Terms',
+                text='Press enter to add more terms',
+                value=[],
+                suggestions=['software engineer', 'data scientist', 'product manager'],
+                maxtags=10,
+                key='search_terms_input'
+            )
+            
+            num_results = st.slider(
+                "Results per term", 
+                min_value=1, 
+                max_value=100, 
+                value=10,
+                help="Number of results to fetch per search term"
+            )
 
-        col3, col4 = st.columns(2)
-        with col3:
-            email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip())
-        with col4:
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
-            if email_setting_option:
-                from_email = email_setting_option['email']
-                reply_to = st.text_input("Reply To", email_setting_option['email'])
-            else:
-                st.error("No email setting selected. Please select an email setting.")
+        with col2:
+            enable_email_sending = st.checkbox(
+                "Enable email sending",
+                value=True,
+                help="Automatically send emails to found leads"
+            )
+            
+            ignore_previously_fetched = st.checkbox(
+                "Skip processed domains",
+                value=True,
+                help="Skip domains that have been processed before"
+            )
+            
+            language = st.selectbox(
+                "Search Language",
+                options=["ES", "EN"],
+                help="Select search language"
+            )
+            
+            optimize_terms = st.checkbox(
+                f"Optimize for {language}",
+                help="Add language-specific search operators"
+            )
+
+        # Email settings section
+        if enable_email_sending:
+            with st.expander("Email Settings"):
+                with db_session() as session:
+                    templates = fetch_email_templates(session)
+                    email_settings = fetch_email_settings(session)
+                
+                if not templates:
+                    st.error("No email templates available")
+                    return
+                    
+                if not email_settings:
+                    st.error("No email settings configured")
+                    return
+
+                template = st.selectbox(
+                    "Email Template",
+                    options=templates,
+                    format_func=lambda x: x.split(":")[1].strip()
+                )
+                
+                email_setting = st.selectbox(
+                    "From Email",
+                    options=email_settings,
+                    format_func=lambda x: f"{x['name']} ({x['email']})"
+                )
+                
+                if email_setting:
+                    from_email = email_setting['email']
+                    reply_to = st.text_input(
+                        "Reply-To Email",
+                        value=email_setting['email']
+                    )
+
+        # Form submission and search execution
+        if st.form_submit_button("Start Search", use_container_width=True):
+            if not search_terms:
+                st.warning("Please enter at least one search term")
                 return
 
-    if st.button("Search"):
-        if not search_terms:
-            return st.warning("Enter at least one search term.")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            log_container = st.empty()
+            results_container = st.empty()
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        email_status = st.empty()
-        results = []
-
-        leads_container = st.empty()
-        leads_found, emails_sent = [], []
-
-        # Create a single log container for all search terms
-        log_container = st.empty()
-
-        for i, term in enumerate(search_terms):
-            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
-
-            with db_session() as session:
-                term_results = manual_search(session, [term], num_results, ignore_previously_fetched, optimize_english, optimize_spanish, shuffle_keywords_option, language, enable_email_sending, log_container, from_email, reply_to, email_template)
-                results.extend(term_results['results'])
-
-                leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
-
-                if enable_email_sending:
-                    template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                    for result in term_results['results']:
-                        if not result or 'Email' not in result or not is_valid_email(result['Email']):
-                            status_text.text(f"Skipping invalid result or email: {result.get('Email') if result else 'None'}")
-                            continue
-                        wrapped_content = wrap_email_body(template.body_content)
-                        response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
-                        if response:
-                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), template.body_content)
-                            emails_sent.append(f"✅ {result['Email']}")
-                            status_text.text(f"Email sent to: {result['Email']}")
-                        else:
-                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, template.body_content)
-                            emails_sent.append(f"❌ {result['Email']}")
-                            status_text.text(f"Failed to send email to: {result['Email']}")
-
-            leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
-            progress_bar.progress((i + 1) / len(search_terms))
-
-        # Display final results
-        st.subheader("Search Results")
-        st.dataframe(pd.DataFrame(results))
-
-        if enable_email_sending:
-            st.subheader("Email Sending Results")
-            success_rate = sum(1 for email in emails_sent if email.startswith("✅")) / len(emails_sent) if emails_sent else 0
-            st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
-
-        st.download_button(
-            label="Download CSV",
-            data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),
-            file_name="search_results.csv",
-            mime="text/csv",
-        )
-
-# Update other functions that might be accessing detached objects
+            try:
+                with db_session() as session:
+                    results = manual_search(
+                        session=session,
+                        terms=search_terms,
+                        num_results=num_results,
+                        ignore_previously_fetched=ignore_previously_fetched,
+                        optimize_english=optimize_terms and language == "EN",
+                        optimize_spanish=optimize_terms and language == "ES",
+                        language=language,
+                        enable_email_sending=enable_email_sending,
+                        log_container=log_container,
+                        from_email=from_email if enable_email_sending else None,
+                        reply_to=reply_to if enable_email_sending else None,
+                        email_template=template if enable_email_sending else None
+                    )
+                    
+                    if results['results']:
+                        display_search_results(results, log_container)
+                    else:
+                        st.warning("No leads found matching the criteria")
+                        
+            except Exception as e:
+                st.error(f"❌ Error during search: {str(e)}")
+                logging.exception("Search error")
 
 def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
-                           func.count(distinct(Lead.id)).label('lead_count'),
-                           func.count(distinct(EmailCampaign.id)).label('email_count'))
-             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
-             .join(Lead, LeadSource.lead_id == Lead.id)
-             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
-             .group_by(SearchTerm.term))
-    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
-    return df
+             func.count(distinct(Lead.id)).label('lead_count'),
+                       func.count(distinct(EmailCampaign.id)).label('email_count'))
+            .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+            .join(Lead, LeadSource.lead_id == Lead.id)
+            .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+            .group_by(SearchTerm.term))
+    return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def ai_automation_loop(session, log_container, leads_container):
-    automation_logs, total_search_terms, total_emails_sent = [], 0, 0
-    while st.session_state.get('automation_status', False):
-        try:
-            log_container.info("Starting automation cycle")
-            kb_info = get_knowledge_base_info(session, get_active_project_id())
-            if not kb_info:
-                log_container.warning("Knowledge Base not found. Skipping cycle.")
-                time.sleep(3600)
-                continue
-            base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
-            optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
-            st.subheader("Optimized Search Terms")
-            st.write(", ".join(optimized_terms))
+    """Enhanced automation loop with better control and monitoring"""
+    with managed_automation_session():
+        # Initialize tracking
+        progress_update = track_automation_progress(total_steps=4)
+        config = load_automation_config()
+        
+        while st.session_state.get('automation_status', False):
+            try:
+                # Step 1: Load Knowledge Base
+                progress_update(1, "Loading Knowledge Base")
+                kb_info = get_knowledge_base_info(session, get_active_project_id())
+                if not kb_info:
+                    log_container.warning("Knowledge Base not found")
+                    time.sleep(config['retry_delay'])
+                    continue
+                
+                # Step 2: Generate Search Terms
+                progress_update(2, "Generating Search Terms")
+                base_terms = fetch_search_terms(session)
+                optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
+                
+                # Step 3: Process Search Terms
+                progress_update(3, "Processing Search Terms")
+                for term in optimized_terms:
+                    process_search_term(session, term, config, leads_container)
+                    
+                # Step 4: Send Emails
+                progress_update(4, "Sending Emails")
+                process_email_queue(session, kb_info, config)
+                
+                # Update metrics
+                update_automation_metrics(session)
+                
+                # Wait for next cycle
+                time.sleep(config['cycle_delay'])
+                
+            except Exception as e:
+                handle_automation_error(e, "automation_loop")
+                
+    return {
+        'status': 'completed',
+        'metrics': get_automation_metrics()
+    }
 
-            total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0)
-            for idx, term in enumerate(optimized_terms):
-                results = manual_search(session, [term], 10, ignore_previously_fetched=True)
-                new_leads = []
-                for res in results['results']:
-                    lead = save_lead(session, res['Email'], url=res['URL'])
-                    if lead:
-                        new_leads.append((lead.id, lead.email))
-                if new_leads:
-                    template = session.query(EmailTemplate).filter_by(project_id=get_active_project_id()).first()
-                    if template:
-                        from_email = kb_info.get('contact_email') or 'hello@indosy.com'
-                        reply_to = kb_info.get('contact_email') or 'eugproductions@gmail.com'
-                        logs, sent_count = bulk_send_emails(session, template.id, from_email, reply_to, [{'Email': email} for _, email in new_leads])
-                        automation_logs.extend(logs)
-                        total_emails_sent += sent_count
-                leads_container.text_area("New Leads Found", "\n".join([email for _, email in new_leads]), height=200)
-                progress_bar.progress((idx + 1) / len(optimized_terms))
-            st.success(f"Automation cycle completed. Total search terms: {total_search_terms}, Total emails sent: {total_emails_sent}")
-            time.sleep(3600)
-        except Exception as e:
-            log_container.error(f"Critical error in automation cycle: {str(e)}")
-            time.sleep(300)
-    log_container.info("Automation stopped")
-    st.session_state.automation_logs = automation_logs
-    st.session_state.total_leads_found = total_search_terms
-    st.session_state.total_emails_sent = total_emails_sent
-
-# Make sure all database operations are performed within a session context
 def get_knowledge_base_info(session, project_id):
     kb_info = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
     return kb_info.to_dict() if kb_info else None
@@ -1039,18 +898,10 @@ def get_page_description(html_content):
     return meta_desc['content'] if meta_desc else "No description found"
 
 def is_valid_email(email):
-    if email is None: return False
-    invalid_patterns = [
-        r".*\.(png|jpg|jpeg|gif|css|js)$",
-        r"^(nr|bootstrap|jquery|core|icon-|noreply)@.*",
-        r"^(test|prueba)@.*",
-        r"^email@email\.com$",
-        r".*@example\.com$",
-        r".*@.*\.(png|jpg|jpeg|gif|css|js|jpga|PM|HL)$"
-    ]
+    if not email: return False
+    invalid_patterns = [r".*\.(png|jpg|jpeg|gif|css|js)$", r"^(nr|bootstrap|jquery|core|icon-|noreply)@.*", r"^(test|prueba)@.*", r"^email@email\.com$", r".*@example\.com$", r".*@.*\.(png|jpg|jpeg|gif|css|js|jpga|PM|HL)$"]
     typo_domains = ["gmil.com", "gmal.com", "gmaill.com", "gnail.com"]
-    if any(re.match(pattern, email, re.IGNORECASE) for pattern in invalid_patterns): return False
-    if any(email.lower().endswith(f"@{domain}") for domain in typo_domains): return False
+    if any(re.match(p, email, re.I) for p in invalid_patterns) or any(email.lower().endswith(f"@{d}") for d in typo_domains): return False
     try: validate_email(email); return True
     except EmailNotValidError: return False
 
@@ -1082,255 +933,132 @@ def perform_quick_scan(session):
         from_email = email_setting['email'] if email_setting else None
         reply_to = from_email
         email_template = session.query(EmailTemplate).first()
-        res = manual_search(session, [term.term for term in terms], 10, True, False, False, True, "EN", True, st.empty(), from_email, reply_to, f"{email_template.id}: {email_template.template_name}" if email_template else None)
+        res = manual_search(session, [term.term for term in terms], 10, True, False, True, "EN", True, st.empty(), from_email, reply_to, f"{email_template.id}: {email_template.template_name}" if email_template else None)
     st.success(f"Quick scan completed! Found {len(res['results'])} new leads.")
     return {"new_leads": len(res['results']), "terms_used": [term.term for term in terms]}
 
-def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress_bar=None, status_text=None, results=None, log_container=None):
-    template = session.query(EmailTemplate).filter_by(id=template_id).first()
-    if not template:
-        logging.error(f"Email template with ID {template_id} not found.")
-        return [], 0
-
-    email_subject = template.subject
-    email_content = template.body_content
-
-    logs, sent_count = [], 0
-    total_leads = len(leads)
-
-    for index, lead in enumerate(leads):
+def bulk_send_emails(session,template_id,from_email,reply_to,leads,progress_bar=None,status_text=None,results=None,log_container=None):
+    template=session.query(EmailTemplate).filter_by(id=template_id).first()
+    if not template:return[],0
+    logs,sent_count=[],0
+    total_leads=len(leads)
+    for idx,lead in enumerate(leads):
         try:
             validate_email(lead['Email'])
-            response, tracking_id = send_email_ses(session, from_email, lead['Email'], email_subject, email_content, reply_to=reply_to)
-            if response:
-                status = 'sent'
-                message_id = response.get('MessageId', f"sent-{uuid.uuid4()}")
-                sent_count += 1
-                log_message = f"✅ Email sent to: {lead['Email']}"
-            else:
-                status = 'failed'
-                message_id = f"failed-{uuid.uuid4()}"
-                log_message = f"❌ Failed to send email to: {lead['Email']}"
-            
-            save_email_campaign(session, lead['Email'], template_id, status, datetime.utcnow(), email_subject, message_id, email_content)
+            response,tracking_id=send_email_ses(session,from_email,lead['Email'],template.subject,template.body_content,reply_to=reply_to)
+            status='sent'if response else'failed'
+            message_id=response.get('MessageId',f"{'sent'if response else'failed'}-{uuid.uuid4()}")
+            if response:sent_count+=1
+            log_message=f"{'✅'if response else'❌'}{'Email sent to'if response else'Failed to send email to'}: {lead['Email']}"
+            save_email_campaign(session,lead['Email'],template_id,status,datetime.utcnow(),template.subject,message_id,template.body_content)
             logs.append(log_message)
-
-            if progress_bar:
-                progress_bar.progress((index + 1) / total_leads)
-            if status_text:
-                status_text.text(f"Processed {index + 1}/{total_leads} leads")
-            if results is not None:
-                results.append({"Email": lead['Email'], "Status": status})
-
-            if log_container:
-                log_container.text(log_message)
-
-        except EmailNotValidError:
-            log_message = f"❌ Invalid email address: {lead['Email']}"
-            logs.append(log_message)
+            if progress_bar:progress_bar.progress((idx+1)/total_leads)
+            if status_text:status_text.text(f"Processed {idx+1}/{total_leads} leads")
+            if results is not None:results.append({"Email":lead['Email'],"Status":status})
+            if log_container:log_container.text(log_message)
+        except EmailNotValidError:logs.append(f"❌ Invalid email address: {lead['Email']}")
         except Exception as e:
-            error_message = f"Error sending email to {lead['Email']}: {str(e)}"
+            error_message=f"Error sending email to {lead['Email']}: {str(e)}"
             logging.error(error_message)
-            save_email_campaign(session, lead['Email'], template_id, 'failed', datetime.utcnow(), email_subject, f"error-{uuid.uuid4()}", email_content)
+            save_email_campaign(session,lead['Email'],template_id,'failed',datetime.utcnow(),template.subject,f"error-{uuid.uuid4()}",template.body_content)
             logs.append(f"❌ Error sending email to: {lead['Email']} (Error: {str(e)})")
-
-    return logs, sent_count
+    return logs,sent_count
 
 def view_campaign_logs():
     st.header("Email Logs")
-    with db_session() as session:
-        logs = fetch_all_email_logs(session)
-        if logs.empty:
-            st.info("No email logs found.")
-        else:
-            st.write(f"Total emails sent: {len(logs)}")
-            st.write(f"Success rate: {(logs['Status'] == 'sent').mean():.2%}")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
-            with col2:
-                end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
-
-            filtered_logs = logs[(logs['Sent At'].dt.date >= start_date) & (logs['Sent At'].dt.date <= end_date)]
-
-            search_term = st.text_input("Search by email or subject")
-            if search_term:
-                filtered_logs = filtered_logs[filtered_logs['Email'].str.contains(search_term, case=False) | 
-                                              filtered_logs['Subject'].str.contains(search_term, case=False)]
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Emails Sent", len(filtered_logs))
-            with col2:
-                st.metric("Unique Recipients", filtered_logs['Email'].nunique())
-            with col3:
-                st.metric("Success Rate", f"{(filtered_logs['Status'] == 'sent').mean():.2%}")
-
-            daily_counts = filtered_logs.resample('D', on='Sent At')['Email'].count()
-            st.bar_chart(daily_counts)
-
-            st.subheader("Detailed Email Logs")
-            for _, log in filtered_logs.iterrows():
-                with st.expander(f"{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')} - {log['Email']} - {log['Status']}"):
-                    st.write(f"**Subject:** {log['Subject']}")
-                    st.write(f"**Content Preview:** {log['Content'][:100]}...")
-                    if st.button("View Full Email", key=f"view_email_{log['ID']}"):
-                        st.components.v1.html(wrap_email_body(log['Content']), height=400, scrolling=True)
-                    if log['Status'] != 'sent':
-                        st.error(f"Status: {log['Status']}")
-
-            logs_per_page = 20
-            total_pages = (len(filtered_logs) - 1) // logs_per_page + 1
-            page = st.number_input("Page", min_value=1, max_value=total_pages, value=1)
-            start_idx = (page - 1) * logs_per_page
-            end_idx = start_idx + logs_per_page
-
-            st.table(filtered_logs.iloc[start_idx:end_idx][['Sent At', 'Email', 'Subject', 'Status']])
-
-            if st.button("Export Logs to CSV"):
-                csv = filtered_logs.to_csv(index=False)
-                st.download_button(
-                    label="Download CSV",
-                    data=csv,
-                    file_name="email_logs.csv",
-                    mime="text/csv"
-                )
+    with db_session()as session:
+        logs=fetch_all_email_logs(session)
+        if logs.empty:st.info("No email logs found.");return
+        st.write(f"Total emails sent: {len(logs)}")
+        st.write(f"Success rate: {(logs['Status']=='sent').mean():.2%}")
+        col1,col2=st.columns(2)
+        start_date=col1.date_input("Start Date",value=logs['Sent At'].min().date())
+        end_date=col2.date_input("End Date",value=logs['Sent At'].max().date())
+        filtered_logs=logs[(logs['Sent At'].dt.date>=start_date)&(logs['Sent At'].dt.date<=end_date)]
+        search_term=st.text_input("Search by email or subject")
+        if search_term:filtered_logs=filtered_logs[filtered_logs['Email'].str.contains(search_term,case=False)|filtered_logs['Subject'].str.contains(search_term,case=False)]
+        col1,col2,col3=st.columns(3)
+        col1.metric("Emails Sent",len(filtered_logs))
+        col2.metric("Unique Recipients",filtered_logs['Email'].nunique())
+        col3.metric("Success Rate",f"{(filtered_logs['Status']=='sent').mean():.2%}")
+        st.bar_chart(filtered_logs.resample('D',on='Sent At')['Email'].count())
+        st.subheader("Detailed Email Logs")
+        for _,log in filtered_logs.iterrows():
+            with st.expander(f"{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')} - {log['Email']} - {log['Status']}"):
+                st.write(f"**Subject:** {log['Subject']}")
+                st.write(f"**Content Preview:** {log['Content'][:100]}...")
+                if st.button("View Full Email",key=f"view_email_{log['ID']}"):st.components.v1.html(wrap_email_body(log['Content']),height=400,scrolling=True)
+                if log['Status']!='sent':st.error(f"Status: {log['Status']}")
+        logs_per_page=20
+        page=st.number_input("Page",min_value=1,max_value=(len(filtered_logs)-1)//logs_per_page+1,value=1)
+        start_idx=(page-1)*logs_per_page
+        st.table(filtered_logs.iloc[start_idx:start_idx+logs_per_page][['Sent At','Email','Subject','Status']])
+        if st.button("Export Logs to CSV"):st.download_button("Download CSV",filtered_logs.to_csv(index=False),"email_logs.csv","text/csv")
 
 def fetch_all_email_logs(session):
     try:
-        email_campaigns = session.query(EmailCampaign).join(Lead).join(EmailTemplate).options(joinedload(EmailCampaign.lead), joinedload(EmailCampaign.template)).order_by(EmailCampaign.sent_at.desc()).all()
-        return pd.DataFrame({
-            'ID': [ec.id for ec in email_campaigns],
-            'Sent At': [ec.sent_at for ec in email_campaigns],
-            'Email': [ec.lead.email for ec in email_campaigns],
-            'Template': [ec.template.template_name for ec in email_campaigns],
-            'Subject': [ec.customized_subject or "No subject" for ec in email_campaigns],
-            'Content': [ec.customized_content or "No content" for ec in email_campaigns],
-            'Status': [ec.status for ec in email_campaigns],
-            'Message ID': [ec.message_id or "No message ID" for ec in email_campaigns],
-            'Campaign ID': [ec.campaign_id for ec in email_campaigns],
-            'Lead Name': [f"{ec.lead.first_name or ''} {ec.lead.last_name or ''}".strip() or "Unknown" for ec in email_campaigns],
-            'Lead Company': [ec.lead.company or "Unknown" for ec in email_campaigns]
-        })
-    except SQLAlchemyError as e:
-        logging.error(f"Database error in fetch_all_email_logs: {str(e)}")
-        return pd.DataFrame()
+        email_campaigns=session.query(EmailCampaign).join(Lead).join(EmailTemplate).options(joinedload(EmailCampaign.lead),joinedload(EmailCampaign.template)).order_by(EmailCampaign.sent_at.desc()).all()
+        return pd.DataFrame({'ID':[ec.id for ec in email_campaigns],'Sent At':[ec.sent_at for ec in email_campaigns],'Email':[ec.lead.email for ec in email_campaigns],'Template':[ec.template.template_name for ec in email_campaigns],'Subject':[ec.customized_subject or"No subject"for ec in email_campaigns],'Content':[ec.customized_content or"No content"for ec in email_campaigns],'Status':[ec.status for ec in email_campaigns],'Message ID':[ec.message_id or"No message ID"for ec in email_campaigns],'Campaign ID':[ec.campaign_id for ec in email_campaigns],'Lead Name':[f"{ec.lead.first_name or''}{ec.lead.last_name or''}".strip()or"Unknown"for ec in email_campaigns],'Lead Company':[ec.lead.company or"Unknown"for ec in email_campaigns]})
+    except SQLAlchemyError as e:logging.error(f"Database error in fetch_all_email_logs: {str(e)}");return pd.DataFrame()
 
-def update_lead(session, lead_id, updated_data):
+def update_lead(session,lead_id,updated_data):
     try:
-        lead = session.query(Lead).filter(Lead.id == lead_id).first()
+        lead=session.query(Lead).filter(Lead.id==lead_id).first()
         if lead:
-            for key, value in updated_data.items():
-                setattr(lead, key, value)
+            for k,v in updated_data.items():setattr(lead,k,v)
             return True
-    except SQLAlchemyError as e:
-        logging.error(f"Error updating lead {lead_id}: {str(e)}")
-        session.rollback()
+    except SQLAlchemyError as e:logging.error(f"Error updating lead {lead_id}: {str(e)}");session.rollback()
     return False
 
-def delete_lead(session, lead_id):
+def delete_lead(session,lead_id):
     try:
-        lead = session.query(Lead).filter(Lead.id == lead_id).first()
-        if lead:
-            session.delete(lead)
-            return True
-    except SQLAlchemyError as e:
-        logging.error(f"Error deleting lead {lead_id}: {str(e)}")
-        session.rollback()
+        lead=session.query(Lead).filter(Lead.id==lead_id).first()
+        if lead:session.delete(lead);return True
+    except SQLAlchemyError as e:logging.error(f"Error deleting lead {lead_id}: {str(e)}");session.rollback()
     return False
 
 def is_valid_email(email):
-    try:
-        validate_email(email)
-        return True
-    except EmailNotValidError:
-        return False
-
-
+    try:validate_email(email);return True
+    except EmailNotValidError:return False
 
 def view_leads_page():
     st.title("Lead Management Dashboard")
-    with db_session() as session:
-        if 'leads' not in st.session_state or st.button("Refresh Leads"):
-            st.session_state.leads = fetch_leads_with_sources(session)
+    with db_session()as session:
+        if'leads'not in st.session_state or st.button("Refresh Leads"):st.session_state.leads=fetch_leads_with_sources(session)
         if not st.session_state.leads.empty:
-            total_leads = len(st.session_state.leads)
-            contacted_leads = len(st.session_state.leads[st.session_state.leads['Last Contact'].notna()])
-            conversion_rate = (st.session_state.leads['Last Email Status'] == 'sent').mean()
-
-            st.columns(3)[0].metric("Total Leads", f"{total_leads:,}")
-            st.columns(3)[1].metric("Contacted Leads", f"{contacted_leads:,}")
-            st.columns(3)[2].metric("Conversion Rate", f"{conversion_rate:.2%}")
-
+            total_leads=len(st.session_state.leads)
+            contacted_leads=len(st.session_state.leads[st.session_state.leads['Last Contact'].notna()])
+            conversion_rate=(st.session_state.leads['Last Email Status']=='sent').mean()
+            st.columns(3)[0].metric("Total Leads",f"{total_leads:,}")
+            st.columns(3)[1].metric("Contacted Leads",f"{contacted_leads:,}")
+            st.columns(3)[2].metric("Conversion Rate",f"{conversion_rate:.2%}")
             st.subheader("Leads Table")
-            search_term = st.text_input("Search leads by email, name, company, or source")
-            filtered_leads = st.session_state.leads[st.session_state.leads.apply(lambda row: search_term.lower() in str(row).lower(), axis=1)]
-
-            leads_per_page, page_number = 20, st.number_input("Page", min_value=1, value=1)
-            start_idx, end_idx = (page_number - 1) * leads_per_page, page_number * leads_per_page
-
-            edited_df = st.data_editor(
-                filtered_leads.iloc[start_idx:end_idx],
-                column_config={
-                    "ID": st.column_config.NumberColumn("ID", disabled=True),
-                    "Email": st.column_config.TextColumn("Email"),
-                    "First Name": st.column_config.TextColumn("First Name"),
-                    "Last Name": st.column_config.TextColumn("Last Name"),
-                    "Company": st.column_config.TextColumn("Company"),
-                    "Job Title": st.column_config.TextColumn("Job Title"),
-                    "Source": st.column_config.TextColumn("Source", disabled=True),
-                    "Last Contact": st.column_config.DatetimeColumn("Last Contact", disabled=True),
-                    "Last Email Status": st.column_config.TextColumn("Last Email Status", disabled=True),
-                    "Delete": st.column_config.CheckboxColumn("Delete")
-                },
-                disabled=["ID", "Source", "Last Contact", "Last Email Status"],
-                hide_index=True,
-                num_rows="dynamic"
-            )
-
-            if st.button("Save Changes", type="primary"):
-                for index, row in edited_df.iterrows():
-                    if row['Delete']:
-                        if delete_lead_and_sources(session, row['ID']):
-                            st.success(f"Deleted lead: {row['Email']}")
+            search_term=st.text_input("Search leads by email, name, company, or source")
+            filtered_leads=st.session_state.leads[st.session_state.leads.apply(lambda r:search_term.lower()in str(r).lower(),axis=1)]
+            leads_per_page,page_number=20,st.number_input("Page",min_value=1,value=1)
+            start_idx,end_idx=(page_number-1)*leads_per_page,page_number*leads_per_page
+            edited_df=st.data_editor(filtered_leads.iloc[start_idx:end_idx],column_config={"ID":st.column_config.NumberColumn("ID",disabled=True),"Email":st.column_config.TextColumn("Email"),"First Name":st.column_config.TextColumn("First Name"),"Last Name":st.column_config.TextColumn("Last Name"),"Company":st.column_config.TextColumn("Company"),"Job Title":st.column_config.TextColumn("Job Title"),"Source":st.column_config.TextColumn("Source",disabled=True),"Last Contact":st.column_config.DatetimeColumn("Last Contact",disabled=True),"Last Email Status":st.column_config.TextColumn("Last Email Status",disabled=True),"Delete":st.column_config.CheckboxColumn("Delete")},disabled=["ID","Source","Last Contact","Last Email Status"],hide_index=True,num_rows="dynamic")
+            if st.button("Save Changes",type="primary"):
+                for i,r in edited_df.iterrows():
+                    if r['Delete']:
+                        if delete_lead_and_sources(session,r['ID']):st.success(f"Deleted lead: {r['Email']}")
                     else:
-                        updated_data = {k: row[k] for k in ['Email', 'First Name', 'Last Name', 'Company', 'Job Title']}
-                        if update_lead(session, row['ID'], updated_data):
-                            st.success(f"Updated lead: {row['Email']}")
+                        if update_lead(session,r['ID'],{k:r[k]for k in['Email','First Name','Last Name','Company','Job Title']}):st.success(f"Updated lead: {r['Email']}")
                 st.rerun()
-
-            st.download_button(
-                "Export Filtered Leads to CSV",
-                filtered_leads.to_csv(index=False).encode('utf-8'),
-                "exported_leads.csv",
-                "text/csv"
-            )
-
+            st.download_button("Export Filtered Leads to CSV",filtered_leads.to_csv(index=False).encode('utf-8'),"exported_leads.csv","text/csv")
             st.subheader("Lead Growth")
-            if 'Created At' in st.session_state.leads.columns:
-                lead_growth = st.session_state.leads.groupby(pd.to_datetime(st.session_state.leads['Created At']).dt.to_period('M')).size().cumsum()
-                st.line_chart(lead_growth)
-            else:
-                st.warning("Created At data is not available for lead growth chart.")
-
+            if'Created At'in st.session_state.leads.columns:st.line_chart(st.session_state.leads.groupby(pd.to_datetime(st.session_state.leads['Created At']).dt.to_period('M')).size().cumsum())
+            else:st.warning("Created At data is not available for lead growth chart.")
             st.subheader("Email Campaign Performance")
-            email_status_counts = st.session_state.leads['Last Email Status'].value_counts()
-            st.plotly_chart(px.pie(
-                values=email_status_counts.values,
-                names=email_status_counts.index,
-                title="Distribution of Email Statuses"
-            ), use_container_width=True)
-        else:
-            st.info("No leads available. Start by adding some leads to your campaigns.")
+            email_status_counts=st.session_state.leads['Last Email Status'].value_counts()
+            st.plotly_chart(px.pie(values=email_status_counts.values,names=email_status_counts.index,title="Distribution of Email Statuses"),use_container_width=True)
+        else:st.info("No leads available. Start by adding some leads to your campaigns.")
 
 def fetch_leads_with_sources(session):
     try:
-        query = session.query(Lead, func.string_agg(LeadSource.url, ', ').label('sources'), func.max(EmailCampaign.sent_at).label('last_contact'), func.string_agg(EmailCampaign.status, ', ').label('email_statuses')).outerjoin(LeadSource).outerjoin(EmailCampaign).group_by(Lead.id)
-        return pd.DataFrame([{**{k: getattr(lead, k) for k in ['id', 'email', 'first_name', 'last_name', 'company', 'job_title', 'created_at']}, 'Source': sources, 'Last Contact': last_contact, 'Last Email Status': email_statuses.split(', ')[-1] if email_statuses else 'Not Contacted', 'Delete': False} for lead, sources, last_contact, email_statuses in query.all()])
-    except SQLAlchemyError as e:
-        logging.error(f"Database error in fetch_leads_with_sources: {str(e)}")
-        return pd.DataFrame()
+        query=session.query(Lead,func.string_agg(LeadSource.url,', ').label('sources'),func.max(EmailCampaign.sent_at).label('last_contact'),func.string_agg(EmailCampaign.status,', ').label('email_statuses')).outerjoin(LeadSource).outerjoin(EmailCampaign).group_by(Lead.id)
+        return pd.DataFrame([{**{k:getattr(lead,k)for k in['id','email','first_name','last_name','company','job_title','created_at']},'Source':sources,'Last Contact':last_contact,'Last Email Status':email_statuses.split(', ')[-1]if email_statuses else'Not Contacted','Delete':False}for lead,sources,last_contact,email_statuses in query.all()])
+    except SQLAlchemyError as e:logging.error(f"Database error in fetch_leads_with_sources: {str(e)}");return pd.DataFrame()
 
 def delete_lead_and_sources(session, lead_id):
     try:
@@ -1352,8 +1080,7 @@ def fetch_search_terms_with_lead_count(session):
              .join(Lead, LeadSource.lead_id == Lead.id)
              .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
              .group_by(SearchTerm.term))
-    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
-    return df
+    return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def add_search_term(session, term, campaign_id):
     try:
@@ -1456,23 +1183,16 @@ def search_terms_page():
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
-        current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
-        existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
-        
-        for term in existing_terms:
-            if term.id not in current_term_ids:
-                term.group_id = None
-        
+        current_ids = {int(term.split(":")[0]) for term in updated_terms}
+        for term in session.query(SearchTerm).filter(SearchTerm.group_id == group_id):
+            term.group_id = group_id if term.id in current_ids else None
         for term_str in updated_terms:
-            term_id = int(term_str.split(":")[0])
-            term = session.query(SearchTerm).get(term_id)
-            if term:
+            if term := session.query(SearchTerm).get(int(term_str.split(":")[0])):
                 term.group_id = group_id
-        
         session.commit()
     except Exception as e:
         session.rollback()
-        logging.error(f"Error in update_search_term_group: {str(e)}")
+        logging.error(f"Group update error: {str(e)}")
 
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
@@ -1486,153 +1206,65 @@ def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
         logging.error(f"Error adding search term: {str(e)}")
 
 def ai_group_search_terms(session, ungrouped_terms):
-    existing_groups = session.query(SearchTermGroup).all()
-    
-    prompt = f"""
-    Categorize these search terms into existing groups or suggest new ones:
-    {', '.join([term.term for term in ungrouped_terms])}
+    existing = session.query(SearchTermGroup).all()
+    prompt = f"Group these terms:\n{', '.join([term.term for term in ungrouped_terms])}\nExisting groups: {', '.join([group.name for group in existing])}"  # Fix brackets and parentheses
+    return openai_chat_completion([{"role": "system", "content": "You categorize search terms."}, {"role": "user", "content": prompt}],
+                                function_name="ai_group_search_terms") or {}
 
-    Existing groups: {', '.join([group.name for group in existing_groups])}
-
-    Respond with a JSON object: {{group_name: [term1, term2, ...]}}
-    """
-
-    messages = [
-        {"role": "system", "content": "You're an AI that categorizes search terms for lead generation. Be concise and efficient."},
-        {"role": "user", "content": prompt}
-    ]
-
-    response = openai_chat_completion(messages, function_name="ai_group_search_terms")
-
-    return response if isinstance(response, dict) else {}
-
-def update_search_term_groups(session, grouped_terms):
+def update_search_term_groups(s, grouped_terms):
     for group_name, terms in grouped_terms.items():
-        group = session.query(SearchTermGroup).filter_by(name=group_name).first()
-        if not group:
-            group = SearchTermGroup(name=group_name)
-            session.add(group)
-            session.flush()
-        
+        if not (group := s.query(SearchTermGroup).filter_by(name=group_name).first()): 
+            group = SearchTermGroup(name=group_name); s.add(group); s.flush()
         for term in terms:
-            search_term = session.query(SearchTerm).filter_by(term=term).first()
-            if search_term:
-                search_term.group_id = group.id
+            if search_term := s.query(SearchTerm).filter_by(term=term).first(): search_term.group_id = group.id
+    s.commit()
 
-    session.commit()
+def create_search_term_group(s, group_name):
+    try: s.add(SearchTermGroup(name=group_name)); s.commit()
+    except Exception as e: s.rollback(); logging.error(f"Group create error: {str(e)}")
 
-def create_search_term_group(session, group_name):
+def delete_search_term_group(s, group_id):
     try:
-        new_group = SearchTermGroup(name=group_name)
-        session.add(new_group)
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        logging.error(f"Error creating search term group: {str(e)}")
-
-def delete_search_term_group(session, group_id):
-    try:
-        group = session.query(SearchTermGroup).get(group_id)
+        group = s.query(SearchTermGroup).get(group_id)
         if group:
-            # Set group_id to None for all search terms in this group
-            session.query(SearchTerm).filter(SearchTerm.group_id == group_id).update({SearchTerm.group_id: None})
-            session.delete(group)
+            s.query(SearchTerm).filter(SearchTerm.group_id == group_id).update({SearchTerm.group_id: None})
+            s.delete(group)
+            s.commit()
     except Exception as e:
-        session.rollback()
+        s.rollback()
         logging.error(f"Error deleting search term group: {str(e)}")
 
-
 def email_templates_page():
-    st.header("Email Templates")
-    with db_session() as session:
-        templates = session.query(EmailTemplate).all()
-        with st.expander("Create New Template", expanded=False):
-            new_template_name = st.text_input("Template Name", key="new_template_name")
-            use_ai = st.checkbox("Use AI to generate template", key="use_ai")
-            if use_ai:
-                ai_prompt = st.text_area("Enter prompt for AI template generation", key="ai_prompt")
-                use_kb = st.checkbox("Use Knowledge Base information", key="use_kb")
-                if st.button("Generate Template", key="generate_ai_template"):
-                    with st.spinner("Generating template..."):
-                        kb_info = get_knowledge_base_info(session, get_active_project_id()) if use_kb else None
-                        generated_template = generate_or_adjust_email_template(ai_prompt, kb_info)
-                        new_template_subject = generated_template.get("subject", "AI Generated Subject")
-                        new_template_body = generated_template.get("body", "")
-                        
-                        if new_template_name:
-                            new_template = EmailTemplate(
-                                template_name=new_template_name,
-                                subject=new_template_subject,
-                                body_content=new_template_body,
-                                campaign_id=get_active_campaign_id()
-                            )
-                            session.add(new_template)
-                            session.commit()
-                            st.success("AI-generated template created and saved!")
-                            templates = session.query(EmailTemplate).all()
-                        else:
-                            st.warning("Please provide a name for the template before generating.")
-                        
-                        st.subheader("Generated Template")
-                        st.text(f"Subject: {new_template_subject}")
-                        st.components.v1.html(wrap_email_body(new_template_body), height=400, scrolling=True)
-            else:
-                new_template_subject = st.text_input("Subject", key="new_template_subject")
-                new_template_body = st.text_area("Body Content", height=200, key="new_template_body")
-
-            if st.button("Create Template", key="create_template_button"):
-                if all([new_template_name, new_template_subject, new_template_body]):
-                    new_template = EmailTemplate(
-                        template_name=new_template_name,
-                        subject=new_template_subject,
-                        body_content=new_template_body,
-                        campaign_id=get_active_campaign_id()
-                    )
-                    session.add(new_template)
-                    session.commit()
-                    st.success("New template created successfully!")
-                    templates = session.query(EmailTemplate).all()
-                else:
-                    st.warning("Please fill in all fields to create a new template.")
-
-        if templates:
-            st.subheader("Existing Templates")
-            for template in templates:
-                with st.expander(f"Template: {template.template_name}", expanded=False):
-                    col1, col2 = st.columns(2)
-                    edited_subject = col1.text_input("Subject", value=template.subject, key=f"subject_{template.id}")
-                    is_ai_customizable = col2.checkbox("AI Customizable", value=template.is_ai_customizable, key=f"ai_{template.id}")
-                    edited_body = st.text_area("Body Content", value=template.body_content, height=200, key=f"body_{template.id}")
-                    
-                    ai_adjustment_prompt = st.text_area("AI Adjustment Prompt", key=f"ai_prompt_{template.id}", placeholder="E.g., Make it less marketing-like and mention our main features")
-                    
-                    col3, col4 = st.columns(2)
-                    if col3.button("Apply AI Adjustment", key=f"apply_ai_{template.id}"):
-                        with st.spinner("Applying AI adjustment..."):
-                            kb_info = get_knowledge_base_info(session, get_active_project_id())
-                            adjusted_template = generate_or_adjust_email_template(ai_adjustment_prompt, kb_info, current_template=edited_body)
-                            edited_subject = adjusted_template.get("subject", edited_subject)
-                            edited_body = adjusted_template.get("body", edited_body)
-                            st.success("AI adjustment applied. Please review and save changes.")
-                    
-                    if col4.button("Save Changes", key=f"save_{template.id}"):
-                        template.subject = edited_subject
-                        template.body_content = edited_body
-                        template.is_ai_customizable = is_ai_customizable
-                        session.commit()
-                        st.success("Template updated successfully!")
-                    
-                    st.markdown("### Preview")
-                    st.text(f"Subject: {edited_subject}")
-                    st.components.v1.html(wrap_email_body(edited_body), height=400, scrolling=True)
-                    
-                    if st.button("Delete Template", key=f"delete_{template.id}"):
-                        session.delete(template)
-                        session.commit()
-                        st.success("Template deleted successfully!")
-                        st.rerun()
-        else:
-            st.info("No email templates found. Create a new template to get started.")
+    st.title("Email Templates")
+    
+    with st.form("template_form"):
+        template_name = st.text_input("Template Name")
+        subject = st.text_input("Subject")
+        body = st.text_area("Body Content", height=300)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.info(TEMPLATE_HELP)
+        
+        with col2:
+            if st.button("Preview"):
+                template = EmailTemplate(
+                    template_name=template_name,
+                    subject=subject, 
+                    body_content=body
+                )
+                preview_subject, preview_body = preview_template(template)
+                st.subheader("Preview")
+                st.text(f"Subject: {preview_subject}")
+                st.markdown(preview_body, unsafe_allow_html=True)
+        
+        if st.form_submit_button("Save Template"):
+            with db_session() as session:
+                template_id = create_or_update_email_template(
+                    session, template_name, subject, body
+                )
+                st.success(f"Template saved successfully! ID: {template_id}")
 
 def get_email_preview(session, template_id, from_email, reply_to):
     template = session.query(EmailTemplate).filter_by(id=template_id).first()
@@ -1663,18 +1295,22 @@ def bulk_send_page():
         template_option = st.selectbox("Email Template", options=templates, format_func=lambda x: x.split(":")[1].strip())
         template_id = int(template_option.split(":")[0])
         template = session.query(EmailTemplate).filter_by(id=template_id).first()
-
+        
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
+            email_setting_option = st.selectbox(
+                "From Email", 
+                options=email_settings, 
+                format_func=lambda x: f"{x['name']} ({x['email']})"
+            )
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
             else:
                 st.error("Selected email setting not found. Please choose a valid email setting.")
                 return
-
+        
         with col2:
             send_option = st.radio("Send to:", ["All Leads", "Specific Email", "Leads from Chosen Search Terms", "Leads from Search Term Groups"])
             specific_email = None
@@ -1756,8 +1392,7 @@ def fetch_search_terms_with_lead_count(session):
              .join(Lead, LeadSource.lead_id == Lead.id)
              .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
              .group_by(SearchTerm.term))
-    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
-    return df
+    return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def fetch_search_term_groups(session):
     return [f"{group.id}: {group.name}" for group in session.query(SearchTermGroup).all()]
@@ -1767,41 +1402,49 @@ def fetch_search_terms_for_groups(session, group_ids):
     return [term.term for term in terms]
 
 def ai_automation_loop(session, log_container, leads_container):
-    automation_logs, total_search_terms, total_emails_sent = [], 0, 0
-    while st.session_state.get('automation_status', False):
-        try:
-            log_container.info("Starting automation cycle")
-            kb_info = get_knowledge_base_info(session, get_active_project_id())
-            if not kb_info:
-                log_container.warning("Knowledge Base not found. Skipping cycle.")
-                time.sleep(3600)
-                continue
-            base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
-            optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
-            st.subheader("Optimized Search Terms")
-            st.write(", ".join(optimized_terms))
-            total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0)
-            for idx, term in enumerate(optimized_terms):
-                results = manual_search(session, [term], 10, ignore_previously_fetched=True)
-                new_leads = [(save_lead(session, res['Email'], url=res['URL']).id, res['Email']) for res in results['results'] if save_lead(session, res['Email'], url=res['URL'])]
-                if new_leads:
-                    template = session.query(EmailTemplate).filter_by(project_id=get_active_project_id()).first()
-                    if template:
-                        from_email = kb_info.get('contact_email', 'hello@indosy.com')
-                        reply_to = kb_info.get('contact_email', 'eugproductions@gmail.com')
-                        logs, sent_count = bulk_send_emails(session, template.id, from_email, reply_to, [{'Email': email} for _, email in new_leads])
-                        automation_logs.extend(logs)
-                        total_emails_sent += sent_count
-                leads_container.text_area("New Leads Found", "\n".join([email for _, email in new_leads]), height=200)
-                progress_bar.progress((idx + 1) / len(optimized_terms))
-            st.success(f"Automation cycle completed. Total search terms: {total_search_terms}, Total emails sent: {total_emails_sent}")
-            time.sleep(3600)
-        except Exception as e:
-            log_container.error(f"Critical error in automation cycle: {str(e)}")
-            time.sleep(300)
-    log_container.info("Automation stopped")
-    st.session_state.update({"automation_logs": automation_logs, "total_leads_found": total_search_terms, "total_emails_sent": total_emails_sent})
+    """Enhanced automation loop with better control and monitoring"""
+    with managed_automation_session():
+        # Initialize tracking
+        progress_update = track_automation_progress(total_steps=4)
+        config = load_automation_config()
+        
+        while st.session_state.get('automation_status', False):
+            try:
+                # Step 1: Load Knowledge Base
+                progress_update(1, "Loading Knowledge Base")
+                kb_info = get_knowledge_base_info(session, get_active_project_id())
+                if not kb_info:
+                    log_container.warning("Knowledge Base not found")
+                    time.sleep(config['retry_delay'])
+                    continue
+                
+                # Step 2: Generate Search Terms
+                progress_update(2, "Generating Search Terms")
+                base_terms = fetch_search_terms(session)
+                optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
+                
+                # Step 3: Process Search Terms
+                progress_update(3, "Processing Search Terms")
+                for term in optimized_terms:
+                    process_search_term(session, term, config, leads_container)
+                    
+                # Step 4: Send Emails
+                progress_update(4, "Sending Emails")
+                process_email_queue(session, kb_info, config)
+                
+                # Update metrics
+                update_automation_metrics(session)
+                
+                # Wait for next cycle
+                time.sleep(config['cycle_delay'])
+                
+            except Exception as e:
+                handle_automation_error(e, "automation_loop")
+                
+    return {
+        'status': 'completed',
+        'metrics': get_automation_metrics()
+    }
 
 def display_search_results(results, key_suffix):
     if not results: return st.warning("No results to display.")
@@ -1831,18 +1474,17 @@ def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
                            func.count(distinct(Lead.id)).label('lead_count'),
                            func.count(distinct(EmailCampaign.id)).label('email_count'))
-             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
-             .join(Lead, LeadSource.lead_id == Lead.id)
-             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
-             .group_by(SearchTerm.term))
-    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
-    return df
+            .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+            .join(Lead, LeadSource.lead_id == Lead.id)
+            .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+            .group_by(SearchTerm.term))
+    return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def fetch_leads_for_search_terms(session, search_term_ids) -> List[Lead]:
     return session.query(Lead).distinct().join(LeadSource).filter(LeadSource.search_term_id.in_(search_term_ids)).all()
 
 def projects_campaigns_page():
-    with db_session() as session:
+    with db_session() as session:  # Fixed: session was undefined
         st.header("Projects and Campaigns")
         st.subheader("Add New Project")
         with st.form("add_project_form"):
@@ -1900,33 +1542,62 @@ def knowledge_base_page():
     st.title("Knowledge Base")
     with db_session() as session:
         project_options = fetch_projects(session)
-        if not project_options: return st.warning("No projects found. Please create a project first.")
+        if not project_options:
+            return st.warning("No projects found. Please create a project first.")
+        
         selected_project = st.selectbox("Select Project", options=project_options)
         project_id = int(selected_project.split(":")[0])
         set_active_project_id(project_id)
         kb_entry = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
+        
         with st.form("knowledge_base_form"):
-            fields = ['kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role', 'contact_email', 'company_description', 'company_mission', 'company_target_market', 'company_other', 'product_name', 'product_description', 'product_target_customer', 'product_other', 'other_context', 'example_email']
-            form_data = {field: st.text_input(field.replace('_', ' ').title(), value=getattr(kb_entry, field, '')) if field in ['kb_name', 'contact_name', 'contact_role', 'contact_email', 'product_name'] else st.text_area(field.replace('_', ' ').title(), value=getattr(kb_entry, field, '')) for field in fields}
+            fields = [
+                'kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role', 
+                'contact_email', 'company_description', 'company_mission', 
+                'company_target_market', 'company_other', 'product_name', 
+                'product_description', 'product_target_customer', 'product_other', 
+                'other_context', 'example_email'
+            ]
+            
+            form_data = {}
+            for field in fields:
+                if field in ['kb_name', 'contact_name', 'contact_role', 'contact_email', 'product_name']:
+                    form_data[field] = st.text_input(
+                        field.replace('_', ' ').title(),
+                        value=getattr(kb_entry, field, ''))  # Fixed: Added closing parenthesis
+                else:
+                    form_data[field] = st.text_area(
+                        field.replace('_', ' ').title(),
+                        value=getattr(kb_entry, field, ''))  # Fixed: Added closing parenthesis
+
             if st.form_submit_button("Save Knowledge Base"):
                 try:
-                    form_data.update({'project_id': project_id, 'created_at': datetime.utcnow()})
+                    form_data.update({
+                        'project_id': project_id,
+                        'created_at': datetime.utcnow()
+                    })
+                    
                     if kb_entry:
-                        for k, v in form_data.items(): setattr(kb_entry, k, v)
-                    else: session.add(KnowledgeBase(**form_data))
+                        for k, v in form_data.items():
+                            setattr(kb_entry, k, v)
+                    else:
+                        session.add(KnowledgeBase(**form_data))
+                    
                     session.commit()
                     st.success("Knowledge Base saved successfully!", icon="✅")
-                except Exception as e: st.error(f"An error occurred while saving the Knowledge Base: {str(e)}")
+                except Exception as e:
+                    st.error(f"An error occurred while saving the Knowledge Base: {str(e)}")
 
 def autoclient_ai_page():
     st.header("AutoclientAI - Automated Lead Generation")
     with st.expander("Knowledge Base Information", expanded=False):
         with db_session() as session:
             kb_info = get_knowledge_base_info(session, get_active_project_id())
-        if not kb_info:
-            return st.error("Knowledge Base not found for the active project. Please set it up first.")
+        if not kb_info: return st.error("Knowledge Base not found for the active project. Please set it up first.")
         st.json(kb_info)
+    
     user_input = st.text_area("Enter additional context or specific goals for lead generation:", help="This information will be used to generate more targeted search terms.")
+    
     if st.button("Generate Optimized Search Terms", key="generate_optimized_terms"):
         with st.spinner("Generating optimized search terms..."):
             with db_session() as session:
@@ -1937,11 +1608,12 @@ def autoclient_ai_page():
                 st.success("Search terms optimized successfully!")
                 st.subheader("Optimized Search Terms")
                 st.write(", ".join(optimized_terms))
-            else:
-                st.error("Failed to generate optimized search terms. Please try again.")
+            else: st.error("Failed to generate optimized search terms. Please try again.")
+
     if st.button("Start Automation", key="start_automation"):
         st.session_state.update({"automation_status": True, "automation_logs": [], "total_leads_found": 0, "total_emails_sent": 0})
         st.success("Automation started!")
+
     if st.session_state.get('automation_status', False):
         st.subheader("Automation in Progress")
         progress_bar, log_container, leads_container, analytics_container = st.progress(0), st.empty(), st.empty(), st.empty()
@@ -1949,20 +1621,23 @@ def autoclient_ai_page():
             with db_session() as session:
                 ai_automation_loop(session, log_container, leads_container)
         except Exception as e:
-            st.error(f"An error occurred in the automation process: {str(e)}")
+            st.error(f"Automation error: {str(e)}")
             st.session_state.automation_status = False
+
     if not st.session_state.get('automation_status', False) and st.session_state.get('automation_logs'):
         st.subheader("Automation Results")
         st.metric("Total Leads Found", st.session_state.total_leads_found)
         st.metric("Total Emails Sent", st.session_state.total_emails_sent)
         st.subheader("Automation Logs")
         st.text_area("Logs", "\n".join(st.session_state.automation_logs), height=300)
+
     if 'email_logs' in st.session_state:
         st.subheader("Email Sending Logs")
         df_logs = pd.DataFrame(st.session_state.email_logs)
         st.dataframe(df_logs)
         success_rate = (df_logs['Status'] == 'sent').mean() * 100
         st.metric("Email Sending Success Rate", f"{success_rate:.2f}%")
+
     st.subheader("Debug Information")
     st.json(st.session_state)
     st.write("Current function:", autoclient_ai_page.__name__)
@@ -1971,53 +1646,23 @@ def autoclient_ai_page():
 def update_search_terms(session, classified_terms):
     for group, terms in classified_terms.items():
         for term in terms:
-            existing_term = session.query(SearchTerm).filter_by(term=term, project_id=get_active_project_id()).first()
-            if existing_term:
-                existing_term.group = group
-            else:
-                session.add(SearchTerm(term=term, group=group, project_id=get_active_project_id()))
+            existing = session.query(SearchTerm).filter_by(term=term, project_id=get_active_project_id()).first()
+            if existing: existing.group = group
+            else: session.add(SearchTerm(term=term, group=group, project_id=get_active_project_id()))
     session.commit()
 
 def update_results_display(results_container, results):
-    results_container.markdown(
-        f"""
-        <style>
-        .results-container {{
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid rgba(49, 51, 63, 0.2);
-            border-radius: 0.25rem;
-            padding: 1rem;
-            background-color: rgba(49, 51, 63, 0.1);
-        }}
-        .result-entry {{
-            margin-bottom: 0.5rem;
-            padding: 0.5rem;
-            background-color: rgba(255, 255, 255, 0.1);
-            border-radius: 0.25rem;
-        }}
-        </style>
-        <div class="results-container">
-            <h4>Found Leads ({len(results)})</h4>
-            {"".join(f'<div class="result-entry"><strong>{res["Email"]}</strong><br>{res["URL"]}</div>' for res in results[-10:])}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    results_container.markdown(f"""<style>.results-container{{max-height:400px;overflow-y:auto;border:1px solid rgba(49,51,63,0.2);border-radius:0.25rem;padding:1rem;background-color:rgba(49,51,63,0.1)}}.result-entry{{margin-bottom:0.5rem;padding:0.5rem;background-color:rgba(255,255,255,0.1);border-radius:0.25rem}}</style><div class="results-container"><h4>Found Leads ({len(results)})</h4>{"".join(f'<div class="result-entry"><strong>{res["Email"]}</strong><br>{res["URL"]}</div>' for res in results[-10:])}</div>""", unsafe_allow_html=True)
 
 def automation_control_panel_page():
     st.title("Automation Control Panel")
-
     col1, col2 = st.columns([2, 1])
-    with col1:
-        status = "Active" if st.session_state.get('automation_status', False) else "Inactive"
-        st.metric("Automation Status", status)
+    with col1: st.metric("Automation Status", "Active" if st.session_state.get('automation_status', False) else "Inactive")
     with col2:
         button_text = "Stop Automation" if st.session_state.get('automation_status', False) else "Start Automation"
         if st.button(button_text, use_container_width=True):
             st.session_state.automation_status = not st.session_state.get('automation_status', False)
-            if st.session_state.automation_status:
-                st.session_state.automation_logs = []
+            if st.session_state.automation_status: st.session_state.automation_logs = []
             st.rerun()
 
     if st.button("Perform Quick Scan", use_container_width=True):
@@ -2028,8 +1673,7 @@ def automation_control_panel_page():
                     session.query(Lead).filter(Lead.is_processed == False).update({Lead.is_processed: True})
                     session.commit()
                     st.success(f"Quick scan completed! Found {new_leads} new leads.")
-            except Exception as e:
-                st.error(f"An error occurred during quick scan: {str(e)}")
+            except Exception as e: st.error(f"Quick scan error: {str(e)}")
 
     st.subheader("Real-Time Analytics")
     try:
@@ -2039,8 +1683,7 @@ def automation_control_panel_page():
             col1, col2 = st.columns(2)
             col1.metric("Total Leads", total_leads)
             col2.metric("Emails Sent", emails_sent)
-    except Exception as e:
-        st.error(f"An error occurred while displaying analytics: {str(e)}")
+    except Exception as e: st.error(f"Analytics error: {str(e)}")
 
     st.subheader("Automation Logs")
     log_container = st.empty()
@@ -2080,26 +1723,23 @@ def automation_control_panel_page():
                     if new_leads_all:
                         leads_df = pd.DataFrame(new_leads_all, columns=['Email', 'URL'])
                         leads_container.dataframe(leads_df, hide_index=True)
-                    else:
-                        leads_container.info("No new leads found in this cycle.")
+                    else: leads_container.info("No new leads found in this cycle.")
 
                     update_display(log_container, st.session_state.get('automation_logs', []), "Latest Logs", "log")
                     time.sleep(3600)
         except Exception as e:
-            st.error(f"An error occurred in the automation process: {str(e)}")
+            st.error(f"Automation error: {str(e)}")
 
 def get_knowledge_base_info(session, project_id):
     kb = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
     return kb.to_dict() if kb else None
 
 def generate_optimized_search_terms(session, base_terms, kb_info):
-    ai_prompt = f"Generate 5 optimized search terms based on: {', '.join(base_terms)}. Context: {kb_info}"
-    return get_ai_response(ai_prompt).split('\n')
+    return get_ai_response(f"Generate 5 optimized search terms based on: {', '.join(base_terms)}. Context: {kb_info}").split('\n')
 
 def update_display(container, items, title, item_type):
     container.markdown(f"<h4>{title}</h4>", unsafe_allow_html=True)
-    for item in items[-10:]:
-        container.text(item)
+    for item in items[-10:]: container.text(item)
 
 def get_search_terms(session):
     return [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
@@ -2110,132 +1750,65 @@ def get_ai_response(prompt):
 def fetch_email_settings(session):
     try:
         settings = session.query(EmailSettings).all()
-        return [{"id": setting.id, "name": setting.name, "email": setting.email} for setting in settings]
+        return [{"id": s.id, "name": s.name, "email": s.email} for s in settings]
     except Exception as e:
-        logging.error(f"Error fetching email settings: {e}")
+        logging.error(f"Email settings error: {e}")
         return []
 
 def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress_bar=None, status_text=None, results=None, log_container=None):
     template = session.query(EmailTemplate).filter_by(id=template_id).first()
-    if not template:
-        logging.error(f"Email template with ID {template_id} not found.")
-        return [], 0
-
-    email_subject = template.subject
-    email_content = template.body_content
-
+    if not template: return [], 0
     logs, sent_count = [], 0
     total_leads = len(leads)
-
-    for index, lead in enumerate(leads):
+    for i, lead in enumerate(leads):
         try:
             validate_email(lead['Email'])
-            response, tracking_id = send_email_ses(session, from_email, lead['Email'], email_subject, email_content, reply_to=reply_to)
-            if response:
-                status = 'sent'
-                message_id = response.get('MessageId', f"sent-{uuid.uuid4()}")
-                sent_count += 1
-                log_message = f"✅ Email sent to: {lead['Email']}"
-            else:
-                status = 'failed'
-                message_id = f"failed-{uuid.uuid4()}"
-                log_message = f"❌ Failed to send email to: {lead['Email']}"
-            
-            save_email_campaign(session, lead['Email'], template_id, status, datetime.utcnow(), email_subject, message_id, email_content)
-            logs.append(log_message)
-
-            if progress_bar:
-                progress_bar.progress((index + 1) / total_leads)
-            if status_text:
-                status_text.text(f"Processed {index + 1}/{total_leads} leads")
-            if results is not None:
-                results.append({"Email": lead['Email'], "Status": status})
-
-            if log_container:
-                log_container.text(log_message)
-
+            response, tracking_id = send_email_ses(session, from_email, lead['Email'], template.subject, template.body_content, reply_to=reply_to)
+            status = 'sent' if response else 'failed'
+            message_id = response.get('MessageId', f"{'sent' if response else 'failed'}-{uuid.uuid4()}")
+            if response: sent_count += 1
+            save_email_campaign(session, lead['Email'], template_id, status, datetime.utcnow(), template.subject, message_id, template.body_content)
+            log_msg = f"{'✅' if response else '❌'} Email {'sent to' if response else 'failed for'}: {lead['Email']}"
+            logs.append(log_msg)
+            if progress_bar: progress_bar.progress((i + 1) / total_leads)
+            if status_text: status_text.text(f"Processed {i + 1}/{total_leads} leads")
+            if results is not None: results.append({"Email": lead['Email'], "Status": status})
+            if log_container: log_container.text(log_msg)
         except EmailNotValidError:
-            log_message = f"❌ Invalid email address: {lead['Email']}"
-            logs.append(log_message)
+            logs.append(f"❌ Invalid email: {lead['Email']}")
         except Exception as e:
-            error_message = f"Error sending email to {lead['Email']}: {str(e)}"
-            logging.error(error_message)
-            save_email_campaign(session, lead['Email'], template_id, 'failed', datetime.utcnow(), email_subject, f"error-{uuid.uuid4()}", email_content)
-            logs.append(f"❌ Error sending email to: {lead['Email']} (Error: {str(e)})")
-
+            error_msg = f"Error sending to {lead['Email']}: {str(e)}"
+            logging.error(error_msg)
+            save_email_campaign(session, lead['Email'], template_id, 'failed', datetime.utcnow(), template.subject, f"error-{uuid.uuid4()}", template.body_content)
+            logs.append(f"❌ Error: {lead['Email']} ({str(e)})")
     return logs, sent_count
 
 def wrap_email_body(body_content):
-    return f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Email Template</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                line-height: 1.6;
-                color: #333;
-                max-width: 600px;
-                margin: 0 auto;
-                padding: 20px;
-            }}
-        </style>
-    </head>
-    <body>
-        {body_content}
-    </body>
-    </html>
-    """
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Email</title><style>body{{font-family:Arial,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px}}</style></head><body>{body_content}</body></html>"""
 
 def fetch_sent_email_campaigns(session):
     try:
-        email_campaigns = session.query(EmailCampaign).join(Lead).join(EmailTemplate).options(joinedload(EmailCampaign.lead), joinedload(EmailCampaign.template)).order_by(EmailCampaign.sent_at.desc()).all()
+        campaigns = session.query(EmailCampaign).join(Lead).join(EmailTemplate).options(joinedload(EmailCampaign.lead), joinedload(EmailCampaign.template)).order_by(EmailCampaign.sent_at.desc()).all()
         return pd.DataFrame({
-            'ID': [ec.id for ec in email_campaigns],
-            'Sent At': [ec.sent_at.strftime("%Y-%m-%d %H:%M:%S") if ec.sent_at else "" for ec in email_campaigns],
-            'Email': [ec.lead.email for ec in email_campaigns],
-            'Template': [ec.template.template_name for ec in email_campaigns],
-            'Subject': [ec.customized_subject or "No subject" for ec in email_campaigns],
-            'Content': [ec.customized_content or "No content" for ec in email_campaigns],
-            'Status': [ec.status for ec in email_campaigns],
-            'Message ID': [ec.message_id or "No message ID" for ec in email_campaigns],
-            'Campaign ID': [ec.campaign_id for ec in email_campaigns],
-            'Lead Name': [f"{ec.lead.first_name or ''} {ec.lead.last_name or ''}".strip() or "Unknown" for ec in email_campaigns],
-            'Lead Company': [ec.lead.company or "Unknown" for ec in email_campaigns]
+            'ID': [c.id for c in campaigns],
+            'Sent At': [c.sent_at.strftime("%Y-%m-%d %H:%M:%S") if c.sent_at else "" for c in campaigns],
+            'Email': [c.lead.email for c in campaigns],
+            'Template': [c.template.template_name for c in campaigns],
+            'Subject': [c.customized_subject or "No subject" for c in campaigns],
+            'Content': [c.customized_content or "No content" for c in campaigns],
+            'Status': [c.status for c in campaigns],
+            'Message ID': [c.message_id or "No message ID" for c in campaigns],
+            'Campaign ID': [c.campaign_id for c in campaigns],
+            'Lead Name': [f"{c.lead.first_name or ''} {c.lead.last_name or ''}".strip() or "Unknown" for c in campaigns],
+            'Lead Company': [c.lead.company or "Unknown" for c in campaigns]
         })
     except SQLAlchemyError as e:
-        logging.error(f"Database error in fetch_sent_email_campaigns: {str(e)}")
+        logging.error(f"Database error: {str(e)}")
         return pd.DataFrame()
 
 def display_logs(log_container, logs):
-    if not logs:
-        log_container.info("No logs to display yet.")
-        return
-
-    log_container.markdown(
-        """
-        <style>
-        .log-container {
-            max-height: 300px;
-            overflow-y: auto;
-            border: 1px solid rgba(49, 51, 63, 0.2);
-            border-radius: 0.25rem;
-            padding: 1rem;
-        }
-        .log-entry {
-            margin-bottom: 0.5rem;
-            padding: 0.5rem;
-            border-radius: 0.25rem;
-            background-color: rgba(28, 131, 225, 0.1);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
+    if not logs: return log_container.info("No logs to display yet.")
+    log_container.markdown("""<style>.log-container{max-height:300px;overflow-y:auto;border:1px solid rgba(49,51,63,0.2);border-radius:0.25rem;padding:1rem}.log-entry{margin-bottom:0.5rem;padding:0.5rem;border-radius:0.25rem;background-color:rgba(28,131,225,0.1)}</style>""", unsafe_allow_html=True)
     log_entries = "".join(f'<div class="log-entry">{log}</div>' for log in logs[-20:])
     log_container.markdown(f'<div class="log-container">{log_entries}</div>', unsafe_allow_html=True)
 
@@ -2243,34 +1816,31 @@ def view_sent_email_campaigns():
     st.header("Sent Email Campaigns")
     try:
         with db_session() as session:
-            email_campaigns = fetch_sent_email_campaigns(session)
-        if not email_campaigns.empty:
-            st.dataframe(email_campaigns)
+            campaigns = fetch_sent_email_campaigns(session)
+        if not campaigns.empty:
+            st.dataframe(campaigns)
             st.subheader("Detailed Content")
-            selected_campaign = st.selectbox("Select a campaign to view details", email_campaigns['ID'].tolist())
-            if selected_campaign:
-                campaign_content = email_campaigns[email_campaigns['ID'] == selected_campaign]['Content'].iloc[0]
-                st.text_area("Content", campaign_content if campaign_content else "No content available", height=300)
-        else:
-            st.info("No sent email campaigns found.")
+            selected = st.selectbox("Select campaign to view details", campaigns['ID'].tolist())
+            if selected:
+                content = campaigns[campaigns['ID'] == selected]['Content'].iloc[0]
+                st.text_area("Content", content if content else "No content available", height=300)
+        else: st.info("No sent email campaigns found.")
     except Exception as e:
-        st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
+        st.error(f"Error fetching campaigns: {str(e)}")
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
-def main():
-    st.set_page_config(
-        page_title="Autoclient.ai | Lead Generation AI App",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        page_icon=""
-    )
+def handle_automation_error(e, context):
+    error_msg = f"Error in {context}: {str(e)}"
+    st.error(error_msg)
+    if st.button("Retry"): st.experimental_rerun()
 
+def main():
+    st.set_page_config(page_title="Autoclient.ai | Lead Generation AI App", layout="wide", initial_sidebar_state="expanded", page_icon="")
     st.sidebar.title("AutoclientAI")
     st.sidebar.markdown("Select a page to navigate through the application.")
-
     pages = {
         "🔍 Manual Search": manual_search_page,
-        "📦 Bulk Send": bulk_send_page,
+        "📦 Bulk Send": bulk_send_page, 
         "👥 View Leads": view_leads_page,
         "🔑 Search Terms": search_terms_page,
         "✉️ Email Templates": email_templates_page,
@@ -2279,28 +1849,227 @@ def main():
         "🤖 AutoclientAI": autoclient_ai_page,
         "⚙️ Automation Control": automation_control_panel_page,
         "📨 Email Logs": view_campaign_logs,
-        "🔄 Settings": settings_page,
+        "⚙️ Settings": settings_page,
         "📨 Sent Campaigns": view_sent_email_campaigns
     }
-
     with st.sidebar:
-        selected = option_menu(
-            menu_title="Navigation",
-            options=list(pages.keys()),
-            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
-            menu_icon="cast",
-            default_index=0
-        )
-
-    try:
-        pages[selected]()
+        selected = option_menu("Navigation", list(pages.keys()), icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"], menu_icon="cast", default_index=0)
+    try: pages[selected]()
     except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        logging.exception("An error occurred in the main function")
-        st.write("Please try refreshing the page or contact support if the issue persists.")
-
+        st.error(f"Error: {str(e)}")
+        logging.exception("Main function error")
+        st.write("Please refresh or contact support.")
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
-if __name__ == "__main__":
-    main()
+@st.cache_resource
+def get_db_session(): return SessionLocal()
+
+@st.cache_data(ttl=300)
+def fetch_cached_email_templates(session): return fetch_email_templates(session)
+
+@st.cache_data(ttl=300)
+def fetch_cached_email_settings(session): return fetch_email_settings(session)
+
+TEMPLATE_HELP = """Available Variables:
+{{name}} - Full name
+{{first_name}} - First name
+{{last_name}} - Last name
+{{company}} - Company name
+{{job_title}} - Job title"""
+
+def process_template_variables(content: str, lead: Lead) -> str:
+    variables = {
+        'name': f"{lead.first_name or ''} {lead.last_name or ''}".strip() or "there",
+        'first_name': lead.first_name or "there", 
+        'last_name': lead.last_name or "",
+        'company': lead.company or "your company",
+        'job_title': lead.job_title or "professional"
+    }
+    return ''.join(content.replace(f"{{{{{var}}}}}", value) for var, value in variables.items())
+
+def extract_name_from_url(url: str) -> tuple[str, str]:
+    if 'linkedin.com/in/' not in url: return '', ''
+    path = urlparse(url).path.strip('/').split('/')[-1].replace('-', ' ').split()
+    return (path[0].title(), ' '.join(path[1:]).title()) if len(path) >= 2 else ('', '')
+
+def save_lead_with_name(session: Session, email: str, url: str = None, **kwargs) -> Lead:
+    lead = session.query(Lead).filter_by(email=email).first()
+    if url and not (kwargs.get('first_name') and kwargs.get('last_name')):
+        first_name, last_name = extract_name_from_url(url)
+        if first_name and last_name: kwargs.update({'first_name': first_name, 'last_name': last_name})
+    if lead:
+        for key, value in kwargs.items():
+            if value and not getattr(lead, key): setattr(lead, key, value)
+    else:
+        lead = Lead(email=email, created_at=datetime.utcnow(), **kwargs)
+        session.add(lead)
+    session.commit()
+    return lead
+
+def preview_template(template: EmailTemplate) -> tuple[str, str]:
+    sample_lead = Lead(first_name="John", last_name="Doe", company="ACME Corp", job_title="Manager")
+    return process_template_variables(template.subject, sample_lead), process_template_variables(template.body_content, sample_lead)
+
+def handle_email_settings(s):
+    email_settings = s.query(EmailSettings).all()
+    if email_settings:
+        st.subheader("Existing Email Settings")
+        for setting in email_settings:
+            with st.expander(f"{setting.name} ({setting.email})"):
+                st.text(f"Provider: {setting.provider}")
+                st.text(f"SMTP Server: {setting.smtp_server}")
+    with st.form("email_settings_form"):
+        name, email = st.text_input("Name"), st.text_input("Email")
+        provider = st.selectbox("Provider", ["SMTP", "AWS SES"])
+        smtp_config, aws_config = {}, {}
+        if provider == "SMTP":
+            smtp_config.update({
+                "smtp_server": st.text_input("SMTP Server"),
+                "smtp_port": st.text_input("SMTP Port"),
+                "smtp_username": st.text_input("SMTP Username"),
+                "smtp_password": st.text_input("SMTP Password", type="password")
+            })
+        else:
+            aws_config.update({
+                "aws_access_key_id": st.text_input("AWS Access Key ID"),
+                "aws_secret_access_key": st.text_input("AWS Secret Access Key", type="password"),
+                "aws_region": st.text_input("AWS Region")
+            })
+        if st.form_submit_button("Save Email Settings"):
+            try:
+                s.add(EmailSettings(name=name, email=email, provider=provider, **smtp_config, **aws_config))
+                s.commit()
+                st.success("✅ Email settings saved successfully!")
+            except Exception as e:
+                st.error(f"❌ Error saving email settings: {str(e)}")
+
+def send_email_provider(email_settings, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
+    try:
+        return send_smtp_email(email_settings, from_email, to_email, subject, body, charset, reply_to) if email_settings.provider == "SMTP" else send_ses_email(email_settings, from_email, to_email, subject, body, charset, reply_to, ses_client)
+    except Exception as e:
+        logging.error(f"Error sending email: {str(e)}")
+        return None
+
+def send_smtp_email(settings, from_email, to_email, subject, body, charset, reply_to):
+    msg = MIMEMultipart()
+    msg.update({'From': from_email, 'To': to_email, 'Subject': subject})
+    if reply_to: msg.add_header('Reply-To', reply_to)
+    msg.attach(MIMEText(body, 'html', charset))
+    with smtplib.SMTP(settings.smtp_server, settings.smtp_port) as server:
+        server.starttls()
+        server.login(settings.smtp_username, settings.smtp_password)
+        server.send_message(msg)
+    return {'MessageId': f'smtp-{uuid.uuid4()}'}
+
+def send_ses_email(settings, from_email, to_email, subject, body, charset, reply_to, ses_client=None):
+    if not ses_client:
+        ses_client = boto3.client('ses', aws_access_key_id=settings.aws_access_key_id, aws_secret_access_key=settings.aws_secret_access_key, region_name=settings.aws_region)
+    email_args = {
+        'Source': from_email,
+        'Destination': {'ToAddresses': [to_email]},
+        'Message': {
+            'Subject': {'Data': subject, 'Charset': charset},
+            'Body': {'Html': {'Data': body, 'Charset': charset}}
+        }
+    }
+    if reply_to: email_args['ReplyToAddresses'] = [reply_to]
+    return ses_client.send_email(**email_args)
+
+def add_tracking(body: str, tracking_id: str, tracking_pixel_url: str) -> str:
+    tracking_pixel = f'<img src="{tracking_pixel_url}" width="1" height="1" />'
+    soup = BeautifulSoup(body, 'html.parser')
+    for link in soup.find_all('a'):
+        if original_url := link.get('href'):
+            link['href'] = f"https://autoclient-email-analytics.trigox.workers.dev/click?id={tracking_id}&url={urlencode({'url': original_url})}"
+    modified_body = str(soup)
+    return modified_body.replace('</body>', f'{tracking_pixel}</body>') if '</body>' in modified_body else modified_body + tracking_pixel
+
+@contextmanager 
+def managed_automation_session():
+    try:
+        st.session_state.automation_active = True
+        yield
+    finally:
+        st.session_state.automation_active = False
+
+def track_automation_progress(total_steps: int):
+    progress = st.progress(0)
+    status = st.empty()
+    def update(step: int, message: str):
+        progress.progress(step / total_steps)
+        status.text(f"Step {step}/{total_steps}: {message}")
+    return update
+
+def load_automation_config():
+    return {
+        'batch_size': st.sidebar.slider("Batch Size", 5, 50, 20),
+        'delay': st.sidebar.number_input("Delay (sec)", 1, 60, 5),
+        'retries': st.sidebar.number_input("Retries", 1, 10, 3)
+    }
+
+def fetch_search_terms(session):
+    return [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).filter(SearchTerm.is_active == True).all()]
+
+def process_search_term(session, term: str, config: dict, leads_container):
+    results = manual_search(session, [term], config['batch_size'])
+    new_leads = [(res['Email'], res['URL']) for res in results['results'] if save_lead(session, res['Email'], url=res['URL'])]
+    if new_leads:
+        leads_df = pd.DataFrame(new_leads, columns=['Email', 'URL'])
+        leads_container.dataframe(leads_df, hide_index=True)
+    return new_leads
+
+def process_email_queue(session, kb_info: dict, config: dict):
+    template = session.query(EmailTemplate).filter_by(project_id=get_active_project_id()).first()
+    if template:
+        from_email = kb_info.get('contact_email') or 'hello@indosy.com'
+        reply_to = kb_info.get('contact_email') or 'eugproductions@gmail.com'
+        for _ in range(config['retries']):
+            try:
+                bulk_send_emails(session, template.id, from_email, reply_to)
+                break
+            except Exception as e:
+                logger.error(f"Email error: {str(e)}")
+                time.sleep(config['delay'])
+
+def update_automation_metrics(session):
+    try:
+        metrics = {
+            'total_leads': session.query(Lead).count(),
+            'emails_sent': session.query(EmailCampaign).filter(EmailCampaign.sent_at.isnot(None)).count(),
+            'success_rate': session.query(EmailCampaign).filter(EmailCampaign.status == 'sent').count() / session.query(EmailCampaign).filter(EmailCampaign.sent_at.isnot(None)).count()
+        }
+        st.session_state.automation_metrics = metrics
+        return metrics
+    except Exception as e:
+        logging.error(f"Error updating metrics: {str(e)}")
+        return {'total_leads': 0, 'emails_sent': 0, 'success_rate': 0}
+
+def extract_name(soup):
+    name_tags = soup.find_all(['h1', 'h2', 'h3'], class_=lambda x: x and 'name' in x.lower())
+    return name_tags[0].text.strip() if name_tags else ""
+
+def extract_company(soup):
+    company_meta = soup.find('meta', {'property': 'og:site_name'})
+    if company_meta: return company_meta['content']
+    company_tags = soup.find_all(['span', 'div', 'p'], class_=lambda x: x and 'company' in x.lower())
+    return company_tags[0].text.strip() if company_tags else ""
+
+def extract_job_title(soup):
+    title_tags = soup.find_all(['span', 'div', 'p'], class_=lambda x: x and ('title' in x.lower() or 'role' in x.lower()))
+    return title_tags[0].text.strip() if title_tags else ""
+
+def extract_phone_numbers(soup):
+    phone_pattern = r'(\+?[\d\s-]{10,})'
+    text = soup.get_text()
+    return list(set(re.findall(phone_pattern, text)))
+
+def extract_social_links(soup):
+    social_patterns = ['linkedin.com', 'twitter.com', 'facebook.com', 'instagram.com']
+    social_links = []
+    for link in soup.find_all('a', href=True):
+        if any(pattern in link['href'].lower() for pattern in social_patterns):
+            social_links.append(link['href'])
+    return social_links
+
+if __name__ == "__main__": main()
