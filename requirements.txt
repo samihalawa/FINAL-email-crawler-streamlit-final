@@ -1,4 +1,4 @@
-aiohttp
+aiohttp>=3.7.4
 beautifulsoup4
 boto3
 botocore
@@ -11,18 +11,17 @@ pandas
 plotly
 psycopg2-binary
 python-dotenv
-requests
+requests>=2.25.1
 requests-toolbelt
 sqlalchemy
 streamlit
 streamlit-option-menu
 streamlit-tags
 tenacity
-urllib3
+urllib3>=1.26.0
 email-validator
 phonenumbers
 apscheduler
-torch
 transformers
 huggingface-hub
 pyyaml
@@ -33,7 +32,7 @@ streamlit-extras
 pytest
 pydantic
 faiss-cpu
-continue-dev[all]
+continuedev
 rich
 debugpy
 streamlit-custom-notification-box
