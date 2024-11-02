@@ -98,7 +98,7 @@ class Lead(Base):
     email = Column(Text, unique=True)
     phone, first_name, last_name, company, job_title = [Column(Text) for _ in range(5)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Remove the domain column
+    is_processed = Column(Boolean, default=False)  # Add this line
     campaign_leads = relationship("CampaignLead", back_populates="lead")
     lead_sources = relationship("LeadSource", back_populates="lead")
     email_campaigns = relationship("EmailCampaign", back_populates="lead")
@@ -939,11 +939,11 @@ def manual_search_page():
                         wrapped_content = wrap_email_body(template.body_content)
                         response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
                         if response:
-                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), template.body_content)
+                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), wrapped_content)
                             emails_sent.append(f"✅ {result['Email']}")
                             status_text.text(f"Email sent to: {result['Email']}")
                         else:
-                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, template.body_content)
+                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, wrapped_content)
                             emails_sent.append(f"❌ {result['Email']}")
                             status_text.text(f"Failed to send email to: {result['Email']}")
 
@@ -1137,81 +1137,173 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
     return logs, sent_count
 
 def view_campaign_logs():
-    st.header("Email Logs")
+    st.header("Email Campaign Logs")
+    
     with db_session() as session:
+        # Add date range filter
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "From Date",
+                value=datetime.now().date() - timedelta(days=7)
+            )
+        with col2:
+            end_date = st.date_input(
+                "To Date",
+                value=datetime.now().date()
+            )
+
+        # Add real-time refresh option
+        auto_refresh = st.checkbox("Auto-refresh logs", value=True)
+        if auto_refresh:
+            time.sleep(2)  # Refresh every 2 seconds
+            st.rerun()
+
+        # Fetch and filter logs
         logs = fetch_all_email_logs(session)
-        if logs.empty:
-            st.info("No email logs found.")
-        else:
-            st.write(f"Total emails sent: {len(logs)}")
-            st.write(f"Success rate: {(logs['Status'] == 'sent').mean():.2%}")
+        if not logs.empty:
+            # Filter by date range
+            logs['Sent At'] = pd.to_datetime(logs['Sent At'])
+            filtered_logs = logs[
+                (logs['Sent At'].dt.date >= start_date) & 
+                (logs['Sent At'].dt.date <= end_date)
+            ]
 
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
-            with col2:
-                end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
-
-            filtered_logs = logs[(logs['Sent At'].dt.date >= start_date) & (logs['Sent At'].dt.date <= end_date)]
-
-            search_term = st.text_input("Search by email or subject")
-            if search_term:
-                filtered_logs = filtered_logs[filtered_logs['Email'].str.contains(search_term, case=False) | 
-                                              filtered_logs['Subject'].str.contains(search_term, case=False)]
-
+            # Add metrics
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Emails Sent", len(filtered_logs))
+                st.metric(
+                    "Total Emails", 
+                    len(filtered_logs),
+                    delta=len(filtered_logs) - len(logs[logs['Sent At'].dt.date < start_date])
+                )
             with col2:
-                st.metric("Unique Recipients", filtered_logs['Email'].nunique())
+                success_rate = (filtered_logs['Status'] == 'sent').mean() * 100
+                st.metric(
+                    "Success Rate", 
+                    f"{success_rate:.1f}%",
+                    delta=f"{success_rate - ((logs[logs['Sent At'].dt.date < start_date]['Status'] == 'sent').mean() * 100:.1f}%"  # Add closing parenthesis
+                )
             with col3:
-                st.metric("Success Rate", f"{(filtered_logs['Status'] == 'sent').mean():.2%}")
+                unique_recipients = filtered_logs['Email'].nunique()
+                st.metric(
+                    "Unique Recipients",
+                    unique_recipients
+                )
 
-            daily_counts = filtered_logs.resample('D', on='Sent At')['Email'].count()
-            st.bar_chart(daily_counts)
+            # Add interactive charts
+            tab1, tab2 = st.tabs(["Sending Volume", "Status Distribution"])
+            
+            with tab1:
+                # Hourly sending volume
+                hourly_volume = filtered_logs.set_index('Sent At').resample('H').size()
+                st.line_chart(hourly_volume)
 
-            st.subheader("Detailed Email Logs")
-            for _, log in filtered_logs.iterrows():
-                with st.expander(f"{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')} - {log['Email']} - {log['Status']}"):
-                    st.write(f"**Subject:** {log['Subject']}")
-                    st.write(f"**Content Preview:** {log['Content'][:100]}...")
-                    if st.button("View Full Email", key=f"view_email_{log['ID']}"):
-                        st.components.v1.html(wrap_email_body(log['Content']), height=400, scrolling=True)
-                    if log['Status'] != 'sent':
-                        st.error(f"Status: {log['Status']}")
+            with tab2:
+                # Status distribution
+                status_counts = filtered_logs['Status'].value_counts()
+                st.plotly_chart(px.pie(
+                    values=status_counts.values,
+                    names=status_counts.index,
+                    title="Email Status Distribution"
+                ))
 
+            # Add searchable log table
+            st.subheader("Detailed Logs")
+            search_term = st.text_input("Search logs by email or subject")
+            
+            if search_term:
+                filtered_logs = filtered_logs[
+                    filtered_logs['Email'].str.contains(search_term, case=False) |
+                    filtered_logs['Subject'].str.contains(search_term, case=False)
+                ]
+
+            # Display logs in pages
             logs_per_page = 20
             total_pages = (len(filtered_logs) - 1) // logs_per_page + 1
             page = st.number_input("Page", min_value=1, max_value=total_pages, value=1)
             start_idx = (page - 1) * logs_per_page
             end_idx = start_idx + logs_per_page
 
-            st.table(filtered_logs.iloc[start_idx:end_idx][['Sent At', 'Email', 'Subject', 'Status']])
+            # Create expandable log entries
+            for _, log in filtered_logs.iloc[start_idx:end_idx].iterrows():
+                with st.expander(
+                    f"{log['Sent At']} - {log['Email']} - {log['Status']}",
+                    expanded=False
+                ):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.markdown(f"**Subject:** {log['Subject']}")
+                        st.markdown(f"**Template:** {log['Template']}")
+                        if log['Lead Name'] != "Unknown":
+                            st.markdown(f"**Recipient:** {log['Lead Name']}")
+                        if log['Lead Company'] != "Unknown":
+                            st.markdown(f"**Company:** {log['Lead Company']}")
+                    with col2:
+                        status_color = {
+                            'sent': '🟢',
+                            'failed': '🔴',
+                            'bounced': '🟡',
+                            'opened': '🔵',
+                            'clicked': '💚'
+                        }.get(log['Status'].lower(), '⚪')
+                        st.markdown(f"**Status:** {status_color} {log['Status']}")
+                        
+                    if st.button("View Full Email", key=f"view_email_{log['ID']}"):
+                        st.components.v1.html(
+                            wrap_email_body(log['Content']), 
+                            height=400,
+                            scrolling=True
+                        )
 
-            if st.button("Export Logs to CSV"):
+            # Add export option
+            if st.button("Export Filtered Logs"):
                 csv = filtered_logs.to_csv(index=False)
                 st.download_button(
                     label="Download CSV",
                     data=csv,
-                    file_name="email_logs.csv",
+                    file_name=f"email_logs_{start_date}_to_{end_date}.csv",
                     mime="text/csv"
                 )
 
+        else:
+            st.info("No email logs found for the selected period.")
+
 def fetch_all_email_logs(session):
     try:
-        email_campaigns = session.query(EmailCampaign).join(Lead).join(EmailTemplate).options(joinedload(EmailCampaign.lead), joinedload(EmailCampaign.template)).order_by(EmailCampaign.sent_at.desc()).all()
+        # Optimize query with joins and specific column selection
+        query = (session.query(
+            EmailCampaign.id,
+            EmailCampaign.sent_at,
+            Lead.email,
+            EmailTemplate.template_name,
+            EmailCampaign.customized_subject,
+            EmailCampaign.customized_content,
+            EmailCampaign.status,
+            EmailCampaign.message_id,
+            EmailCampaign.campaign_id,
+            Lead.first_name,
+            Lead.last_name,
+            Lead.company
+        )
+        .join(Lead)
+        .join(EmailTemplate)
+        .order_by(EmailCampaign.sent_at.desc()))
+
+        # Execute query and create DataFrame
+        results = query.all()
         return pd.DataFrame({
-            'ID': [ec.id for ec in email_campaigns],
-            'Sent At': [ec.sent_at for ec in email_campaigns],
-            'Email': [ec.lead.email for ec in email_campaigns],
-            'Template': [ec.template.template_name for ec in email_campaigns],
-            'Subject': [ec.customized_subject or "No subject" for ec in email_campaigns],
-            'Content': [ec.customized_content or "No content" for ec in email_campaigns],
-            'Status': [ec.status for ec in email_campaigns],
-            'Message ID': [ec.message_id or "No message ID" for ec in email_campaigns],
-            'Campaign ID': [ec.campaign_id for ec in email_campaigns],
-            'Lead Name': [f"{ec.lead.first_name or ''} {ec.lead.last_name or ''}".strip() or "Unknown" for ec in email_campaigns],
-            'Lead Company': [ec.lead.company or "Unknown" for ec in email_campaigns]
+            'ID': [r[0] for r in results],
+            'Sent At': [r[1] for r in results],
+            'Email': [r[2] for r in results],
+            'Template': [r[3] for r in results],
+            'Subject': [r[4] or "No subject" for r in results],
+            'Content': [r[5] or "No content" for r in results],
+            'Status': [r[6] for r in results],
+            'Message ID': [r[7] or "No message ID" for r in results],
+            'Campaign ID': [r[8] for r in results],
+            'Lead Name': [f"{r[9] or ''} {r[10] or ''}".strip() or "Unknown" for r in results],
+            'Lead Company': [r[11] or "Unknown" for r in results]
         })
     except SQLAlchemyError as e:
         logging.error(f"Database error in fetch_all_email_logs: {str(e)}")
@@ -2105,7 +2197,24 @@ def get_search_terms(session):
     return [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
 
 def get_ai_response(prompt):
-    return openai.Completion.create(engine="text-davinci-002", prompt=prompt, max_tokens=100).choices[0].text.strip()
+    with db_session() as session:
+        general_settings = session.query(Settings).filter_by(setting_type='general').first()
+        if not general_settings or 'openai_api_key' not in general_settings.value:
+            return "OpenAI API key not configured"
+        
+        client = OpenAI(api_key=general_settings.value['openai_api_key'])
+        model = general_settings.value.get('openai_model', "gpt-4o-mini")
+        
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logging.error(f"Error in AI response: {str(e)}")
+            return str(e)
 
 def fetch_email_settings(session):
     try:
