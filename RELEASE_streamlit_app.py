@@ -876,7 +876,7 @@ def manual_search_page():
             maxtags=10,
             key='search_terms_input'
         )
-        num_results = st.slider("Results per term", 1, 500000, 10)
+        num_results = st.slider("Results per term", 1, 0, 10)
 
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
