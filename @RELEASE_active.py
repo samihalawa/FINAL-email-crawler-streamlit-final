@@ -4,7 +4,7 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, **kwargs
     log_container = kwargs.get('log_container')
     results = kwargs.get('results', [])
     
-    sent_count = 0
+    sent_count = 0≤
     total = len(leads)
     
     template = session.query(EmailTemplate).get(template_id)

@@ -378,6 +378,9 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
     except Exception as e:
         logging.error(f"Error sending email: {str(e)}")
         return None, None
+    finally:
+        if ses_client:
+            ses_client.close()
 
 def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
     try:
@@ -547,18 +550,11 @@ def generate_or_adjust_email_template(prompt, kb_info=None, current_template=Non
 
     response = openai_chat_completion(messages, function_name="generate_or_adjust_email_template")
     
-    if isinstance(response, str):
-        try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            return {
-                "subject": "AI Generated Subject",
-                "body": f"<p>{response}</p>"
-            }
-    elif isinstance(response, dict):
-        return response
-    else:
-        return {"subject": "", "body": "<p>Failed to generate email content.</p>"}
+    try:
+        return json.loads(response)
+    except (json.JSONDecodeError, TypeError):
+        logging.error("Invalid response format from OpenAI")
+        return {"subject": "", "body": ""}
 
 def fetch_leads_with_sources(session):
     try:
@@ -642,9 +638,8 @@ def delete_search_term_group(session, group_id):
         logging.error(f"Error deleting search term group: {str(e)}")
 
 def ai_automation_loop(session, log_container, leads_container):
-    automation_logs, total_search_terms, total_emails_sent = [], 0, 0
-    while st.session_state.get('automation_status', False):
-        try:
+    try:
+        while st.session_state.get('automation_status'):
             log_container.info("Starting automation cycle")
             kb_info = get_knowledge_base_info(session, get_active_project_id())
             if not kb_info:
@@ -676,14 +671,11 @@ def ai_automation_loop(session, log_container, leads_container):
                 leads_container.text_area("New Leads Found", "\n".join([email for _, email in new_leads]), height=200)
                 progress_bar.progress((idx + 1) / len(optimized_terms))
             st.success(f"Automation cycle completed. Total search terms: {total_search_terms}, Total emails sent: {total_emails_sent}")
+            st.session_state.last_run = datetime.utcnow()
             time.sleep(3600)
-        except Exception as e:
-            log_container.error(f"Critical error in automation cycle: {str(e)}")
-            time.sleep(300)
-    log_container.info("Automation stopped")
-    st.session_state.automation_logs = automation_logs
-    st.session_state.total_leads_found = total_search_terms
-    st.session_state.total_emails_sent = total_emails_sent
+    except Exception as e:
+        st.session_state.automation_status = False
+        raise e
 
 def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_id=None, email_campaign_id=None):
     with db_session() as session:
@@ -876,7 +868,7 @@ def manual_search_page():
             maxtags=10,
             key='search_terms_input'
         )
-        num_results = st.slider("Results per term", 1, 500000, 10)
+        num_results = st.slider("Results per term", 1, 0, 10)
 
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
@@ -972,17 +964,16 @@ def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
                            func.count(distinct(Lead.id)).label('lead_count'),
                            func.count(distinct(EmailCampaign.id)).label('email_count'))
-             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
-             .join(Lead, LeadSource.lead_id == Lead.id)
-             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
-             .group_by(SearchTerm.term))
+                           .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+                           .join(Lead, LeadSource.lead_id == Lead.id)
+                           .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+                           .group_by(SearchTerm.term))
     df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
     return df
 
 def ai_automation_loop(session, log_container, leads_container):
-    automation_logs, total_search_terms, total_emails_sent = [], 0, 0
-    while st.session_state.get('automation_status', False):
-        try:
+    try:
+        while st.session_state.get('automation_status'):
             log_container.info("Starting automation cycle")
             kb_info = get_knowledge_base_info(session, get_active_project_id())
             if not kb_info:
@@ -1014,14 +1005,11 @@ def ai_automation_loop(session, log_container, leads_container):
                 leads_container.text_area("New Leads Found", "\n".join([email for _, email in new_leads]), height=200)
                 progress_bar.progress((idx + 1) / len(optimized_terms))
             st.success(f"Automation cycle completed. Total search terms: {total_search_terms}, Total emails sent: {total_emails_sent}")
+            st.session_state.last_run = datetime.utcnow()
             time.sleep(3600)
-        except Exception as e:
-            log_container.error(f"Critical error in automation cycle: {str(e)}")
-            time.sleep(300)
-    log_container.info("Automation stopped")
-    st.session_state.automation_logs = automation_logs
-    st.session_state.total_leads_found = total_search_terms
-    st.session_state.total_emails_sent = total_emails_sent
+    except Exception as e:
+        st.session_state.automation_status = False
+        raise e
 
 # Make sure all database operations are performed within a session context
 def get_knowledge_base_info(session, project_id):
@@ -1182,7 +1170,7 @@ def view_campaign_logs():
                 st.metric(
                     "Success Rate", 
                     f"{success_rate:.1f}%",
-                    delta=f"{success_rate - ((logs[logs['Sent At'].dt.date < start_date]['Status'] == 'sent').mean() * 100:.1f}%"  # Add closing parenthesis
+                    delta=f"{success_rate - ((logs[logs['Sent At'].dt.date < start_date]['Status'] == 'sent').mean() * 100):.1f}%"
                 )
             with col3:
                 unique_recipients = filtered_logs['Email'].nunique()
@@ -1401,8 +1389,13 @@ def view_leads_page():
 
             st.subheader("Lead Growth")
             if 'Created At' in st.session_state.leads.columns:
-                lead_growth = st.session_state.leads.groupby(pd.to_datetime(st.session_state.leads['Created At']).dt.to_period('M')).size().cumsum()
-                st.line_chart(lead_growth)
+                try:
+                    lead_growth = st.session_state.leads.groupby(
+                        pd.to_datetime(st.session_state.leads['Created At']).dt.to_period('M')
+                    ).size().cumsum()
+                    st.line_chart(lead_growth)
+                except Exception as e:
+                    st.error(f"Error generating lead growth chart: {str(e)}")
             else:
                 st.warning("Created At data is not available for lead growth chart.")
 
@@ -1440,10 +1433,10 @@ def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
                            func.count(distinct(Lead.id)).label('lead_count'),
                            func.count(distinct(EmailCampaign.id)).label('email_count'))
-             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
-             .join(Lead, LeadSource.lead_id == Lead.id)
-             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
-             .group_by(SearchTerm.term))
+                           .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+                           .join(Lead, LeadSource.lead_id == Lead.id)
+                           .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+                           .group_by(SearchTerm.term))
     df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
     return df
 
@@ -1462,6 +1455,9 @@ def get_active_campaign_id():
     return st.session_state.get('active_campaign_id', 1)
 
 def search_terms_page():
+    if 'search_terms_tab' not in st.session_state:
+        st.session_state.search_terms_tab = 0
+    
     st.markdown("<h1 style='text-align: center; color: #1E88E5;'>Search Terms Dashboard</h1>", unsafe_allow_html=True)
     with db_session() as session:
         search_terms_df = fetch_search_terms_with_lead_count(session)
@@ -1506,9 +1502,13 @@ def search_terms_page():
                 campaign_id = get_active_campaign_id()
                 group_for_new_term = col2.selectbox("Assign to Group", ["None"] + [f"{g.id}: {g.name}" for g in groups if isinstance(g, SearchTermGroup)], format_func=lambda x: x.split(":")[1] if ":" in x else x)
                 if col3.button("Add Term", use_container_width=True) and new_term:
-                    add_new_search_term(session, new_term, campaign_id, group_for_new_term)
-                    st.success(f"Added: {new_term}")
-                    st.rerun()
+                    try:
+                        add_new_search_term(session, new_term, campaign_id, group_for_new_term)
+                        st.success(f"Added: {new_term}")
+                        st.session_state.search_terms_tab = 0  # Return to first tab
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error adding search term: {str(e)}")
 
             with tab4:
                 st.subheader("AI-Powered Search Term Grouping")
@@ -1719,10 +1719,15 @@ def email_templates_page():
                     st.components.v1.html(wrap_email_body(edited_body), height=400, scrolling=True)
                     
                     if st.button("Delete Template", key=f"delete_{template.id}"):
-                        session.delete(template)
-                        session.commit()
-                        st.success("Template deleted successfully!")
-                        st.rerun()
+                        try:
+                            if st.checkbox("Confirm deletion?", key=f"confirm_delete_{template.id}"):
+                                session.delete(template)
+                                session.commit()
+                                st.success("Template deleted successfully!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting template: {str(e)}")
+                            session.rollback()
         else:
             st.info("No email templates found. Create a new template to get started.")
 
@@ -1844,10 +1849,10 @@ def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
                            func.count(distinct(Lead.id)).label('lead_count'),
                            func.count(distinct(EmailCampaign.id)).label('email_count'))
-             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
-             .join(Lead, LeadSource.lead_id == Lead.id)
-             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
-             .group_by(SearchTerm.term))
+                           .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+                           .join(Lead, LeadSource.lead_id == Lead.id)
+                           .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+                           .group_by(SearchTerm.term))
     df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
     return df
 
@@ -1859,9 +1864,8 @@ def fetch_search_terms_for_groups(session, group_ids):
     return [term.term for term in terms]
 
 def ai_automation_loop(session, log_container, leads_container):
-    automation_logs, total_search_terms, total_emails_sent = [], 0, 0
-    while st.session_state.get('automation_status', False):
-        try:
+    try:
+        while st.session_state.get('automation_status'):
             log_container.info("Starting automation cycle")
             kb_info = get_knowledge_base_info(session, get_active_project_id())
             if not kb_info:
@@ -1872,6 +1876,7 @@ def ai_automation_loop(session, log_container, leads_container):
             optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
             st.subheader("Optimized Search Terms")
             st.write(", ".join(optimized_terms))
+
             total_search_terms = len(optimized_terms)
             progress_bar = st.progress(0)
             for idx, term in enumerate(optimized_terms):
@@ -1888,12 +1893,11 @@ def ai_automation_loop(session, log_container, leads_container):
                 leads_container.text_area("New Leads Found", "\n".join([email for _, email in new_leads]), height=200)
                 progress_bar.progress((idx + 1) / len(optimized_terms))
             st.success(f"Automation cycle completed. Total search terms: {total_search_terms}, Total emails sent: {total_emails_sent}")
+            st.session_state.last_run = datetime.utcnow()
             time.sleep(3600)
-        except Exception as e:
-            log_container.error(f"Critical error in automation cycle: {str(e)}")
-            time.sleep(300)
-    log_container.info("Automation stopped")
-    st.session_state.update({"automation_logs": automation_logs, "total_leads_found": total_search_terms, "total_emails_sent": total_emails_sent})
+    except Exception as e:
+        st.session_state.automation_status = False
+        raise e
 
 def display_search_results(results, key_suffix):
     if not results: return st.warning("No results to display.")
@@ -1923,10 +1927,10 @@ def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
                            func.count(distinct(Lead.id)).label('lead_count'),
                            func.count(distinct(EmailCampaign.id)).label('email_count'))
-             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
-             .join(Lead, LeadSource.lead_id == Lead.id)
-             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
-             .group_by(SearchTerm.term))
+                           .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+                           .join(Lead, LeadSource.lead_id == Lead.id)
+                           .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+                           .group_by(SearchTerm.term))
     df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
     return df
 
@@ -2005,12 +2009,17 @@ def knowledge_base_page():
                     form_data.update({'project_id': project_id, 'created_at': datetime.utcnow()})
                     if kb_entry:
                         for k, v in form_data.items(): setattr(kb_entry, k, v)
-                    else: session.add(KnowledgeBase(**form_data))
+                    else:
+                        session.add(KnowledgeBase(**form_data))
                     session.commit()
                     st.success("Knowledge Base saved successfully!", icon="✅")
                 except Exception as e: st.error(f"An error occurred while saving the Knowledge Base: {str(e)}")
 
 def autoclient_ai_page():
+    if not get_active_project_id():
+        st.error("Please select an active project first")
+        return
+        
     st.header("AutoclientAI - Automated Lead Generation")
     with st.expander("Knowledge Base Information", expanded=False):
         with db_session() as session:
@@ -2020,30 +2029,44 @@ def autoclient_ai_page():
         st.json(kb_info)
     user_input = st.text_area("Enter additional context or specific goals for lead generation:", help="This information will be used to generate more targeted search terms.")
     if st.button("Generate Optimized Search Terms", key="generate_optimized_terms"):
+        if not kb_info:
+            st.error("Knowledge Base information required")
+            return
+            
         with st.spinner("Generating optimized search terms..."):
-            with db_session() as session:
-                base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
-                optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
-            if optimized_terms:
-                st.session_state.optimized_terms = optimized_terms
-                st.success("Search terms optimized successfully!")
-                st.subheader("Optimized Search Terms")
-                st.write(", ".join(optimized_terms))
-            else:
-                st.error("Failed to generate optimized search terms. Please try again.")
+            try:
+                with db_session() as session:
+                    base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
+                    if not base_terms:
+                        st.warning("No base search terms found. Please add some terms first.")
+                        return
+                    optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
+                    if optimized_terms:
+                        st.session_state.optimized_terms = optimized_terms
+                        st.success("Search terms optimized successfully!")
+                        st.subheader("Optimized Search Terms")
+                        st.write(", ".join(optimized_terms))
+                    else:
+                        st.error("Failed to generate optimized search terms. Please try again.")
+            except Exception as e:
+                st.error(f"Error generating terms: {str(e)}")
     if st.button("Start Automation", key="start_automation"):
-        st.session_state.update({"automation_status": True, "automation_logs": [], "total_leads_found": 0, "total_emails_sent": 0})
+        st.session_state.update({
+            "automation_status": True,
+            "automation_logs": [],
+            "total_leads_found": 0,
+            "total_emails_sent": 0,
+            "last_run": datetime.utcnow()
+        })
         st.success("Automation started!")
-    if st.session_state.get('automation_status', False):
-        st.subheader("Automation in Progress")
-        progress_bar, log_container, leads_container, analytics_container = st.progress(0), st.empty(), st.empty(), st.empty()
+    if st.session_state.get('automation_status'):
         try:
             with db_session() as session:
-                ai_automation_loop(session, log_container, leads_container)
+                ai_automation_loop(session, st.empty(), st.empty())
         except Exception as e:
-            st.error(f"An error occurred in the automation process: {str(e)}")
+            st.error(f"Automation error: {str(e)}")
             st.session_state.automation_status = False
-    if not st.session_state.get('automation_status', False) and st.session_state.get('automation_logs'):
+    if not st.session_state.get('automation_status') and st.session_state.get('automation_logs'):
         st.subheader("Automation Results")
         st.metric("Total Leads Found", st.session_state.total_leads_found)
         st.metric("Total Emails Sent", st.session_state.total_emails_sent)
@@ -2141,42 +2164,47 @@ def automation_control_panel_page():
     st.subheader("Recently Found Leads")
     leads_container = st.empty()
 
-    if st.session_state.get('automation_status', False):
+    if st.session_state.get('automation_status'):
         st.info("Automation is currently running in the background.")
         try:
             with db_session() as session:
-                while st.session_state.get('automation_status', False):
-                    kb_info = get_knowledge_base_info(session, get_active_project_id())
-                    if not kb_info:
-                        st.session_state.automation_logs.append("Knowledge Base not found. Skipping cycle.")
+                while st.session_state.get('automation_status'):
+                    try:
+                        kb_info = get_knowledge_base_info(session, get_active_project_id())
+                        if not kb_info:
+                            st.session_state.automation_logs.append("Knowledge Base not found. Skipping cycle.")
+                            time.sleep(3600)
+                            continue
+
+                        base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
+                        optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
+
+                        new_leads_all = []
+                        for term in optimized_terms:
+                            results = manual_search(session, [term], 10)
+                            new_leads = [(res['Email'], res['URL']) for res in results['results'] if save_lead(session, res['Email'], url=res['URL'])]
+                            new_leads_all.extend(new_leads)
+
+                            if new_leads:
+                                template = session.query(EmailTemplate).filter_by(project_id=get_active_project_id()).first()
+                                if template:
+                                    from_email = kb_info.get('contact_email') or 'hello@indosy.com'
+                                    reply_to = kb_info.get('contact_email') or 'eugproductions@gmail.com'
+                                    logs, sent_count = bulk_send_emails(session, template.id, from_email, reply_to, [{'Email': email} for email, _ in new_leads])
+                                    st.session_state.automation_logs.extend(logs)
+
+                        if new_leads_all:
+                            leads_df = pd.DataFrame(new_leads_all, columns=['Email', 'URL'])
+                            leads_container.dataframe(leads_df, hide_index=True)
+                        else:
+                            leads_container.info("No new leads found in this cycle.")
+
+                        update_display(log_container, st.session_state.get('automation_logs', []), "Latest Logs", "log")
                         time.sleep(3600)
-                        continue
-
-                    base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
-                    optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
-
-                    new_leads_all = []
-                    for term in optimized_terms:
-                        results = manual_search(session, [term], 10)
-                        new_leads = [(res['Email'], res['URL']) for res in results['results'] if save_lead(session, res['Email'], url=res['URL'])]
-                        new_leads_all.extend(new_leads)
-
-                        if new_leads:
-                            template = session.query(EmailTemplate).filter_by(project_id=get_active_project_id()).first()
-                            if template:
-                                from_email = kb_info.get('contact_email') or 'hello@indosy.com'
-                                reply_to = kb_info.get('contact_email') or 'eugproductions@gmail.com'
-                                logs, sent_count = bulk_send_emails(session, template.id, from_email, reply_to, [{'Email': email} for email, _ in new_leads])
-                                st.session_state.automation_logs.extend(logs)
-
-                    if new_leads_all:
-                        leads_df = pd.DataFrame(new_leads_all, columns=['Email', 'URL'])
-                        leads_container.dataframe(leads_df, hide_index=True)
-                    else:
-                        leads_container.info("No new leads found in this cycle.")
-
-                    update_display(log_container, st.session_state.get('automation_logs', []), "Latest Logs", "log")
-                    time.sleep(3600)
+                    except Exception as e:
+                        st.error(f"Automation cycle error: {str(e)}")
+                        st.session_state.automation_logs.append(f"Error: {str(e)}")
+                        time.sleep(60)  # Shorter retry delay on error
         except Exception as e:
             st.error(f"An error occurred in the automation process: {str(e)}")
 
@@ -2413,3 +2441,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Add settings validation
+def validate_settings(settings_data):
+    required = ['openai_api_key', 'openai_api_base']
+    if not all(settings_data.get(key) for key in required):
+        raise ValueError("Missing required settings")
+    return True
