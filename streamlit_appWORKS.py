@@ -2319,8 +2319,7 @@ def auto_perform_optimized_search(session, term, num_results):
             "industry": lead.industry
         }
         for lead in search_results
-    ]
-
+å
 def manual_search_page():
     st.title("Manual Search")
 
