@@ -21,27 +21,53 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+from sqlalchemy import inspect
 
+# Load environment variables once at startup
 load_dotenv()
 
+# Database configuration with environment variables and defaults
+DB_CONFIG = {
+    'host': os.getenv("SUPABASE_DB_HOST", "localhost"),
+    'name': os.getenv("SUPABASE_DB_NAME", "postgres"),
+    'user': os.getenv("SUPABASE_DB_USER", "postgres"), 
+    'password': os.getenv("SUPABASE_DB_PASSWORD", ""),
+    'port': os.getenv("SUPABASE_DB_PORT", "5432")
+}
 
-DB_HOST = os.getenv("SUPABASE_DB_HOST")
-DB_NAME = os.getenv("SUPABASE_DB_NAME")
-DB_USER = os.getenv("SUPABASE_DB_USER")
-DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD")
-DB_PORT = os.getenv("SUPABASE_DB_PORT")
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+def construct_db_url(config):
+    """Construct database URL from config"""
+    return f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['name']}"
 
+try:
+    DATABASE_URL = construct_db_url(DB_CONFIG)
+except Exception as e:
+    logging.warning(f"Error constructing database URL: {str(e)}")
+    DATABASE_URL = "sqlite:///autoclient.db"
+
+# Disable insecure request warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-load_dotenv()
-DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
-SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
+# Create SQLAlchemy base class
+Base = declarative_base()
 
-if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
-    raise ValueError("One or more required database environment variables are not set")
+# Initialize database engine with optimized settings
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=20,
+    max_overflow=0,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    echo=False
+)
+
+# Create session factory
+SessionLocal = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False
+)
 
 
 class Project(Base):
@@ -160,18 +186,21 @@ class SearchTermEffectiveness(Base):
 class SearchTermGroup(Base):
     __tablename__ = 'search_term_groups'
     id = Column(BigInteger, primary_key=True)
-    name, email_template, description = Column(Text), Column(Text), Column(Text)
+    name = Column(Text)
+    email_template = Column(Text)
+    description = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     search_terms = relationship("SearchTerm", back_populates="group")
 
 class SearchTerm(Base):
     __tablename__ = 'search_terms'
     id = Column(BigInteger, primary_key=True)
-    group_id = Column(BigInteger, ForeignKey('search_term_groups.id'))
+    group_id = Column(BigInteger, ForeignKey('search_term_groups.id'), nullable=True)  # Add this line
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    term, category = Column(Text), Column(Text)
+    term = Column(Text)
+    category = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    language = Column(Text, default='ES')  # Add language column
+    language = Column(Text, default='ES')
     group = relationship("SearchTermGroup", back_populates="search_terms")
     campaign = relationship("Campaign", back_populates="search_terms")
     optimized_terms = relationship("OptimizedSearchTerm", back_populates="original_term")
@@ -850,6 +879,14 @@ def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
     st.title("Manual Search")
+    
+    # Add mode selector at the top
+    search_mode = st.selectbox(
+        "Search Mode",
+        ["Standard Search", "AutoleadsAI"],
+        key="search_mode_selector",
+        help="Standard Search: Manual keyword search\nAutoleadsAI: AI-powered lead generation"
+    )
 
     with db_session() as session:
         # Fetch recent searches within the session
@@ -863,14 +900,46 @@ def manual_search_page():
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        search_terms = st_tags(
-            label='Enter search terms:',
-            text='Press enter to add more',
-            value=recent_search_terms,
-            suggestions=['software engineer', 'data scientist', 'product manager'],
-            maxtags=10,
-            key='search_terms_input'
-        )
+        if search_mode == "Standard Search":
+            search_terms = st_tags(
+                label='Enter search terms:',
+                text='Press enter to add more',
+                value=recent_search_terms,
+                suggestions=['software engineer', 'data scientist', 'product manager'],
+                maxtags=10,
+                key='standard_search_terms'
+            )
+        else:
+            # AutoleadsAI input form
+            with st.expander("Business Context (from Knowledge Base)", expanded=True):
+                kb_info = get_knowledge_base_info(session, get_active_project_id())
+                if kb_info:
+                    company_desc = st.text_area(
+                        "Company Description", 
+                        value=kb_info.get('company_description', ''),
+                        height=100,
+                        key="ai_company_desc"
+                    )
+                    target_market = st.text_area(
+                        "Target Market",
+                        value=kb_info.get('company_target_market', ''),
+                        height=100,
+                        key="ai_target_market"
+                    )
+                    location = st.text_input(
+                        "Target Location",
+                        value="Madrid, Spain",
+                        key="ai_location"
+                    )
+                    industry = st.text_input(
+                        "Industry",
+                        value=kb_info.get('company_other', ''),
+                        key="ai_industry"
+                    )
+                    search_terms = generate_autoleads_terms(company_desc, target_market, location, industry)
+                else:
+                    st.error("Please set up your Knowledge Base first")
+                    return
         num_results = st.slider("Results per term", 1, 500000, 10)
 
     with col2:
@@ -901,28 +970,81 @@ def manual_search_page():
                 st.error("No email setting selected. Please select an email setting.")
                 return
 
-    if st.button("Search"):
+    if st.button("Search", type="primary", key="search_button"):
         if not search_terms:
             return st.warning("Enter at least one search term.")
 
-        progress_bar = st.progress(0)
+        # Initialize display containers
+        progress_bar = st.progress(0, key="search_progress")
         status_text = st.empty()
         email_status = st.empty()
         results = []
 
+        # Create containers for results display
+        if search_mode == "AutoleadsAI":
+            st.markdown("""
+                <style>
+                    @keyframes pulse {
+                        0% { transform: scale(1); }
+                        50% { transform: scale(1.05); }
+                        100% { transform: scale(1); }
+                    }
+                    .email-card {
+                        padding: 1rem;
+                        margin: 0.5rem 0;
+                        border-radius: 0.5rem;
+                        background: linear-gradient(45deg, #1e88e5, #1565c0);
+                        color: white;
+                        animation: pulse 2s infinite;
+                        text-align: center;
+                    }
+                    .loading-animation {
+                        display: inline-block;
+                        width: 50px;
+                        height: 50px;
+                        border: 3px solid rgba(255,255,255,.3);
+                        border-radius: 50%;
+                        border-top-color: #fff;
+                        animation: spin 1s ease-in-out infinite;
+                    }
+                    @keyframes spin {
+                        to { transform: rotate(360deg); }
+                    }
+                </style>
+            """, unsafe_allow_html=True)
+            
         leads_container = st.empty()
         leads_found, emails_sent = [], []
-
-        # Create a single log container for all search terms
         log_container = st.empty()
 
         for i, term in enumerate(search_terms):
-            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
+            if search_mode == "Standard Search":
+                status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
+            else:
+                status_text.markdown(f"""
+                    <div style='text-align: center'>
+                        <div class='loading-animation'></div>
+                        <p>Finding leads in {location}... ({i+1}/{len(search_terms)})</p>
+                    </div>
+                """, unsafe_allow_html=True)
 
             with db_session() as session:
-                term_results = manual_search(session, [term], num_results, ignore_previously_fetched, optimize_english, optimize_spanish, shuffle_keywords_option, language, enable_email_sending, log_container, from_email, reply_to, email_template)
+                term_results = manual_search(session, [term], num_results, ignore_previously_fetched, optimize_english, optimize_spanish, shuffle_keywords_option, language, enable_email_sending, log_container if search_mode == "Standard Search" else None, from_email, reply_to, email_template)
+                
+                if search_mode == "AutoleadsAI":
+                    for result in term_results['results']:
+                        result['Lead Source'] = f"Business Contact in {location}"
+                        result['URL'] = "Professional Network"
+                        if is_valid_email(result['Email']):
+                            leads_container.markdown(f"""
+                                <div class='email-card'>
+                                    <h3>{result['Email']}</h3>
+                                    <p>{result.get('Company', 'Company Not Available')}</p>
+                                    <p>{location}</p>
+                                </div>
+                            """, unsafe_allow_html=True)
+                
                 results.extend(term_results['results'])
-
                 leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
 
                 if enable_email_sending:
@@ -942,7 +1064,8 @@ def manual_search_page():
                             emails_sent.append(f"❌ {result['Email']}")
                             status_text.text(f"Failed to send email to: {result['Email']}")
 
-            leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
+            if search_mode == "Standard Search":
+                leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
             progress_bar.progress((i + 1) / len(search_terms))
 
         # Display final results
@@ -2451,3 +2574,24 @@ def validate_settings(settings_data):
     if not all(settings_data.get(key) for key in required):
         raise ValueError("Missing required settings")
     return True
+
+def create_missing_columns():
+    # Create a connection and get the database metadata
+    with engine.connect() as connection:
+        inspector = inspect(engine)
+        
+        # Check if group_id column exists in search_terms table
+        if 'group_id' not in [col['name'] for col in inspector.get_columns('search_terms')]:
+            # Add group_id column if it doesn't exist
+            connection.execute(text("""
+                ALTER TABLE search_terms 
+                ADD COLUMN group_id BIGINT,
+                ADD CONSTRAINT fk_search_terms_group 
+                FOREIGN KEY (group_id) 
+                REFERENCES search_term_groups(id)
+            """))
+            connection.commit()
+
+# Call the function after creating tables
+Base.metadata.create_all(bind=engine)
+create_missing_columns()
