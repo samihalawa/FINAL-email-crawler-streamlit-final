@@ -1,3 +1,4 @@
+
 import os, json, re, logging, asyncio, time, requests, pandas as pd, streamlit as st, openai, boto3, uuid, aiohttp, urllib3, random, html, smtplib
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -280,30 +281,88 @@ def settings_page():
                     st.success(f"Deleted {setting.name}")
                     st.rerun()
 
+# In the settings_page function, update the email settings form section:
+
         edit_id = st.selectbox("Edit existing setting", ["New Setting"] + [f"{s.id}: {s.name}" for s in email_settings])
         edit_setting = session.query(EmailSettings).get(int(edit_id.split(":")[0])) if edit_id != "New Setting" else None
+        
         with st.form("email_setting_form"):
             name = st.text_input("Name", value=edit_setting.name if edit_setting else "", placeholder="e.g., Company Gmail")
             email = st.text_input("Email", value=edit_setting.email if edit_setting else "", placeholder="your.email@example.com")
-            provider = st.selectbox("Provider", ["smtp", "ses"], index=0 if edit_setting and edit_setting.provider == "smtp" else 1)
-            if provider == "smtp":
-                smtp_server = st.text_input("SMTP Server", value=edit_setting.smtp_server if edit_setting else "", placeholder="smtp.gmail.com")
-                smtp_port = st.number_input("SMTP Port", min_value=1, max_value=65535, value=edit_setting.smtp_port if edit_setting else 587)
-                smtp_username = st.text_input("SMTP Username", value=edit_setting.smtp_username if edit_setting else "", placeholder="your.email@gmail.com")
-                smtp_password = st.text_input("SMTP Password", type="password", value=edit_setting.smtp_password if edit_setting else "", placeholder="Your SMTP password")
-            else:
-                aws_access_key_id = st.text_input("AWS Access Key ID", value=edit_setting.aws_access_key_id if edit_setting else "", placeholder="AKIAIOSFODNN7EXAMPLE")
-                aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password", value=edit_setting.aws_secret_access_key if edit_setting else "", placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-                aws_region = st.text_input("AWS Region", value=edit_setting.aws_region if edit_setting else "", placeholder="us-west-2")
+            provider = st.selectbox("Provider", ["smtp", "ses"], 
+                                  index=0 if not edit_setting or edit_setting.provider == "smtp" else 1,
+                                  key="provider_select")
+
+            # SMTP Fields
+            smtp_fields_container = st.container()
+            with smtp_fields_container:
+                if provider == "smtp":
+                    smtp_server = st.text_input("SMTP Server", 
+                                              value=edit_setting.smtp_server if edit_setting and edit_setting.provider == "smtp" else "", 
+                                              placeholder="smtp.gmail.com")
+                    smtp_port = st.number_input("SMTP Port", 
+                                              min_value=1, 
+                                              max_value=65535, 
+                                              value=edit_setting.smtp_port if edit_setting and edit_setting.provider == "smtp" else 587)
+                    smtp_username = st.text_input("SMTP Username", 
+                                                value=edit_setting.smtp_username if edit_setting and edit_setting.provider == "smtp" else "", 
+                                                placeholder="your.email@gmail.com")
+                    smtp_password = st.text_input("SMTP Password", 
+                                                type="password", 
+                                                value=edit_setting.smtp_password if edit_setting and edit_setting.provider == "smtp" else "", 
+                                                placeholder="Your SMTP password")
+
+            # AWS SES Fields
+            ses_fields_container = st.container()
+            with ses_fields_container:
+                if provider == "ses":
+                    aws_access_key_id = st.text_input("AWS Access Key ID", 
+                                                     value=edit_setting.aws_access_key_id if edit_setting and edit_setting.provider == "ses" else "", 
+                                                     placeholder="AKIAIOSFODNN7EXAMPLE")
+                    aws_secret_access_key = st.text_input("AWS Secret Access Key", 
+                                                         type="password", 
+                                                         value=edit_setting.aws_secret_access_key if edit_setting and edit_setting.provider == "ses" else "", 
+                                                         placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+                    aws_region = st.text_input("AWS Region", 
+                                             value=edit_setting.aws_region if edit_setting and edit_setting.provider == "ses" else "", 
+                                             placeholder="us-west-2")
+
             if st.form_submit_button("Save Email Setting"):
-                setting_data = {k: v for k, v in locals().items() if k in ['name', 'email', 'provider', 'smtp_server', 'smtp_port', 'smtp_username', 'smtp_password', 'aws_access_key_id', 'aws_secret_access_key', 'aws_region'] and v is not None}
                 try:
+                    setting_data = {
+                        "name": name,
+                        "email": email,
+                        "provider": provider
+                    }
+
+                    if provider == "smtp":
+                        setting_data.update({
+                            "smtp_server": smtp_server,
+                            "smtp_port": smtp_port,
+                            "smtp_username": smtp_username,
+                            "smtp_password": smtp_password,
+                            "aws_access_key_id": None,
+                            "aws_secret_access_key": None,
+                            "aws_region": None
+                        })
+                    else:  # ses
+                        setting_data.update({
+                            "smtp_server": None,
+                            "smtp_port": None,
+                            "smtp_username": None,
+                            "smtp_password": None,
+                            "aws_access_key_id": aws_access_key_id,
+                            "aws_secret_access_key": aws_secret_access_key,
+                            "aws_region": aws_region
+                        })
+
                     if edit_setting:
                         for k, v in setting_data.items():
                             setattr(edit_setting, k, v)
                     else:
                         new_setting = EmailSettings(**setting_data)
                         session.add(new_setting)
+                    
                     session.commit()
                     st.success("Email setting saved successfully!")
                     st.rerun()
@@ -876,7 +935,7 @@ def manual_search_page():
             maxtags=10,
             key='search_terms_input'
         )
-        num_results = st.slider("Results per term", 1, 500, 10)
+        num_results = st.slider("Results per term", 1, 50000, 10)
 
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
