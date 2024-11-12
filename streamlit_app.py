@@ -876,7 +876,7 @@ def manual_search_page():
             maxtags=10,
             key='search_terms_input'
         )
-        num_results = st.slider("Results per term", 1, 50000, 10)
+        num_results = st.slider("Results per term", 1, 500, 10)
 
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
@@ -1043,7 +1043,7 @@ def is_valid_email(email):
     invalid_patterns = [
         r".*\.(png|jpg|jpeg|gif|css|js)$",
         r"^(nr|bootstrap|jquery|core|icon-|noreply)@.*",
-        r"^(test|prueba)@.*",
+        r"^(email|info|contact|support|hello|hola|hi|salutations|greetings|inquiries|questions)@.*",
         r"^email@email\.com$",
         r".*@example\.com$",
         r".*@.*\.(png|jpg|jpeg|gif|css|js|jpga|PM|HL)$"
