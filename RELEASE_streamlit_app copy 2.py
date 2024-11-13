@@ -2444,10 +2444,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Add settings validation
-def validate_settings(settings_data):
-    required = ['openai_api_key', 'openai_api_base']
-    if not all(settings_data.get(key) for key in required):
-        raise ValueError("Missing required settings")
-    return True
