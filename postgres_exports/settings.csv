@@ -1,0 +1,2 @@
+id,name,setting_type,value,created_at,updated_at
+1,General Settings,general,"{'openai_api_key': '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', 'openai_api_base': 'https://api.openai.com/v1', 'openai_model': 'gpt-4o-mini'}",2024-11-07 18:09:54.692584+00:00,2024-11-12 07:54:18.753089+00:00
