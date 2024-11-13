@@ -1545,6 +1545,15 @@ def delete_search_term_group(session, group_id):
 def email_templates_page():
     st.header("Email Templates")
     with db_session() as session:
+        # First check if there are any campaigns
+        campaigns = session.query(Campaign).all()
+        if not campaigns:
+            st.error("No campaigns found. Please create a campaign first.")
+            return
+
+        # Get the active campaign ID or use the first available campaign
+        campaign_id = get_active_campaign_id() or campaigns[0].id
+        
         templates = session.query(EmailTemplate).all()
         with st.expander("Create New Template", expanded=False):
             new_template_name = st.text_input("Template Name", key="new_template_name")
@@ -1564,7 +1573,9 @@ def email_templates_page():
                                 template_name=new_template_name,
                                 subject=new_template_subject,
                                 body_content=new_template_body,
-                                campaign_id=get_active_campaign_id()
+                                campaign_id=campaign_id,  # Use the valid campaign_id
+                                is_ai_customizable=True,
+                                language='ES'
                             )
                             session.add(new_template)
                             session.commit()
@@ -1579,6 +1590,7 @@ def email_templates_page():
             else:
                 new_template_subject = st.text_input("Subject", key="new_template_subject")
                 new_template_body = st.text_area("Body Content", height=200, key="new_template_body")
+                language = st.selectbox("Language", options=['ES', 'EN'], index=0, key="new_template_language")
 
             if st.button("Create Template", key="create_template_button"):
                 if all([new_template_name, new_template_subject, new_template_body]):
@@ -1586,7 +1598,9 @@ def email_templates_page():
                         template_name=new_template_name,
                         subject=new_template_subject,
                         body_content=new_template_body,
-                        campaign_id=get_active_campaign_id()
+                        campaign_id=campaign_id,  # Use the valid campaign_id
+                        is_ai_customizable=False,
+                        language=language
                     )
                     session.add(new_template)
                     session.commit()
