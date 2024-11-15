@@ -1,5 +1,4 @@
 # pip install streamlit torch transformers huggingface_hub pyyaml
-
 import ast
 import hashlib
 import json
@@ -82,7 +81,7 @@ class CodeIssue:
 class AgentConfig(BaseModel):
     api_key: str = Field(..., env="OPENAI_API_KEY")
     project_path: Path
-    model: str = "gpt-4-mini"
+    model: str = "gpt-4o-mini"
     confidence_threshold: float = Field(0.8, ge=0.0, le=1.0)
     max_retries: int = Field(3, ge=0)
     cache_timeout: int = Field(3600, ge=0)  # in seconds
