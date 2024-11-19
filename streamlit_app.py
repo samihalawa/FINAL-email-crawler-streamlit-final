@@ -413,12 +413,6 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
             if reply_to:
                 msg['Reply-To'] = reply_to
             msg.attach(MIMEText(tracked_body, 'html'))
-
-            # Validate SMTP settings before attempting connection
-            if not all([email_settings.smtp_server, email_settings.smtp_port, 
-                       email_settings.smtp_username, email_settings.smtp_password]):
-                raise ValueError("Incomplete SMTP settings")
-
             with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
                 server.starttls()
                 server.login(email_settings.smtp_username, email_settings.smtp_password)
