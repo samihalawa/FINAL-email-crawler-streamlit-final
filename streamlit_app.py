@@ -21,6 +21,8 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+import subprocess
+import sqlalchemy as sa
 
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -224,14 +226,20 @@ class EmailSettings(Base):
     id = Column(BigInteger, primary_key=True)
     name = Column(Text, nullable=False)
     email = Column(Text, nullable=False)
-    provider = Column(Text, nullable=False)
+    provider = Column(Text, nullable=False)  # Should be either 'smtp' or 'ses'
+    # SMTP settings
     smtp_server = Column(Text)
     smtp_port = Column(BigInteger)
     smtp_username = Column(Text)
     smtp_password = Column(Text)
+    smtp_use_tls = Column(Boolean, default=True)  # Add this field
+    # AWS settings
     aws_access_key_id = Column(Text)
     aws_secret_access_key = Column(Text)
     aws_region = Column(Text)
+    # Add relationship to EmailQuota
+    quota = relationship("EmailQuota", back_populates="email_settings", uselist=False)
+    daily_limit = Column(BigInteger, default=200)  # Default limit for Gmail
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
@@ -373,62 +381,144 @@ def settings_page():
                     st.error(f"Error saving email setting: {str(e)}")
                     session.rollback()
 
-def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
-    email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
-    if not email_settings:
-        logging.error(f"No email settings found for {from_email}")
-        return None, None
-
-    tracking_id = str(uuid.uuid4())
-    tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
-    wrapped_body = wrap_email_body(body)
-    tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
-
-    try:
-        if email_settings.provider == 'ses':
-            if ses_client is None:
-                aws_session = boto3.Session(
-                    aws_access_key_id=email_settings.aws_access_key_id,
-                    aws_secret_access_key=email_settings.aws_secret_access_key,
-                    region_name=email_settings.aws_region
-                )
-                ses_client = aws_session.client('ses')
+        # Add Database Overview section
+        st.header("Database Overview")
+        
+        with db_session() as session:
+            tables_info = get_table_schema_and_counts(session)
             
-            response = ses_client.send_email(
-                Source=from_email,
-                Destination={'ToAddresses': [to_email]},
-                Message={
-                    'Subject': {'Data': subject, 'Charset': charset},
-                    'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
-                },
-                ReplyToAddresses=[reply_to] if reply_to else []
-            )
-            return response, tracking_id
+            # Display tables in expandable sections
+            for table_name, info in tables_info.items():
+                with st.expander(f"{table_name} ({info['row_count']} rows)"):
+                    # Create DataFrame for columns
+                    columns_df = pd.DataFrame(info['columns'])
+                    st.dataframe(columns_df)
+            
+            # Add backup functionality
+            st.subheader("Database Backup")
+            if st.button("Create Database Backup"):
+                backup_data, backup_filename = create_database_backup(session)
+                
+                if backup_data:
+                    st.success("Backup created successfully!")
+                    st.download_button(
+                        label="Download Backup",
+                        data=backup_data,
+                        file_name=backup_filename,
+                        mime="application/sql"
+                    )
+                    
+                    # Display backup stats
+                    st.info(f"""
+                    Backup Details:
+                    - Size: {len(backup_data)/1024/1024:.2f} MB
+                    - Tables: {len(tables_info)}
+                    - Total Rows: {sum(info['row_count'] for info in tables_info.values())}
+                    - Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                    """)
+            
+            # Add table statistics
+            st.subheader("Table Statistics")
+            stats_data = []
+            for table_name, info in tables_info.items():
+                stats_data.append({
+                    'Table': table_name,
+                    'Rows': info['row_count'],
+                    'Columns': len(info['columns'])
+                })
+            
+            stats_df = pd.DataFrame(stats_data)
+            st.plotly_chart(px.bar(
+                stats_df,
+                x='Table',
+                y='Rows',
+                title='Rows per Table',
+                labels={'Rows': 'Number of Rows', 'Table': 'Table Name'}
+            ))
 
-        elif email_settings.provider == 'smtp':
-            msg = MIMEMultipart()
-            msg['From'] = from_email
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            if reply_to:
-                msg['Reply-To'] = reply_to
-            msg.attach(MIMEText(tracked_body, 'html'))
+def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None, original_settings=None):
+    """Modified to handle fallbacks"""
+    try:
+        # Get original settings if not provided
+        if not original_settings:
+            original_settings = session.query(EmailSettings).filter_by(email=from_email).first()
+            if not original_settings:
+                logging.error(f"No email settings found for {from_email}")
+                return None, None
+        
+        # Get available settings (may be different from original)
+        active_settings = get_available_email_settings(session, original_settings.id)
+        if not active_settings:
+            logging.error("No available email settings found")
+            return None, None
+            
+        # Use original from/reply-to for consistency
+        actual_from = active_settings.email
+        actual_reply_to = reply_to or original_settings.email
+        
+        # Generate tracking ID and prepare email body
+        tracking_id = str(uuid.uuid4())
+        tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
+        wrapped_body = wrap_email_body(body)
+        tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
 
-            # Validate SMTP settings before attempting connection
-            if not all([email_settings.smtp_server, email_settings.smtp_port, 
-                       email_settings.smtp_username, email_settings.smtp_password]):
-                raise ValueError("Incomplete SMTP settings")
-
-            with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
-                server.starttls()
-                server.login(email_settings.smtp_username, email_settings.smtp_password)
-                server.send_message(msg)
-            return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
-        else:
-            raise ValueError(f"Unknown email provider: {email_settings.provider}")
+        try:
+            if active_settings.provider.lower() == 'ses':
+                if not ses_client:
+                    aws_session = boto3.Session(
+                        aws_access_key_id=active_settings.aws_access_key_id,
+                        aws_secret_access_key=active_settings.aws_secret_access_key,
+                        region_name=active_settings.aws_region
+                    )
+                    ses_client = aws_session.client('ses')
+                
+                response = ses_client.send_email(
+                    Source=actual_from,
+                    Destination={'ToAddresses': [to_email]},
+                    Message={
+                        'Subject': {'Data': subject, 'Charset': charset},
+                        'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
+                    },
+                    ReplyToAddresses=[actual_reply_to]
+                )
+                record_email_sent(session, active_settings.id)
+                return response, tracking_id
+                
+            elif active_settings.provider.lower() == 'smtp':
+                msg = MIMEMultipart()
+                msg['From'] = actual_from
+                msg['To'] = to_email
+                msg['Subject'] = subject
+                msg['Reply-To'] = actual_reply_to
+                msg.attach(MIMEText(tracked_body, 'html'))
+                
+                with smtplib.SMTP(active_settings.smtp_server, active_settings.smtp_port) as server:
+                    if active_settings.smtp_use_tls:
+                        server.starttls()
+                    server.login(active_settings.smtp_username, active_settings.smtp_password)
+                    server.send_message(msg)
+                
+                record_email_sent(session, active_settings.id)
+                return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
+                
+        except Exception as e:
+            error_msg = str(e)
+            record_email_error(session, active_settings.id, error_msg)
+            
+            # Recursive retry with explicit exclusion of failed settings
+            if original_settings.id != active_settings.id:
+                logging.warning(f"Retrying with different settings after error: {error_msg}")
+                return send_email_ses(session, from_email, to_email, subject, body, 
+                                    charset, reply_to, ses_client, original_settings)
+            
+            raise  # Re-raise if we've tried with original settings
+            
     except Exception as e:
         logging.error(f"Error sending email: {str(e)}")
-        raise
+        return None, None
+    finally:
+        if ses_client:
+            ses_client.close()
 
 def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
     try:
@@ -1046,7 +1136,8 @@ def manual_search_page():
 
     if st.button("Search", key='search_button'):
         if not search_terms:
-            return st.warning("Enter at least one search term.")
+            st.warning("Enter at least one search term.")
+            return
 
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -1057,7 +1148,7 @@ def manual_search_page():
         log_container = st.empty()
 
         for i, term in enumerate(search_terms):
-            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
+            status_text.text(f"Searching: '{term}' ({i + 1}/{len(search_terms)})")
 
             with db_session() as session:
                 term_results = manual_search(
@@ -1074,13 +1165,23 @@ def manual_search_page():
                 leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
 
                 if enable_email_sending:
-                    # Email sending logic here...
-                    pass
+                    template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
+                    for result in term_results['results']:
+                        if not result or 'Email' not in result or not is_valid_email(result['Email']):
+                            status_text.text(f"Skipping invalid result or email: {result.get('Email') if result else 'None'}")
+                            continue
+                        wrapped_content = wrap_email_body(template.body_content)
+                        response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
+                        if response:
+                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
+                            emails_sent.append(f"✅ {result['Email']}")
+                            status_text.text(f"Email sent to: {result['Email']}")
+                        else:
+                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, wrapped_content)
+                            emails_sent.append(f"❌ {result['Email']}")
+                            status_text.text(f"Failed to send email to: {result['Email']}")
 
-            leads_container.dataframe(pd.DataFrame({
-                "Leads Found": leads_found,
-                "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))
-            }))
+            leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
             progress_bar.progress((i + 1) / len(search_terms))
 
         # Store results in session state
@@ -2393,6 +2494,28 @@ def view_sent_email_campaigns():
         st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
+def test_email_settings(session, setting_id, test_email):
+    try:
+        setting = session.query(EmailSettings).get(setting_id)
+        if not setting:
+            return False, "Email setting not found"
+            
+        response, _ = send_email_ses(
+            session,
+            setting.email,
+            test_email,
+            "Test Email from AutoclientAI",
+            "<p>This is a test email from your AutoclientAI email settings.</p>",
+            reply_to=setting.email
+        )
+        
+        if response:
+            return True, "Test email sent successfully"
+        return False, "Failed to send test email"
+        
+    except Exception as e:
+        return False, f"Error: {str(e)}"
+
 def main():
     st.set_page_config(
         page_title="Autoclient.ai | Lead Generation AI App",
@@ -2437,6 +2560,13 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+
+def is_pg_dump_available():
+    try:
+        subprocess.run(['pg_dump', '--version'], capture_output=True)
+        return True
+    except FileNotFoundError:
+        return False
 
 if __name__ == "__main__":
     main()
