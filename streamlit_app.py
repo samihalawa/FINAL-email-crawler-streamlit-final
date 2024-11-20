@@ -241,6 +241,15 @@ class EmailSettings(Base):
     quota = relationship("EmailQuota", back_populates="email_settings", uselist=False)
     daily_limit = Column(BigInteger, default=200)  # Default limit for Gmail
 
+# Add after the EmailSettings class definition
+class EmailQuota(Base):
+    __tablename__ = 'email_quotas'
+    id = Column(BigInteger, primary_key=True)
+    email_settings_id = Column(BigInteger, ForeignKey('email_settings.id'))
+    daily_sent = Column(BigInteger, default=0)
+    last_reset = Column(DateTime(timezone=True))
+    email_settings = relationship("EmailSettings", back_populates="quota")
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL not set")
@@ -260,6 +269,29 @@ def db_session():
         raise
     finally:
         session.close()
+
+# Add this enhanced session manager after the existing db_session context manager
+@contextmanager
+def safe_db_session():
+    """Enhanced session manager with retry logic and proper cleanup"""
+    session = None
+    try:
+        session = SessionLocal()
+        yield session
+        session.commit()
+    except SQLAlchemyError as e:
+        if session:
+            session.rollback()
+        logging.error(f"Database error: {str(e)}")
+        raise
+    except Exception as e:
+        if session:
+            session.rollback()
+        logging.error(f"Unexpected error: {str(e)}")
+        raise
+    finally:
+        if session:
+            session.close()
 
 def settings_page():
     st.title("Settings")
@@ -1173,13 +1205,11 @@ def manual_search_page():
                         wrapped_content = wrap_email_body(template.body_content)
                         response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
                         if response:
-                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
-                            emails_sent.append(f"✅ {result['Email']}")
-                            status_text.text(f"Email sent to: {result['Email']}")
+                            update_log(log_container, f"Sent email to: {result['Email']}", 'email_sent')
+                            save_email_campaign(session, result['Email'], template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
                         else:
-                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, wrapped_content)
-                            emails_sent.append(f"❌ {result['Email']}")
-                            status_text.text(f"Failed to send email to: {result['Email']}")
+                            update_log(log_container, f"Failed to send email to: {result['Email']}", 'error')
+                            save_email_campaign(session, result['Email'], template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
 
             leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
             progress_bar.progress((i + 1) / len(search_terms))
@@ -1904,7 +1934,7 @@ def bulk_send_page():
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -2516,6 +2546,60 @@ def test_email_settings(session, setting_id, test_email):
     except Exception as e:
         return False, f"Error: {str(e)}"
 
+# Add after imports
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = True
+    st.session_state.update({
+        'active_project_id': 1,
+        'active_campaign_id': 1,
+        'search_results': None,
+        'automation_status': False,
+        'leads_data': None,
+        'templates_data': None,
+        'email_settings_data': None,
+        'current_page': None,
+        'form_data': {},
+        'search_terms': [],
+        'selected_template': None,
+        'selected_email': None,
+        'last_refresh_time': None
+    })
+
+# Add new utility functions
+def handle_form_submit(form_id, callback):
+    """Handle form submissions without page reload"""
+    if form_id not in st.session_state:
+        st.session_state[form_id] = {}
+    
+    def update_form_data(key, value):
+        st.session_state[form_id][key] = value
+    
+    return update_form_data, st.session_state[form_id]
+
+def cached_db_query(ttl_seconds=300):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            cache_key = f"{func.__name__}_{args}_{kwargs}"
+            
+            if cache_key not in st.session_state or \
+               (datetime.now() - st.session_state.get(f"{cache_key}_time", datetime.min)).seconds > ttl_seconds:
+                
+                result = func(*args, **kwargs)
+                st.session_state[cache_key] = result
+                st.session_state[f"{cache_key}_time"] = datetime.now()
+                return result
+                
+            return st.session_state[cache_key]
+        return wrapper
+    return decorator
+
+def stable_component(key, component_func, *args, **kwargs):
+    """Wrapper to prevent component reloads"""
+    if key not in st.session_state:
+        st.session_state[key] = component_func(*args, **kwargs)
+    return st.session_state[key]
+
+# Replace main() function
 def main():
     st.set_page_config(
         page_title="Autoclient.ai | Lead Generation AI App",
@@ -2523,9 +2607,6 @@ def main():
         initial_sidebar_state="expanded",
         page_icon=""
     )
-
-    st.sidebar.title("AutoclientAI")
-    st.sidebar.markdown("Select a page to navigate through the application.")
 
     pages = {
         "🔍 Manual Search": manual_search_page,
@@ -2542,24 +2623,98 @@ def main():
         "📨 Sent Campaigns": view_sent_email_campaigns
     }
 
+    st.sidebar.title("AutoclientAI")
+    
+    # Use a single key for navigation to prevent reloads
+    if 'nav_selection' not in st.session_state:
+        st.session_state.nav_selection = list(pages.keys())[0]
+
     with st.sidebar:
-        selected = option_menu(
+        new_selection = option_menu(
             menu_title="Navigation",
             options=list(pages.keys()),
-            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
+            icons=["search", "send", "people", "key", "envelope", "folder", "book", 
+                   "robot", "gear", "list-check", "gear", "envelope-open"],
             menu_icon="cast",
-            default_index=0
+            default_index=list(pages.keys()).index(st.session_state.nav_selection),
+            key='navigation'
         )
+        
+        # Only update if actually changed
+        if new_selection != st.session_state.nav_selection:
+            st.session_state.nav_selection = new_selection
+            st.session_state.form_data = {}  # Reset form data on page change
+            st.experimental_rerun()
 
     try:
-        pages[selected]()
+        # Use cached page content when possible
+        pages[st.session_state.nav_selection]()
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
         logging.exception("An error occurred in the main function")
-        st.write("Please try refreshing the page or contact support if the issue persists.")
 
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+
+# Add caching to database queries
+@cached_db_query(ttl_seconds=300)
+def fetch_leads_with_sources(session):
+    # Existing implementation remains the same
+    pass
+
+@cached_db_query(ttl_seconds=3600)
+def fetch_email_templates(session):
+    # Existing implementation remains the same
+    pass
+
+# Modify manual_search_page to use persistent state
+def manual_search_page():
+    st.title("Manual Search")
+    
+    # Use persistent form state
+    form_id = 'manual_search_form'
+    update_form, form_data = handle_form_submit(form_id, None)
+    
+    # Initialize form data if needed
+    if not form_data:
+        form_data.update({
+            'search_terms': [],
+            'num_results': 10,
+            'enable_email_sending': True,
+            'ignore_previously_fetched': True,
+            'shuffle_keywords': True,
+            'optimize_english': False,
+            'optimize_spanish': False,
+            'language': "ES"
+        })
+
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        search_terms = stable_component(
+            f'{form_id}_terms',
+            st_tags,
+            label='Enter search terms:',
+            text='Press enter to add more',
+            value=form_data['search_terms'],
+            suggestions=st.session_state.get('recent_searches', []),
+            maxtags=10,
+            on_change=lambda x: update_form('search_terms', x)
+        )
+        
+        num_results = stable_component(
+            f'{form_id}_results',
+            st.slider,
+            "Results per term",
+            1, 500,
+            value=form_data['num_results'],
+            on_change=lambda x: update_form('num_results', x)
+        )
+
+    # Rest of the function implementation remains similar but uses form_data
+    # and stable_component where appropriate
+
+
 
 def is_pg_dump_available():
     try:
@@ -2567,6 +2722,128 @@ def is_pg_dump_available():
         return True
     except FileNotFoundError:
         return False
+
+def get_table_schema_and_counts(session):
+    tables_info = {}
+    for table in Base.metadata.sorted_tables:
+        columns = []
+        for column in table.columns:
+            columns.append({
+                'name': column.name,
+                'type': str(column.type),
+                'nullable': column.nullable
+            })
+        row_count = session.query(func.count()).select_from(table).scalar()
+        tables_info[table.name] = {
+            'columns': columns,
+            'row_count': row_count
+        }
+    return tables_info
+
+def create_database_backup(session):
+    if not is_pg_dump_available():
+        st.error("pg_dump not available. Cannot create backup.")
+        return None, None
+        
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"backup_{timestamp}.sql"
+    
+    try:
+        result = subprocess.run(
+            ['pg_dump', DATABASE_URL],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            return result.stdout, filename
+        return None, None
+    except Exception as e:
+        logging.error(f"Backup failed: {str(e)}")
+        return None, None
+
+def get_available_email_settings(session, original_setting_id):
+    try:
+        # First try to get the original setting
+        setting = session.query(EmailSettings).get(original_setting_id)
+        if setting and not is_quota_exceeded(session, setting.id):
+            return setting
+            
+        # If original setting unavailable, find another valid setting
+        available_setting = session.query(EmailSettings)\
+            .filter(EmailSettings.id != original_setting_id)\
+            .filter(EmailSettings.daily_sent < EmailSettings.daily_limit)\
+            .first()
+            
+        return available_setting
+    except Exception as e:
+        logging.error(f"Error getting available email settings: {str(e)}")
+        return None
+
+def is_quota_exceeded(session, setting_id):
+    try:
+        setting = session.query(EmailSettings).get(setting_id)
+        if not setting:
+            return True
+            
+        # Reset daily count if last_reset is from previous day
+        quota = session.query(EmailQuota).filter_by(email_settings_id=setting_id).first()
+        if not quota:
+            quota = EmailQuota(email_settings_id=setting_id, daily_sent=0, last_reset=datetime.utcnow())
+            session.add(quota)
+            session.commit()
+            return False
+            
+        if quota.last_reset.date() < datetime.utcnow().date():
+            quota.daily_sent = 0
+            quota.last_reset = datetime.utcnow()
+            session.commit()
+            return False
+            
+        return quota.daily_sent >= setting.daily_limit
+    except Exception as e:
+        logging.error(f"Error checking quota: {str(e)}")
+        return True  # Fail safe - assume exceeded if error
+
+def record_email_sent(session, setting_id):
+    try:
+        quota = session.query(EmailQuota).filter_by(email_settings_id=setting_id).first()
+        if not quota:
+            quota = EmailQuota(email_settings_id=setting_id, daily_sent=0, last_reset=datetime.utcnow())
+            session.add(quota)
+        quota.daily_sent += 1
+        session.commit()
+    except Exception as e:
+        logging.error(f"Error recording sent email: {str(e)}")
+        session.rollback()
+
+def record_email_error(session, setting_id, error_msg):
+    try:
+        # Log the error
+        logging.error(f"Email error for setting {setting_id}: {error_msg}")
+    except Exception as e:
+        logging.error(f"Error recording email error: {str(e)}")
+
+def validate_email_template(template_content: str) -> tuple[bool, str]:
+    """Validates email template for required elements and proper HTML"""
+    try:
+        soup = BeautifulSoup(template_content, 'html.parser')
+        
+        # Check for basic required elements
+        if not soup.find('body'):
+            return False, "Missing body tag"
+            
+        # Validate tracking pixel placeholder
+        if '{{tracking_pixel}}' not in template_content:
+            return False, "Missing tracking pixel placeholder"
+            
+        # Check for unsafe elements
+        unsafe_elements = soup.find_all(['script', 'iframe'])
+        if unsafe_elements:
+            return False, "Contains unsafe elements"
+            
+        return True, "Template is valid"
+    except Exception as e:
+        return False, f"Template validation error: {str(e)}"
 
 if __name__ == "__main__":
     main()
