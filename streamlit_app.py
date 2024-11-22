@@ -545,8 +545,8 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
             # Recursive retry with explicit exclusion of failed settings
             if original_settings.id != active_settings.id:
                 logging.warning(f"Retrying with different settings after error: {error_msg}")
-                return send_email_ses(session, from_email, to_email, subject, body, 
-                                    charset, reply_to, ses_client, original_settings)
+                return send_email(session, from_email, to_email, subject, body, 
+                                charset, reply_to, ses_client, original_settings)
             
             raise  # Re-raise if we've tried with original settings
             
@@ -556,7 +556,6 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
     finally:
         if ses_client:
             ses_client.close()
-
 def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
     try:
         lead = session.query(Lead).filter_by(email=lead_email).first()
@@ -1034,10 +1033,13 @@ def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
     st.title("Manual Search")
-
-    # Use session state to persist form values
-    if 'search_form' not in st.session_state:
-        st.session_state.search_form = {
+    
+    # Use persistent form state
+    form_id = 'manual_search_form'
+    
+    # Initialize form data if needed
+    if form_id not in st.session_state:
+        st.session_state[form_id] = {
             'search_terms': [],
             'num_results': 10,
             'enable_email_sending': True,
@@ -1045,96 +1047,83 @@ def manual_search_page():
             'shuffle_keywords': True,
             'optimize_english': False,
             'optimize_spanish': False,
-            'language': "ES",
-            'email_template': None,
-            'from_email': None,
-            'reply_to': None
+            'language': "ES"
         }
 
-    with db_session() as session:
-        # Fetch these only once when needed
-        if 'recent_searches' not in st.session_state:
-            recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
-            st.session_state.recent_searches = [term.term for term in recent_searches]
-        
-        if 'email_templates' not in st.session_state:
-            st.session_state.email_templates = fetch_email_templates(session)
-        
-        if 'email_settings' not in st.session_state:
-            st.session_state.email_settings = fetch_email_settings(session)
-
     col1, col2 = st.columns([2, 1])
-
+    
     with col1:
-        # Use key with persistent state
+        # Use st_tags without on_change parameter
         search_terms = st_tags(
             label='Enter search terms:',
             text='Press enter to add more',
-            value=st.session_state.search_form['search_terms'],
-            suggestions=st.session_state.recent_searches,
+            value=st.session_state[form_id]['search_terms'],
+            suggestions=st.session_state.get('recent_searches', []),
             maxtags=10,
-            key='search_terms_input'
+            key=f"search_terms_{form_id}"
         )
-        st.session_state.search_form['search_terms'] = search_terms
+        # Update session state after the component
+        st.session_state[form_id]['search_terms'] = search_terms
         
+        # Use regular slider for num_results
         num_results = st.slider(
             "Results per term", 
-            1, 500, 
-            st.session_state.search_form['num_results'],
-            key='num_results'
+            1, 50000, 
+            value=st.session_state[form_id]['num_results'],
+            key=f"num_results_{form_id}"
         )
-        st.session_state.search_form['num_results'] = num_results
+        st.session_state[form_id]['num_results'] = num_results
 
     with col2:
         # Use session state for checkboxes
         enable_email_sending = st.checkbox(
             "Enable email sending",
-            value=st.session_state.search_form['enable_email_sending'],
+            value=st.session_state[form_id]['enable_email_sending'],
             key='enable_email'
         )
-        st.session_state.search_form['enable_email_sending'] = enable_email_sending
+        st.session_state[form_id]['enable_email_sending'] = enable_email_sending
 
         ignore_previously_fetched = st.checkbox(
             "Ignore fetched domains",
-            value=st.session_state.search_form['ignore_previously_fetched'],
+            value=st.session_state[form_id]['ignore_previously_fetched'],
             key='ignore_fetched'
         )
-        st.session_state.search_form['ignore_previously_fetched'] = ignore_previously_fetched
+        st.session_state[form_id]['ignore_previously_fetched'] = ignore_previously_fetched
 
         shuffle_keywords_option = st.checkbox(
             "Shuffle Keywords",
-            value=st.session_state.search_form['shuffle_keywords'],
+            value=st.session_state[form_id]['shuffle_keywords'],
             key='shuffle'
         )
-        st.session_state.search_form['shuffle_keywords'] = shuffle_keywords_option
+        st.session_state[form_id]['shuffle_keywords'] = shuffle_keywords_option
 
         optimize_english = st.checkbox(
             "Optimize (English)",
-            value=st.session_state.search_form['optimize_english'],
+            value=st.session_state[form_id]['optimize_english'],
             key='opt_en'
         )
-        st.session_state.search_form['optimize_english'] = optimize_english
+        st.session_state[form_id]['optimize_english'] = optimize_english
 
         optimize_spanish = st.checkbox(
             "Optimize (Spanish)",
-            value=st.session_state.search_form['optimize_spanish'],
+            value=st.session_state[form_id]['optimize_spanish'],
             key='opt_es'
         )
-        st.session_state.search_form['optimize_spanish'] = optimize_spanish
+        st.session_state[form_id]['optimize_spanish'] = optimize_spanish
 
         language = st.selectbox(
             "Select Language",
             options=["ES", "EN"],
-            index=0 if st.session_state.search_form['language'] == "ES" else 1,
+            index=0 if st.session_state[form_id]['language'] == "ES" else 1,
             key='language'
         )
-        st.session_state.search_form['language'] = language
+        st.session_state[form_id]['language'] = language
 
     if enable_email_sending:
-        if not st.session_state.email_templates:
+        if not st.session_state[form_id]['email_templates']:
             st.error("No email templates available. Please create a template first.")
             return
-        if not st.session_state.email_settings:
+        if not st.session_state[form_id]['email_settings']:
             st.error("No email settings available. Please add email settings first.")
             return
 
@@ -1142,16 +1131,16 @@ def manual_search_page():
         with col3:
             email_template = st.selectbox(
                 "Email Template",
-                options=st.session_state.email_templates,
+                options=st.session_state[form_id]['email_templates'],
                 format_func=lambda x: x.split(":")[1].strip(),
                 key="template_select"
             )
-            st.session_state.search_form['email_template'] = email_template
+            st.session_state[form_id]['email_template'] = email_template
 
         with col4:
             email_setting_option = st.selectbox(
                 "From Email",
-                options=st.session_state.email_settings,
+                options=st.session_state[form_id]['email_settings'],
                 format_func=lambda x: f"{x['name']} ({x['email']})",
                 key='email_setting'
             )
@@ -1162,8 +1151,8 @@ def manual_search_page():
                     value=email_setting_option['email'],
                     key='reply_to'
                 )
-                st.session_state.search_form['from_email'] = from_email
-                st.session_state.search_form['reply_to'] = reply_to
+                st.session_state[form_id]['from_email'] = from_email
+                st.session_state[form_id]['reply_to'] = reply_to
             else:
                 st.error("No email setting selected. Please select an email setting.")
                 return
@@ -1227,7 +1216,7 @@ def manual_search_page():
         st.subheader("Search Results")
         st.dataframe(pd.DataFrame(st.session_state.search_results))
 
-        if st.session_state.search_form['enable_email_sending']:
+        if st.session_state[form_id]['enable_email_sending']:
             st.subheader("Email Sending Results")
             emails_sent = [r.get('email_status', '') for r in st.session_state.search_results]
             success_rate = sum(1 for status in emails_sent if status == 'sent') / len(emails_sent) if emails_sent else 0
@@ -2712,11 +2701,10 @@ def manual_search_page():
     
     # Use persistent form state
     form_id = 'manual_search_form'
-    update_form, form_data = handle_form_submit(form_id, None)
     
     # Initialize form data if needed
-    if not form_data:
-        form_data.update({
+    if form_id not in st.session_state:
+        st.session_state[form_id] = {
             'search_terms': [],
             'num_results': 10,
             'enable_email_sending': True,
@@ -2725,34 +2713,33 @@ def manual_search_page():
             'optimize_english': False,
             'optimize_spanish': False,
             'language': "ES"
-        })
+        }
 
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        search_terms = stable_component(
-            f'{form_id}_terms',
-            st_tags,
+        # Use st_tags without on_change parameter
+        search_terms = st_tags(
             label='Enter search terms:',
             text='Press enter to add more',
-            value=form_data['search_terms'],
+            value=st.session_state[form_id]['search_terms'],
             suggestions=st.session_state.get('recent_searches', []),
             maxtags=10,
-            key=f"search_terms_{form_id}",  # Add unique key
-            label_visibility="visible"  # Add visibility parameter
+            key=f"search_terms_{form_id}"
         )
+        # Update session state after the component
+        st.session_state[form_id]['search_terms'] = search_terms
         
-        num_results = stable_component(
-            f'{form_id}_results',
-            st.slider,
-            "Results per term",
-            1, 500,
-            value=form_data['num_results'],
-            on_change=lambda x: update_form('num_results', x)
+        # Use regular slider for num_results
+        num_results = st.slider(
+            "Results per term", 
+            1, 500, 
+            value=st.session_state[form_id]['num_results'],
+            key=f"num_results_{form_id}"
         )
+        st.session_state[form_id]['num_results'] = num_results
 
-    # Rest of the function implementation remains similar but uses form_data
-    # and stable_component where appropriate
+    # Rest of the function remains the same...
 
 
 
