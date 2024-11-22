@@ -320,7 +320,12 @@ def settings_page():
                     st.write(f"AWS Region: {setting.aws_region}")
                 
                 col1, col2 = st.columns(2)
-                test_email = col1.text_input("Test Email", key=f"test_email_{setting.id}")
+                test_email = col1.text_input(
+                    "Test Email",
+                    key="test_email_input",
+                    help="Enter email address to test settings",
+                    max_chars=100
+                )
                 if col1.button(f"Test {setting.name}", key=f"test_{setting.id}"):
                     try:
                         # Validate settings before attempting to send
@@ -778,6 +783,7 @@ def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     except Exception as e:
         session.rollback()
         logging.error(f"Error adding search term: {str(e)}")
+        raise
 
 def ai_group_search_terms(session, ungrouped_terms):
     existing_groups = session.query(SearchTermGroup).all()
@@ -830,7 +836,7 @@ def ai_automation_loop(session, log_container, leads_container):
             st.write(", ".join(optimized_terms))
 
             total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0)
+            progress_bar = st.progress(0, key="progress_bar")
             for idx, term in enumerate(optimized_terms):
                 results = manual_search(session, [term], 10, ignore_previously_fetched=True)
                 new_leads = []
@@ -1135,10 +1141,10 @@ def manual_search_page():
         col3, col4 = st.columns(2)
         with col3:
             email_template = st.selectbox(
-                "Email template",
+                "Email Template",
                 options=st.session_state.email_templates,
                 format_func=lambda x: x.split(":")[1].strip(),
-                key='email_template'
+                key="template_select"
             )
             st.session_state.search_form['email_template'] = email_template
 
@@ -1171,7 +1177,7 @@ def manual_search_page():
             st.warning("Enter at least one search term.")
             return
 
-        progress_bar = st.progress(0)
+        progress_bar = st.progress(0, key="progress_bar")
         status_text = st.empty()
         email_status = st.empty()
         results = []
@@ -1195,7 +1201,6 @@ def manual_search_page():
                 )
                 results.extend(term_results['results'])
                 leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
-
                 if enable_email_sending:
                     template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
                     for result in term_results['results']:
@@ -1207,11 +1212,11 @@ def manual_search_page():
                         if response:
                             update_log(log_container, f"Sent email to: {result['Email']}", 'email_sent')
                             save_email_campaign(session, result['Email'], template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
+                            emails_sent.append(f"{result['Email']} - {result['Company']}")
                         else:
                             update_log(log_container, f"Failed to send email to: {result['Email']}", 'error')
                             save_email_campaign(session, result['Email'], template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
-
-            leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
+                leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
             progress_bar.progress((i + 1) / len(search_terms))
 
         # Store results in session state
@@ -1262,7 +1267,7 @@ def ai_automation_loop(session, log_container, leads_container):
             st.write(", ".join(optimized_terms))
 
             total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0)
+            progress_bar = st.progress(0, key="progress_bar")
             for idx, term in enumerate(optimized_terms):
                 results = manual_search(session, [term], 10, ignore_previously_fetched=True)
                 new_leads = []
@@ -1516,6 +1521,7 @@ def is_valid_email(email):
 
 
 
+
 def view_leads_page():
     st.title("Lead Management Dashboard")
     with db_session() as session:
@@ -1556,7 +1562,7 @@ def view_leads_page():
                 num_rows="dynamic"
             )
 
-            if st.button("Save Changes", type="primary"):
+            if st.form_submit_button("Save Changes", type="primary"):
                 for index, row in edited_df.iterrows():
                     if row['Delete']:
                         if delete_lead_and_sources(session, row['ID']):
@@ -1723,13 +1729,22 @@ def search_terms_page():
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
+        # Handle empty updated_terms case
+        if not updated_terms:
+            # Remove all terms from group
+            session.query(SearchTerm).filter(SearchTerm.group_id == group_id).update({SearchTerm.group_id: None})
+            session.commit()
+            return
+
         current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
         existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
         
+        # Remove terms no longer in group
         for term in existing_terms:
             if term.id not in current_term_ids:
                 term.group_id = None
         
+        # Add/update terms in group
         for term_str in updated_terms:
             term_id = int(term_str.split(":")[0])
             term = session.query(SearchTerm).get(term_id)
@@ -1737,10 +1752,12 @@ def update_search_term_group(session, group_id, updated_terms):
                 term.group_id = group_id
         
         session.commit()
-    except Exception as e:
+    except (ValueError, AttributeError) as e:
         session.rollback()
+        logging.error(f"Invalid term format in update_search_term_group: {str(e)}")
+    except Exception as e:
+        session.rollback() 
         logging.error(f"Error in update_search_term_group: {str(e)}")
-
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
         new_search_term = SearchTerm(term=new_term, campaign_id=campaign_id, created_at=datetime.utcnow())
@@ -1815,9 +1832,18 @@ def email_templates_page():
         templates = session.query(EmailTemplate).all()
         with st.expander("Create New Template", expanded=False):
             new_template_name = st.text_input("Template Name", key="new_template_name")
-            use_ai = st.checkbox("Use AI to generate template", key="use_ai")
+            use_ai = st.checkbox(
+                "Use AI to generate template",
+                help="Enable AI assistance in template generation",
+                key="use_ai_checkbox"
+            )
             if use_ai:
-                ai_prompt = st.text_area("Enter prompt for AI template generation", key="ai_prompt")
+                ai_prompt = st.text_area(
+                    "Enter prompt for AI template generation",
+                    height=150,
+                    key="ai_prompt_area",
+                    help="Describe how you want the template to be generated"
+                )
                 use_kb = st.checkbox("Use Knowledge Base information", key="use_kb")
                 if st.button("Generate Template", key="generate_ai_template"):
                     with st.spinner("Generating template..."):
@@ -1943,7 +1969,12 @@ def bulk_send_page():
                 return
 
         with col2:
-            send_option = st.radio("Send to:", ["All Leads", "Specific Email", "Leads from Chosen Search Terms", "Leads from Search Term Groups"])
+            send_option = st.radio(
+                "Send to:",
+                ["All Leads", "Specific Email"],
+                horizontal=True,
+                key="send_option_radio"
+            )
             specific_email = None
             selected_terms = None
             if send_option == "Specific Email":
@@ -1978,7 +2009,7 @@ def bulk_send_page():
             if not contactable_leads:
                 st.warning("No leads found matching the selected criteria.")
                 return
-            progress_bar = st.progress(0)
+            progress_bar = st.progress(0, key="progress_bar")
             status_text = st.empty()
             results = []
             log_container = st.empty()
@@ -1986,7 +2017,15 @@ def bulk_send_page():
             st.success(f"Emails sent successfully to {sent_count} leads.")
             st.subheader("Sending Results")
             results_df = pd.DataFrame(results)
-            st.dataframe(results_df)
+            st.dataframe(
+                results_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Email": st.column_config.TextColumn("Email", width="medium"),
+                    "Status": st.column_config.TextColumn("Status", width="small")
+                }
+            )
             success_rate = (results_df['Status'] == 'sent').mean()
             st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
 
@@ -2048,7 +2087,7 @@ def ai_automation_loop(session, log_container, leads_container):
             st.subheader("Optimized Search Terms")
             st.write(", ".join(optimized_terms))
             total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0)
+            progress_bar = st.progress(0, key="progress_bar")
             for idx, term in enumerate(optimized_terms):
                 results = manual_search(session, [term], 10, ignore_previously_fetched=True)
                 new_leads = [(save_lead(session, res['Email'], url=res['URL']).id, res['Email']) for res in results['results'] if save_lead(session, res['Email'], url=res['URL'])]
@@ -2211,7 +2250,7 @@ def autoclient_ai_page():
         st.success("Automation started!")
     if st.session_state.get('automation_status', False):
         st.subheader("Automation in Progress")
-        progress_bar, log_container, leads_container, analytics_container = st.progress(0), st.empty(), st.empty(), st.empty()
+        progress_bar, log_container, leads_container, analytics_container = st.progress(0, key="progress_bar"), st.empty(), st.empty(), st.empty()
         try:
             with db_session() as session:
                 ai_automation_loop(session, log_container, leads_container)
@@ -2699,7 +2738,8 @@ def manual_search_page():
             value=form_data['search_terms'],
             suggestions=st.session_state.get('recent_searches', []),
             maxtags=10,
-            on_change=lambda x: update_form('search_terms', x)
+            key=f"search_terms_{form_id}",  # Add unique key
+            label_visibility="visible"  # Add visibility parameter
         )
         
         num_results = stable_component(
