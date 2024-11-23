@@ -21,8 +21,6 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
-import subprocess
-import sqlalchemy as sa
 
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -226,29 +224,14 @@ class EmailSettings(Base):
     id = Column(BigInteger, primary_key=True)
     name = Column(Text, nullable=False)
     email = Column(Text, nullable=False)
-    provider = Column(Text, nullable=False)  # Should be either 'smtp' or 'ses'
-    # SMTP settings
+    provider = Column(Text, nullable=False)
     smtp_server = Column(Text)
     smtp_port = Column(BigInteger)
     smtp_username = Column(Text)
     smtp_password = Column(Text)
-    smtp_use_tls = Column(Boolean, default=True)  # Add this field
-    # AWS settings
     aws_access_key_id = Column(Text)
     aws_secret_access_key = Column(Text)
     aws_region = Column(Text)
-    # Add relationship to EmailQuota
-    quota = relationship("EmailQuota", back_populates="email_settings", uselist=False)
-    daily_limit = Column(BigInteger, default=200)  # Default limit for Gmail
-
-# Add after the EmailSettings class definition
-class EmailQuota(Base):
-    __tablename__ = 'email_quotas'
-    id = Column(BigInteger, primary_key=True)
-    email_settings_id = Column(BigInteger, ForeignKey('email_settings.id'))
-    daily_sent = Column(BigInteger, default=0)
-    last_reset = Column(DateTime(timezone=True))
-    email_settings = relationship("EmailSettings", back_populates="quota")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
@@ -270,29 +253,6 @@ def db_session():
     finally:
         session.close()
 
-# Add this enhanced session manager after the existing db_session context manager
-@contextmanager
-def safe_db_session():
-    """Enhanced session manager with retry logic and proper cleanup"""
-    session = None
-    try:
-        session = SessionLocal()
-        yield session
-        session.commit()
-    except SQLAlchemyError as e:
-        if session:
-            session.rollback()
-        logging.error(f"Database error: {str(e)}")
-        raise
-    except Exception as e:
-        if session:
-            session.rollback()
-        logging.error(f"Unexpected error: {str(e)}")
-        raise
-    finally:
-        if session:
-            session.close()
-
 def settings_page():
     st.title("Settings")
     with db_session() as session:
@@ -313,104 +273,37 @@ def settings_page():
         for setting in email_settings:
             with st.expander(f"{setting.name} ({setting.email})"):
                 st.write(f"Provider: {setting.provider}")
-                if setting.provider == 'smtp':
-                    st.write(f"SMTP Server: {setting.smtp_server}")
-                    st.write(f"SMTP Port: {setting.smtp_port}")
-                else:
-                    st.write(f"AWS Region: {setting.aws_region}")
-                
-                col1, col2 = st.columns(2)
-                test_email = col1.text_input(
-                    "Test Email",
-                    key="test_email_input",
-                    help="Enter email address to test settings",
-                    max_chars=100
-                )
-                if col1.button(f"Test {setting.name}", key=f"test_{setting.id}"):
-                    try:
-                        # Validate settings before attempting to send
-                        if setting.provider == 'smtp' and not all([
-                            setting.smtp_server, setting.smtp_port,
-                            setting.smtp_username, setting.smtp_password
-                        ]):
-                            st.error("Incomplete SMTP settings. Please fill in all required fields.")
-                            continue
-                            
-                        response, _ = send_email_ses(
-                            session,
-                            setting.email,
-                            test_email,
-                            "Test Email from AutoclientAI",
-                            "<p>This is a test email from your AutoclientAI email settings.</p>",
-                            reply_to=setting.email
-                        )
-                        if response:
-                            st.success(f"Test email sent successfully to {test_email}")
-                        else:
-                            st.error("Failed to send test email")
-                    except Exception as e:
-                        st.error(f"Error sending test email: {str(e)}")
-                
-                if col2.button(f"Delete {setting.name}", key=f"delete_{setting.id}"):
+                st.write(f"{'SMTP Server: ' + setting.smtp_server if setting.provider == 'smtp' else 'AWS Region: ' + setting.aws_region}")
+                if st.button(f"Delete {setting.name}", key=f"delete_{setting.id}"):
                     session.delete(setting)
                     session.commit()
                     st.success(f"Deleted {setting.name}")
                     st.rerun()
 
         edit_id = st.selectbox("Edit existing setting", ["New Setting"] + [f"{s.id}: {s.name}" for s in email_settings])
-        edit_setting = session.get(EmailSettings, int(edit_id.split(":")[0])) if edit_id != "New Setting" else None
+        edit_setting = session.query(EmailSettings).get(int(edit_id.split(":")[0])) if edit_id != "New Setting" else None
         with st.form("email_setting_form"):
             name = st.text_input("Name", value=edit_setting.name if edit_setting else "", placeholder="e.g., Company Gmail")
             email = st.text_input("Email", value=edit_setting.email if edit_setting else "", placeholder="your.email@example.com")
             provider = st.selectbox("Provider", ["smtp", "ses"], index=0 if edit_setting and edit_setting.provider == "smtp" else 1)
-            
             if provider == "smtp":
                 smtp_server = st.text_input("SMTP Server", value=edit_setting.smtp_server if edit_setting else "", placeholder="smtp.gmail.com")
-                smtp_port = st.number_input("SMTP Port", min_value=1, max_value=65535, value=edit_setting.smtp_port if edit_setting and edit_setting.smtp_port else 587)
+                smtp_port = st.number_input("SMTP Port", min_value=1, max_value=65535, value=edit_setting.smtp_port if edit_setting else 587)
                 smtp_username = st.text_input("SMTP Username", value=edit_setting.smtp_username if edit_setting else "", placeholder="your.email@gmail.com")
-                smtp_password = st.text_input("SMTP Password", type="password", value=edit_setting.smtp_password if edit_setting else "")
-                aws_access_key_id = aws_secret_access_key = aws_region = None
+                smtp_password = st.text_input("SMTP Password", type="password", value=edit_setting.smtp_password if edit_setting else "", placeholder="Your SMTP password")
             else:
-                aws_access_key_id = st.text_input("AWS Access Key ID", value=edit_setting.aws_access_key_id if edit_setting else "")
-                aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password", value=edit_setting.aws_secret_access_key if edit_setting else "")
+                aws_access_key_id = st.text_input("AWS Access Key ID", value=edit_setting.aws_access_key_id if edit_setting else "", placeholder="AKIAIOSFODNN7EXAMPLE")
+                aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password", value=edit_setting.aws_secret_access_key if edit_setting else "", placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
                 aws_region = st.text_input("AWS Region", value=edit_setting.aws_region if edit_setting else "", placeholder="us-west-2")
-                smtp_server = smtp_port = smtp_username = smtp_password = None
-
             if st.form_submit_button("Save Email Setting"):
+                setting_data = {k: v for k, v in locals().items() if k in ['name', 'email', 'provider', 'smtp_server', 'smtp_port', 'smtp_username', 'smtp_password', 'aws_access_key_id', 'aws_secret_access_key', 'aws_region'] and v is not None}
                 try:
-                    # Validate required fields
-                    if not all([name, email]):
-                        st.error("Name and email are required fields.")
-                        return
-
-                    if provider == 'smtp' and not all([smtp_server, smtp_port, smtp_username, smtp_password]):
-                        st.error("All SMTP fields are required when using SMTP provider.")
-                        return
-
-                    if provider == 'ses' and not all([aws_access_key_id, aws_secret_access_key, aws_region]):
-                        st.error("All AWS fields are required when using SES provider.")
-                        return
-
-                    setting_data = {
-                        'name': name,
-                        'email': email,
-                        'provider': provider,
-                        'smtp_server': smtp_server,
-                        'smtp_port': smtp_port,
-                        'smtp_username': smtp_username,
-                        'smtp_password': smtp_password,
-                        'aws_access_key_id': aws_access_key_id,
-                        'aws_secret_access_key': aws_secret_access_key,
-                        'aws_region': aws_region
-                    }
-
                     if edit_setting:
                         for k, v in setting_data.items():
                             setattr(edit_setting, k, v)
                     else:
                         new_setting = EmailSettings(**setting_data)
                         session.add(new_setting)
-                    
                     session.commit()
                     st.success("Email setting saved successfully!")
                     st.rerun()
@@ -418,144 +311,74 @@ def settings_page():
                     st.error(f"Error saving email setting: {str(e)}")
                     session.rollback()
 
-        # Add Database Overview section
-        st.header("Database Overview")
-        
-        with db_session() as session:
-            tables_info = get_table_schema_and_counts(session)
-            
-            # Display tables in expandable sections
-            for table_name, info in tables_info.items():
-                with st.expander(f"{table_name} ({info['row_count']} rows)"):
-                    # Create DataFrame for columns
-                    columns_df = pd.DataFrame(info['columns'])
-                    st.dataframe(columns_df)
-            
-            # Add backup functionality
-            st.subheader("Database Backup")
-            if st.button("Create Database Backup"):
-                backup_data, backup_filename = create_database_backup(session)
-                
-                if backup_data:
-                    st.success("Backup created successfully!")
-                    st.download_button(
-                        label="Download Backup",
-                        data=backup_data,
-                        file_name=backup_filename,
-                        mime="application/sql"
-                    )
-                    
-                    # Display backup stats
-                    st.info(f"""
-                    Backup Details:
-                    - Size: {len(backup_data)/1024/1024:.2f} MB
-                    - Tables: {len(tables_info)}
-                    - Total Rows: {sum(info['row_count'] for info in tables_info.values())}
-                    - Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                    """)
-            
-            # Add table statistics
-            st.subheader("Table Statistics")
-            stats_data = []
-            for table_name, info in tables_info.items():
-                stats_data.append({
-                    'Table': table_name,
-                    'Rows': info['row_count'],
-                    'Columns': len(info['columns'])
-                })
-            
-            stats_df = pd.DataFrame(stats_data)
-            st.plotly_chart(px.bar(
-                stats_df,
-                x='Table',
-                y='Rows',
-                title='Rows per Table',
-                labels={'Rows': 'Number of Rows', 'Table': 'Table Name'}
-            ))
+def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
+    email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
+    if not email_settings:
+        logging.error(f"No email settings found for {from_email}")
+        return None, None
 
-def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None, original_settings=None):
-    """Modified to handle fallbacks"""
+    tracking_id = str(uuid.uuid4())
+    tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
+    wrapped_body = wrap_email_body(body)
+    tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+
+    soup = BeautifulSoup(tracked_body, 'html.parser')
+    for a in soup.find_all('a', href=True):
+        original_url = a['href']
+        tracked_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'click', 'url': original_url})}"
+        a['href'] = tracked_url
+    tracked_body = str(soup)
+
     try:
-        # Get original settings if not provided
-        if not original_settings:
-            original_settings = session.query(EmailSettings).filter_by(email=from_email).first()
-            if not original_settings:
-                logging.error(f"No email settings found for {from_email}")
-                return None, None
-        
-        # Get available settings (may be different from original)
-        active_settings = get_available_email_settings(session, original_settings.id)
-        if not active_settings:
-            logging.error("No available email settings found")
-            return None, None
-            
-        # Use original from/reply-to for consistency
-        actual_from = active_settings.email
-        actual_reply_to = reply_to or original_settings.email
-        
-        # Generate tracking ID and prepare email body
-        tracking_id = str(uuid.uuid4())
-        tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
-        wrapped_body = wrap_email_body(body)
-        tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+        test_response = requests.get(f"https://autoclient-email-analytics.trigox.workers.dev/test", timeout=5)
+        if test_response.status_code != 200:
+            logging.warning("Analytics worker is down. Using original URLs.")
+            tracked_body = wrapped_body
+    except requests.RequestException:
+        logging.warning("Failed to reach analytics worker. Using original URLs.")
+        tracked_body = wrapped_body
 
-        try:
-            if active_settings.provider.lower() == 'ses':
-                if not ses_client:
-                    aws_session = boto3.Session(
-                        aws_access_key_id=active_settings.aws_access_key_id,
-                        aws_secret_access_key=active_settings.aws_secret_access_key,
-                        region_name=active_settings.aws_region
-                    )
-                    ses_client = aws_session.client('ses')
-                
-                response = ses_client.send_email(
-                    Source=actual_from,
-                    Destination={'ToAddresses': [to_email]},
-                    Message={
-                        'Subject': {'Data': subject, 'Charset': charset},
-                        'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
-                    },
-                    ReplyToAddresses=[actual_reply_to]
+    try:
+        if email_settings.provider == 'ses':
+            if ses_client is None:
+                aws_session = boto3.Session(
+                    aws_access_key_id=email_settings.aws_access_key_id,
+                    aws_secret_access_key=email_settings.aws_secret_access_key,
+                    region_name=email_settings.aws_region
                 )
-                record_email_sent(session, active_settings.id)
-                return response, tracking_id
-                
-            elif active_settings.provider.lower() == 'smtp':
-                msg = MIMEMultipart()
-                msg['From'] = actual_from
-                msg['To'] = to_email
-                msg['Subject'] = subject
-                msg['Reply-To'] = actual_reply_to
-                msg.attach(MIMEText(tracked_body, 'html'))
-                
-                with smtplib.SMTP(active_settings.smtp_server, active_settings.smtp_port) as server:
-                    if active_settings.smtp_use_tls:
-                        server.starttls()
-                    server.login(active_settings.smtp_username, active_settings.smtp_password)
-                    server.send_message(msg)
-                
-                record_email_sent(session, active_settings.id)
-                return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
-                
-        except Exception as e:
-            error_msg = str(e)
-            record_email_error(session, active_settings.id, error_msg)
+                ses_client = aws_session.client('ses')
             
-            # Recursive retry with explicit exclusion of failed settings
-            if original_settings.id != active_settings.id:
-                logging.warning(f"Retrying with different settings after error: {error_msg}")
-                return send_email(session, from_email, to_email, subject, body, 
-                                charset, reply_to, ses_client, original_settings)
-            
-            raise  # Re-raise if we've tried with original settings
-            
+            response = ses_client.send_email(
+                Source=from_email,
+                Destination={'ToAddresses': [to_email]},
+                Message={
+                    'Subject': {'Data': subject, 'Charset': charset},
+                    'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
+                },
+                ReplyToAddresses=[reply_to] if reply_to else []
+            )
+            return response, tracking_id
+        elif email_settings.provider == 'smtp':
+            msg = MIMEMultipart()
+            msg['From'] = from_email
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            if reply_to:
+                msg['Reply-To'] = reply_to
+            msg.attach(MIMEText(tracked_body, 'html'))
+
+            with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
+                server.starttls()
+                server.login(email_settings.smtp_username, email_settings.smtp_password)
+                server.send_message(msg)
+            return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
+        else:
+            logging.error(f"Unknown email provider: {email_settings.provider}")
+            return None, None
     except Exception as e:
         logging.error(f"Error sending email: {str(e)}")
         return None, None
-    finally:
-        if ses_client:
-            ses_client.close()
+
 def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
     try:
         lead = session.query(Lead).filter_by(email=lead_email).first()
@@ -782,7 +605,6 @@ def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     except Exception as e:
         session.rollback()
         logging.error(f"Error adding search term: {str(e)}")
-        raise
 
 def ai_group_search_terms(session, ungrouped_terms):
     existing_groups = session.query(SearchTermGroup).all()
@@ -835,7 +657,7 @@ def ai_automation_loop(session, log_container, leads_container):
             st.write(", ".join(optimized_terms))
 
             total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0, key="progress_bar")
+            progress_bar = st.progress(0)
             for idx, term in enumerate(optimized_terms):
                 results = manual_search(session, [term], 10, ignore_previously_fetched=True)
                 new_leads = []
@@ -1033,163 +855,81 @@ def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
     st.title("Manual Search")
-    
-    # Use persistent form state
-    form_id = 'manual_search_form'
-    
-    # Initialize form data if needed
-    if form_id not in st.session_state:
-        st.session_state[form_id] = {
-            'search_terms': [],
-            'num_results': 10,
-            'enable_email_sending': True,
-            'ignore_previously_fetched': True,
-            'shuffle_keywords': True,
-            'optimize_english': False,
-            'optimize_spanish': False,
-            'language': "ES"
-        }
+
+    with db_session() as session:
+        # Fetch recent searches within the session
+        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
+        # Materialize the terms within the session
+        recent_search_terms = [term.term for term in recent_searches]
+        
+        email_templates = fetch_email_templates(session)
+        email_settings = fetch_email_settings(session)
 
     col1, col2 = st.columns([2, 1])
-    
+
     with col1:
-        # Use st_tags without on_change parameter
         search_terms = st_tags(
             label='Enter search terms:',
             text='Press enter to add more',
-            value=st.session_state[form_id]['search_terms'],
-            suggestions=st.session_state.get('recent_searches', []),
+            value=recent_search_terms,
+            suggestions=['software engineer', 'data scientist', 'product manager'],
             maxtags=10,
-            key=f"search_terms_{form_id}"
+            key='search_terms_input'
         )
-        # Update session state after the component
-        st.session_state[form_id]['search_terms'] = search_terms
-        
-        # Use regular slider for num_results
-        num_results = st.slider(
-            "Results per term", 
-            1, 50000, 
-            value=st.session_state[form_id]['num_results'],
-            key=f"num_results_{form_id}"
-        )
-        st.session_state[form_id]['num_results'] = num_results
+        num_results = st.slider("Results per term", 1, 500, 10)
 
     with col2:
-        # Use session state for checkboxes
-        enable_email_sending = st.checkbox(
-            "Enable email sending",
-            value=st.session_state[form_id]['enable_email_sending'],
-            key='enable_email'
-        )
-        st.session_state[form_id]['enable_email_sending'] = enable_email_sending
-
-        ignore_previously_fetched = st.checkbox(
-            "Ignore fetched domains",
-            value=st.session_state[form_id]['ignore_previously_fetched'],
-            key='ignore_fetched'
-        )
-        st.session_state[form_id]['ignore_previously_fetched'] = ignore_previously_fetched
-
-        shuffle_keywords_option = st.checkbox(
-            "Shuffle Keywords",
-            value=st.session_state[form_id]['shuffle_keywords'],
-            key='shuffle'
-        )
-        st.session_state[form_id]['shuffle_keywords'] = shuffle_keywords_option
-
-        optimize_english = st.checkbox(
-            "Optimize (English)",
-            value=st.session_state[form_id]['optimize_english'],
-            key='opt_en'
-        )
-        st.session_state[form_id]['optimize_english'] = optimize_english
-
-        optimize_spanish = st.checkbox(
-            "Optimize (Spanish)",
-            value=st.session_state[form_id]['optimize_spanish'],
-            key='opt_es'
-        )
-        st.session_state[form_id]['optimize_spanish'] = optimize_spanish
-
-        language = st.selectbox(
-            "Select Language",
-            options=["ES", "EN"],
-            index=0 if st.session_state[form_id]['language'] == "ES" else 1,
-            key='language'
-        )
-        st.session_state[form_id]['language'] = language
+        enable_email_sending = st.checkbox("Enable email sending", value=True)
+        ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
+        shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
+        optimize_english = st.checkbox("Optimize (English)", value=False)
+        optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
+        language = st.selectbox("Select Language", options=["ES", "EN"], index=0)
 
     if enable_email_sending:
-        if not st.session_state[form_id]['email_templates']:
+        if not email_templates:
             st.error("No email templates available. Please create a template first.")
             return
-        if not st.session_state[form_id]['email_settings']:
+        if not email_settings:
             st.error("No email settings available. Please add email settings first.")
             return
 
         col3, col4 = st.columns(2)
         with col3:
-            email_template = st.selectbox(
-                "Email Template",
-                options=st.session_state[form_id]['email_templates'],
-                format_func=lambda x: x.split(":")[1].strip(),
-                key="template_select"
-            )
-            st.session_state[form_id]['email_template'] = email_template
-
+            email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip())
         with col4:
-            email_setting_option = st.selectbox(
-                "From Email",
-                options=st.session_state[form_id]['email_settings'],
-                format_func=lambda x: f"{x['name']} ({x['email']})",
-                key='email_setting'
-            )
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
             if email_setting_option:
                 from_email = email_setting_option['email']
-                reply_to = st.text_input(
-                    "Reply To",
-                    value=email_setting_option['email'],
-                    key='reply_to'
-                )
-                st.session_state[form_id]['from_email'] = from_email
-                st.session_state[form_id]['reply_to'] = reply_to
+                reply_to = st.text_input("Reply To", email_setting_option['email'])
             else:
                 st.error("No email setting selected. Please select an email setting.")
                 return
 
-    # Only show search results if search has been performed
-    if 'search_results' not in st.session_state:
-        st.session_state.search_results = None
-
-    if st.button("Search", key='search_button'):
+    if st.button("Search"):
         if not search_terms:
-            st.warning("Enter at least one search term.")
-            return
+            return st.warning("Enter at least one search term.")
 
-        progress_bar = st.progress(0, key="progress_bar")
+        progress_bar = st.progress(0)
         status_text = st.empty()
         email_status = st.empty()
         results = []
+
         leads_container = st.empty()
         leads_found, emails_sent = [], []
+
+        # Create a single log container for all search terms
         log_container = st.empty()
 
         for i, term in enumerate(search_terms):
-            status_text.text(f"Searching: '{term}' ({i + 1}/{len(search_terms)})")
+            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
 
             with db_session() as session:
-                term_results = manual_search(
-                    session, [term], num_results,
-                    ignore_previously_fetched,
-                    optimize_english, optimize_spanish,
-                    shuffle_keywords_option, language,
-                    enable_email_sending, log_container,
-                    from_email if enable_email_sending else None,
-                    reply_to if enable_email_sending else None,
-                    email_template if enable_email_sending else None
-                )
+                term_results = manual_search(session, [term], num_results, ignore_previously_fetched, optimize_english, optimize_spanish, shuffle_keywords_option, language, enable_email_sending, log_container, from_email, reply_to, email_template)
                 results.extend(term_results['results'])
+
                 leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
+
                 if enable_email_sending:
                     template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
                     for result in term_results['results']:
@@ -1199,35 +939,34 @@ def manual_search_page():
                         wrapped_content = wrap_email_body(template.body_content)
                         response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
                         if response:
-                            update_log(log_container, f"Sent email to: {result['Email']}", 'email_sent')
-                            save_email_campaign(session, result['Email'], template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
-                            emails_sent.append(f"{result['Email']} - {result['Company']}")
+                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), template.body_content)
+                            emails_sent.append(f"✅ {result['Email']}")
+                            status_text.text(f"Email sent to: {result['Email']}")
                         else:
-                            update_log(log_container, f"Failed to send email to: {result['Email']}", 'error')
-                            save_email_campaign(session, result['Email'], template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
-                leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
+                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, template.body_content)
+                            emails_sent.append(f"❌ {result['Email']}")
+                            status_text.text(f"Failed to send email to: {result['Email']}")
+
+            leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
             progress_bar.progress((i + 1) / len(search_terms))
 
-        # Store results in session state
-        st.session_state.search_results = results
-
-    # Display results if they exist
-    if st.session_state.search_results:
+        # Display final results
         st.subheader("Search Results")
-        st.dataframe(pd.DataFrame(st.session_state.search_results))
+        st.dataframe(pd.DataFrame(results))
 
-        if st.session_state[form_id]['enable_email_sending']:
+        if enable_email_sending:
             st.subheader("Email Sending Results")
-            emails_sent = [r.get('email_status', '') for r in st.session_state.search_results]
-            success_rate = sum(1 for status in emails_sent if status == 'sent') / len(emails_sent) if emails_sent else 0
+            success_rate = sum(1 for email in emails_sent if email.startswith("✅")) / len(emails_sent) if emails_sent else 0
             st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
 
         st.download_button(
             label="Download CSV",
-            data=pd.DataFrame(st.session_state.search_results).to_csv(index=False).encode('utf-8'),
+            data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),
             file_name="search_results.csv",
             mime="text/csv",
         )
+
+# Update other functions that might be accessing detached objects
 
 def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
@@ -1256,7 +995,7 @@ def ai_automation_loop(session, log_container, leads_container):
             st.write(", ".join(optimized_terms))
 
             total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0, key="progress_bar")
+            progress_bar = st.progress(0)
             for idx, term in enumerate(optimized_terms):
                 results = manual_search(session, [term], 10, ignore_previously_fetched=True)
                 new_leads = []
@@ -1510,7 +1249,6 @@ def is_valid_email(email):
 
 
 
-
 def view_leads_page():
     st.title("Lead Management Dashboard")
     with db_session() as session:
@@ -1551,7 +1289,7 @@ def view_leads_page():
                 num_rows="dynamic"
             )
 
-            if st.form_submit_button("Save Changes", type="primary"):
+            if st.button("Save Changes", type="primary"):
                 for index, row in edited_df.iterrows():
                     if row['Delete']:
                         if delete_lead_and_sources(session, row['ID']):
@@ -1718,22 +1456,13 @@ def search_terms_page():
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
-        # Handle empty updated_terms case
-        if not updated_terms:
-            # Remove all terms from group
-            session.query(SearchTerm).filter(SearchTerm.group_id == group_id).update({SearchTerm.group_id: None})
-            session.commit()
-            return
-
         current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
         existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
         
-        # Remove terms no longer in group
         for term in existing_terms:
             if term.id not in current_term_ids:
                 term.group_id = None
         
-        # Add/update terms in group
         for term_str in updated_terms:
             term_id = int(term_str.split(":")[0])
             term = session.query(SearchTerm).get(term_id)
@@ -1741,12 +1470,10 @@ def update_search_term_group(session, group_id, updated_terms):
                 term.group_id = group_id
         
         session.commit()
-    except (ValueError, AttributeError) as e:
-        session.rollback()
-        logging.error(f"Invalid term format in update_search_term_group: {str(e)}")
     except Exception as e:
-        session.rollback() 
+        session.rollback()
         logging.error(f"Error in update_search_term_group: {str(e)}")
+
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
         new_search_term = SearchTerm(term=new_term, campaign_id=campaign_id, created_at=datetime.utcnow())
@@ -1821,18 +1548,9 @@ def email_templates_page():
         templates = session.query(EmailTemplate).all()
         with st.expander("Create New Template", expanded=False):
             new_template_name = st.text_input("Template Name", key="new_template_name")
-            use_ai = st.checkbox(
-                "Use AI to generate template",
-                help="Enable AI assistance in template generation",
-                key="use_ai_checkbox"
-            )
+            use_ai = st.checkbox("Use AI to generate template", key="use_ai")
             if use_ai:
-                ai_prompt = st.text_area(
-                    "Enter prompt for AI template generation",
-                    height=150,
-                    key="ai_prompt_area",
-                    help="Describe how you want the template to be generated"
-                )
+                ai_prompt = st.text_area("Enter prompt for AI template generation", key="ai_prompt")
                 use_kb = st.checkbox("Use Knowledge Base information", key="use_kb")
                 if st.button("Generate Template", key="generate_ai_template"):
                     with st.spinner("Generating template..."):
@@ -1949,7 +1667,7 @@ def bulk_send_page():
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -1958,12 +1676,7 @@ def bulk_send_page():
                 return
 
         with col2:
-            send_option = st.radio(
-                "Send to:",
-                ["All Leads", "Specific Email"],
-                horizontal=True,
-                key="send_option_radio"
-            )
+            send_option = st.radio("Send to:", ["All Leads", "Specific Email", "Leads from Chosen Search Terms", "Leads from Search Term Groups"])
             specific_email = None
             selected_terms = None
             if send_option == "Specific Email":
@@ -1998,7 +1711,7 @@ def bulk_send_page():
             if not contactable_leads:
                 st.warning("No leads found matching the selected criteria.")
                 return
-            progress_bar = st.progress(0, key="progress_bar")
+            progress_bar = st.progress(0)
             status_text = st.empty()
             results = []
             log_container = st.empty()
@@ -2006,15 +1719,7 @@ def bulk_send_page():
             st.success(f"Emails sent successfully to {sent_count} leads.")
             st.subheader("Sending Results")
             results_df = pd.DataFrame(results)
-            st.dataframe(
-                results_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Email": st.column_config.TextColumn("Email", width="medium"),
-                    "Status": st.column_config.TextColumn("Status", width="small")
-                }
-            )
+            st.dataframe(results_df)
             success_rate = (results_df['Status'] == 'sent').mean()
             st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
 
@@ -2076,7 +1781,7 @@ def ai_automation_loop(session, log_container, leads_container):
             st.subheader("Optimized Search Terms")
             st.write(", ".join(optimized_terms))
             total_search_terms = len(optimized_terms)
-            progress_bar = st.progress(0, key="progress_bar")
+            progress_bar = st.progress(0)
             for idx, term in enumerate(optimized_terms):
                 results = manual_search(session, [term], 10, ignore_previously_fetched=True)
                 new_leads = [(save_lead(session, res['Email'], url=res['URL']).id, res['Email']) for res in results['results'] if save_lead(session, res['Email'], url=res['URL'])]
@@ -2239,7 +1944,7 @@ def autoclient_ai_page():
         st.success("Automation started!")
     if st.session_state.get('automation_status', False):
         st.subheader("Automation in Progress")
-        progress_bar, log_container, leads_container, analytics_container = st.progress(0, key="progress_bar"), st.empty(), st.empty(), st.empty()
+        progress_bar, log_container, leads_container, analytics_container = st.progress(0), st.empty(), st.empty(), st.empty()
         try:
             with db_session() as session:
                 ai_automation_loop(session, log_container, leads_container)
@@ -2552,82 +2257,6 @@ def view_sent_email_campaigns():
         st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
-def test_email_settings(session, setting_id, test_email):
-    try:
-        setting = session.query(EmailSettings).get(setting_id)
-        if not setting:
-            return False, "Email setting not found"
-            
-        response, _ = send_email_ses(
-            session,
-            setting.email,
-            test_email,
-            "Test Email from AutoclientAI",
-            "<p>This is a test email from your AutoclientAI email settings.</p>",
-            reply_to=setting.email
-        )
-        
-        if response:
-            return True, "Test email sent successfully"
-        return False, "Failed to send test email"
-        
-    except Exception as e:
-        return False, f"Error: {str(e)}"
-
-# Add after imports
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = True
-    st.session_state.update({
-        'active_project_id': 1,
-        'active_campaign_id': 1,
-        'search_results': None,
-        'automation_status': False,
-        'leads_data': None,
-        'templates_data': None,
-        'email_settings_data': None,
-        'current_page': None,
-        'form_data': {},
-        'search_terms': [],
-        'selected_template': None,
-        'selected_email': None,
-        'last_refresh_time': None
-    })
-
-# Add new utility functions
-def handle_form_submit(form_id, callback):
-    """Handle form submissions without page reload"""
-    if form_id not in st.session_state:
-        st.session_state[form_id] = {}
-    
-    def update_form_data(key, value):
-        st.session_state[form_id][key] = value
-    
-    return update_form_data, st.session_state[form_id]
-
-def cached_db_query(ttl_seconds=300):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            cache_key = f"{func.__name__}_{args}_{kwargs}"
-            
-            if cache_key not in st.session_state or \
-               (datetime.now() - st.session_state.get(f"{cache_key}_time", datetime.min)).seconds > ttl_seconds:
-                
-                result = func(*args, **kwargs)
-                st.session_state[cache_key] = result
-                st.session_state[f"{cache_key}_time"] = datetime.now()
-                return result
-                
-            return st.session_state[cache_key]
-        return wrapper
-    return decorator
-
-def stable_component(key, component_func, *args, **kwargs):
-    """Wrapper to prevent component reloads"""
-    if key not in st.session_state:
-        st.session_state[key] = component_func(*args, **kwargs)
-    return st.session_state[key]
-
-# Replace main() function
 def main():
     st.set_page_config(
         page_title="Autoclient.ai | Lead Generation AI App",
@@ -2635,6 +2264,9 @@ def main():
         initial_sidebar_state="expanded",
         page_icon=""
     )
+
+    st.sidebar.title("AutoclientAI")
+    st.sidebar.markdown("Select a page to navigate through the application.")
 
     pages = {
         "🔍 Manual Search": manual_search_page,
@@ -2651,227 +2283,24 @@ def main():
         "📨 Sent Campaigns": view_sent_email_campaigns
     }
 
-    st.sidebar.title("AutoclientAI")
-    
-    # Use a single key for navigation to prevent reloads
-    if 'nav_selection' not in st.session_state:
-        st.session_state.nav_selection = list(pages.keys())[0]
-
     with st.sidebar:
-        new_selection = option_menu(
+        selected = option_menu(
             menu_title="Navigation",
             options=list(pages.keys()),
-            icons=["search", "send", "people", "key", "envelope", "folder", "book", 
-                   "robot", "gear", "list-check", "gear", "envelope-open"],
+            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
             menu_icon="cast",
-            default_index=list(pages.keys()).index(st.session_state.nav_selection),
-            key='navigation'
+            default_index=0
         )
-        
-        # Only update if actually changed
-        if new_selection != st.session_state.nav_selection:
-            st.session_state.nav_selection = new_selection
-            st.session_state.form_data = {}  # Reset form data on page change
-            st.experimental_rerun()
 
     try:
-        # Use cached page content when possible
-        pages[st.session_state.nav_selection]()
+        pages[selected]()
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
         logging.exception("An error occurred in the main function")
+        st.write("Please try refreshing the page or contact support if the issue persists.")
 
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
-# Add caching to database queries
-@cached_db_query(ttl_seconds=300)
-def fetch_leads_with_sources(session):
-    # Existing implementation remains the same
-    pass
-
-@cached_db_query(ttl_seconds=3600)
-def fetch_email_templates(session):
-    # Existing implementation remains the same
-    pass
-
-# Modify manual_search_page to use persistent state
-def manual_search_page():
-    st.title("Manual Search")
-    
-    # Use persistent form state
-    form_id = 'manual_search_form'
-    
-    # Initialize form data if needed
-    if form_id not in st.session_state:
-        st.session_state[form_id] = {
-            'search_terms': [],
-            'num_results': 10,
-            'enable_email_sending': True,
-            'ignore_previously_fetched': True,
-            'shuffle_keywords': True,
-            'optimize_english': False,
-            'optimize_spanish': False,
-            'language': "ES"
-        }
-
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        # Use st_tags without on_change parameter
-        search_terms = st_tags(
-            label='Enter search terms:',
-            text='Press enter to add more',
-            value=st.session_state[form_id]['search_terms'],
-            suggestions=st.session_state.get('recent_searches', []),
-            maxtags=10,
-            key=f"search_terms_{form_id}"
-        )
-        # Update session state after the component
-        st.session_state[form_id]['search_terms'] = search_terms
-        
-        # Use regular slider for num_results
-        num_results = st.slider(
-            "Results per term", 
-            1, 500, 
-            value=st.session_state[form_id]['num_results'],
-            key=f"num_results_{form_id}"
-        )
-        st.session_state[form_id]['num_results'] = num_results
-
-    # Rest of the function remains the same...
-
-
-
-def is_pg_dump_available():
-    try:
-        subprocess.run(['pg_dump', '--version'], capture_output=True)
-        return True
-    except FileNotFoundError:
-        return False
-
-def get_table_schema_and_counts(session):
-    tables_info = {}
-    for table in Base.metadata.sorted_tables:
-        columns = []
-        for column in table.columns:
-            columns.append({
-                'name': column.name,
-                'type': str(column.type),
-                'nullable': column.nullable
-            })
-        row_count = session.query(func.count()).select_from(table).scalar()
-        tables_info[table.name] = {
-            'columns': columns,
-            'row_count': row_count
-        }
-    return tables_info
-
-def create_database_backup(session):
-    if not is_pg_dump_available():
-        st.error("pg_dump not available. Cannot create backup.")
-        return None, None
-        
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"backup_{timestamp}.sql"
-    
-    try:
-        result = subprocess.run(
-            ['pg_dump', DATABASE_URL],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            return result.stdout, filename
-        return None, None
-    except Exception as e:
-        logging.error(f"Backup failed: {str(e)}")
-        return None, None
-
-def get_available_email_settings(session, original_setting_id):
-    try:
-        # First try to get the original setting
-        setting = session.query(EmailSettings).get(original_setting_id)
-        if setting and not is_quota_exceeded(session, setting.id):
-            return setting
-            
-        # If original setting unavailable, find another valid setting
-        available_setting = session.query(EmailSettings)\
-            .filter(EmailSettings.id != original_setting_id)\
-            .filter(EmailSettings.daily_sent < EmailSettings.daily_limit)\
-            .first()
-            
-        return available_setting
-    except Exception as e:
-        logging.error(f"Error getting available email settings: {str(e)}")
-        return None
-
-def is_quota_exceeded(session, setting_id):
-    try:
-        setting = session.query(EmailSettings).get(setting_id)
-        if not setting:
-            return True
-            
-        # Reset daily count if last_reset is from previous day
-        quota = session.query(EmailQuota).filter_by(email_settings_id=setting_id).first()
-        if not quota:
-            quota = EmailQuota(email_settings_id=setting_id, daily_sent=0, last_reset=datetime.utcnow())
-            session.add(quota)
-            session.commit()
-            return False
-            
-        if quota.last_reset.date() < datetime.utcnow().date():
-            quota.daily_sent = 0
-            quota.last_reset = datetime.utcnow()
-            session.commit()
-            return False
-            
-        return quota.daily_sent >= setting.daily_limit
-    except Exception as e:
-        logging.error(f"Error checking quota: {str(e)}")
-        return True  # Fail safe - assume exceeded if error
-
-def record_email_sent(session, setting_id):
-    try:
-        quota = session.query(EmailQuota).filter_by(email_settings_id=setting_id).first()
-        if not quota:
-            quota = EmailQuota(email_settings_id=setting_id, daily_sent=0, last_reset=datetime.utcnow())
-            session.add(quota)
-        quota.daily_sent += 1
-        session.commit()
-    except Exception as e:
-        logging.error(f"Error recording sent email: {str(e)}")
-        session.rollback()
-
-def record_email_error(session, setting_id, error_msg):
-    try:
-        # Log the error
-        logging.error(f"Email error for setting {setting_id}: {error_msg}")
-    except Exception as e:
-        logging.error(f"Error recording email error: {str(e)}")
-
-def validate_email_template(template_content: str) -> tuple[bool, str]:
-    """Validates email template for required elements and proper HTML"""
-    try:
-        soup = BeautifulSoup(template_content, 'html.parser')
-        
-        # Check for basic required elements
-        if not soup.find('body'):
-            return False, "Missing body tag"
-            
-        # Validate tracking pixel placeholder
-        if '{{tracking_pixel}}' not in template_content:
-            return False, "Missing tracking pixel placeholder"
-            
-        # Check for unsafe elements
-        unsafe_elements = soup.find_all(['script', 'iframe'])
-        if unsafe_elements:
-            return False, "Contains unsafe elements"
-            
-        return True, "Template is valid"
-    except Exception as e:
-        return False, f"Template validation error: {str(e)}"
-
 if __name__ == "__main__":
     main()
-
