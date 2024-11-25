@@ -460,50 +460,71 @@ def extract_info_from_page(soup):
 
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None):
     ua, results, total_leads, domains_processed = UserAgent(), [], 0, set()
-    processed_emails = set()  # Track processed emails to prevent duplicates
+    processed_emails_per_domain = {}  # Track processed emails per domain
+    
     for original_term in terms:
         try:
             search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
             search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
             search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
             update_log(log_container, f"Searching for '{original_term}' (Used '{search_term}')")
+            
             for url in google_search(search_term, num_results, lang=language):
                 domain = get_domain_from_url(url)
                 if ignore_previously_fetched and domain in domains_processed:
                     update_log(log_container, f"Skipping Previously Fetched: {domain}", 'warning')
                     continue
+                
                 update_log(log_container, f"Fetching: {url}")
                 try:
                     if not url.startswith(('http://', 'https://')):
                         url = 'http://' + url
+                    
                     response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
                     response.raise_for_status()
                     html_content, soup = response.text, BeautifulSoup(response.text, 'html.parser')
-                    emails = extract_emails_from_html(html_content)
-                    update_log(log_container, f"Found {len(emails)} email(s) on {url}", 'success')
                     
+                    # Extract all emails from the page
+                    emails = extract_emails_from_html(html_content)
+                    valid_emails = [email for email in emails if is_valid_email(email)]
+                    update_log(log_container, f"Found {len(valid_emails)} valid email(s) on {url}", 'success')
+                    
+                    if not valid_emails:
+                        continue
+                        
                     # Extract page info once for all leads from this URL
                     name, company, job_title = extract_info_from_page(soup)
+                    page_title = get_page_title(html_content)
+                    page_description = get_page_description(html_content)
                     
-                    # Process all valid emails found on the page
-                    valid_emails_processed = False
-                    for email in filter(is_valid_email, emails):
-                        # Skip if we've already processed this email
-                        if email in processed_emails:
+                    # Initialize set for this domain if not exists
+                    if domain not in processed_emails_per_domain:
+                        processed_emails_per_domain[domain] = set()
+                    
+                    # Process each valid email from this URL
+                    for email in valid_emails:
+                        # Skip if we've already processed this email for this domain
+                        if email in processed_emails_per_domain[domain]:
                             continue
-                        processed_emails.add(email)  # Add to processed set
+                            
+                        processed_emails_per_domain[domain].add(email)
                         
                         lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
                         if lead:
                             total_leads += 1
                             results.append({
-                                'Email': email, 'URL': url, 'Lead Source': original_term, 
-                                'Title': get_page_title(html_content), 'Description': get_page_description(html_content),
-                                'Tags': [], 'Name': name, 'Company': company, 'Job Title': job_title,
+                                'Email': email,
+                                'URL': url,
+                                'Lead Source': original_term,
+                                'Title': page_title,
+                                'Description': page_description,
+                                'Tags': [],
+                                'Name': name,
+                                'Company': company,
+                                'Job Title': job_title,
                                 'Search Term ID': search_term_id
                             })
                             update_log(log_container, f"Saved lead: {email}", 'success')
-                            valid_emails_processed = True
 
                             if enable_email_sending:
                                 if not from_email or not email_template:
@@ -524,13 +545,14 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                     update_log(log_container, f"Failed to send email to: {email}", 'error')
                                     save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
                     
-                    # Only add domain to processed list if we found and processed at least one valid email
-                    if valid_emails_processed:
-                        domains_processed.add(domain)
+                    # Add domain to processed list after processing all its emails
+                    domains_processed.add(domain)
+                    
                 except requests.RequestException as e:
                     update_log(log_container, f"Error processing URL {url}: {str(e)}", 'error')
         except Exception as e:
             update_log(log_container, f"Error processing term '{original_term}': {str(e)}", 'error')
+    
     update_log(log_container, f"Total leads found: {total_leads}", 'info')
     return {"total_leads": total_leads, "results": results}
 
