@@ -195,26 +195,50 @@ class SearchTermGroup(Base):
 class SearchTerm(Base):
     __tablename__ = 'search_terms'
     id = Column(BigInteger, primary_key=True)
-    term = Column(Text)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     group_id = Column(BigInteger, ForeignKey('search_term_groups.id'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    term = Column(Text)
+    category = Column(Text)
+    language = Column(Text, default='ES')
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    campaign = relationship("Campaign", back_populates="search_terms")
     group = relationship("SearchTermGroup", back_populates="search_terms")
+    campaign = relationship("Campaign", back_populates="search_terms")
     optimized_terms = relationship("OptimizedSearchTerm", back_populates="original_term")
-    effectiveness = relationship("SearchTermEffectiveness", back_populates="search_term")
+    lead_sources = relationship("LeadSource", back_populates="search_term")
+    effectiveness = relationship("SearchTermEffectiveness", back_populates="search_term", uselist=False)
 
 class LeadSource(Base):
     __tablename__ = 'lead_sources'
     id = Column(BigInteger, primary_key=True)
     lead_id = Column(BigInteger, ForeignKey('leads.id'))
-    source_url = Column(Text)
-    source_type = Column(Text)
+    search_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
+    url = Column(Text)
+    domain = Column(Text)
+    page_title = Column(Text)
+    meta_description = Column(Text)
+    scrape_duration = Column(Text)
+    meta_tags = Column(Text)
+    phone_numbers = Column(Text)
+    content = Column(Text)
+    tags = Column(Text)
+    http_status = Column(BigInteger)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     lead = relationship("Lead", back_populates="lead_sources")
+    search_term = relationship("SearchTerm", back_populates="lead_sources")
+
+class AIRequestLog(Base):
+    __tablename__ = 'ai_request_logs'
+    id = Column(BigInteger, primary_key=True)
+    function_name = Column(Text)
+    prompt = Column(Text)
+    response = Column(Text)
+    model_used = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    lead_id = Column(BigInteger, ForeignKey('leads.id'))
+    email_campaign_id = Column(BigInteger, ForeignKey('email_campaigns.id'))
 
 # Create or update tables
 def init_db():
-    Base.metadata.create_all(engine) 
+    Base.metadata.create_all(engine)
