@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index
+from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, or_, Index
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from botocore.exceptions import ClientError
@@ -12,7 +12,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fi
 from email_validator import validate_email, EmailNotValidError
 from streamlit_option_menu import option_menu
 from openai import OpenAI 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from urllib.parse import urlparse, urlencode
 from streamlit_tags import st_tags
 import plotly.express as px
@@ -22,8 +22,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
 import redis
-from functools import wraps, lru_cache  # Combined functools imports
-import threading
+from functools import wraps, lru_cache
 
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -2366,14 +2365,11 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
 
     return logs, sent_count
 
-def wrap_email_body(body_content):
-    """Wrap email body content in proper HTML structure with styling"""
+def wrap_email_body(content: str) -> str:
+    """Wrap email content in proper HTML structure"""
     return f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        {body_content}
-        <div style="color: #666; font-size: 12px; margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px;">
-            <p>This email was sent via AutoclientAI</p>
-        </div>
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        {content}
     </div>
     """
 
@@ -2492,15 +2488,10 @@ def main():
 def cleanup_stale_email_queue(session):
     """Clean up stale email queue entries older than 1 hour"""
     try:
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        session.execute(
-            text("""
-                DELETE FROM email_queue 
-                WHERE created_at < :cutoff_time
-                AND (status = 'processing' OR status IS NULL)
-            """),
-            {"cutoff_time": one_hour_ago}
-        )
+        cutoff_time = datetime.utcnow() - timedelta(hours=1)
+        session.query(text("email_queue")).filter(
+            text("status = 'processing' AND created_at < :cutoff")
+        ).params(cutoff=cutoff_time).delete()
         session.commit()
     except SQLAlchemyError as e:
         logging.error(f"Error cleaning up stale email queue: {str(e)}")
@@ -2536,8 +2527,7 @@ def get_page_title(html_content):
     """Extract page title from HTML content"""
     try:
         soup = BeautifulSoup(html_content, 'html.parser')
-        title = soup.title.string if soup.title else "No title found"
-        return title.strip()
+        return soup.title.string if soup.title else "No title found"
     except Exception as e:
         logging.error(f"Error extracting page title: {str(e)}")
         return "Error extracting title"
