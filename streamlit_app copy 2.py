@@ -22,9 +22,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
 
-# Initialize Streamlit
-st.set_page_config(page_title="AutoclientAI", layout="wide")
-
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
 DB_USER = os.getenv("SUPABASE_DB_USER")
@@ -896,6 +893,7 @@ def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
     st.title("Manual Search")
+
     with db_session() as session:
         # Fetch recent searches within the session
         recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
@@ -2331,15 +2329,6 @@ def main():
             menu_icon="cast",
             default_index=0
         )
-        
-        # Add audio player to sidebar
-        st.markdown("""
-        <audio controls autoplay loop style="width: 100%; margin-bottom: 10px;">
-            <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" type="audio/mpeg">
-            Your browser does not support the audio element.
-        </audio>
-        """, unsafe_allow_html=True)
-        st.markdown("© 2024 AutoclientAI. All rights reserved.")
 
     try:
         pages[selected]()
