@@ -358,178 +358,205 @@ def test_email_settings(session, settings_id):
     except Exception as e:
         return False, f"Error testing email settings: {str(e)}"
 
+def get_settings_from_db(session, setting_type):
+    """Get settings from database by type"""
+    try:
+        setting = session.query(Settings).filter_by(setting_type=setting_type).first()
+        return setting.value if setting else None
+    except Exception as e:
+        logging.error(f"Error fetching {setting_type} settings: {str(e)}")
+        return None
+
+def update_settings_in_db(session, setting_type, value):
+    """Update or create settings in database"""
+    try:
+        setting = session.query(Settings).filter_by(setting_type=setting_type).first()
+        if setting:
+            setting.value = value
+            setting.updated_at = datetime.utcnow()
+        else:
+            setting = Settings(
+                name=f"{setting_type} Settings",
+                setting_type=setting_type,
+                value=value
+            )
+            session.add(setting)
+        session.commit()
+        return True
+    except Exception as e:
+        logging.error(f"Error updating {setting_type} settings: {str(e)}")
+        session.rollback()
+        return False
+
 def settings_page():
     st.title("Settings")
     
-    # ... (existing settings code) ...
-
-    st.header("Email Settings")
     with db_session() as session:
-        email_settings = session.query(EmailSettings).all()
+        tab1, tab2, tab3 = st.tabs(["Email Settings", "OpenAI Settings", "AWS Settings"])
         
-        # Display existing settings
-        if email_settings:
-            st.subheader("Existing Email Settings")
-            for setting in email_settings:
-                with st.expander(f"{setting.name} ({setting.email})"):
-                    col1, col2, col3 = st.columns([2,1,1])
-                    
-                    with col1:
-                        st.write(f"Provider: {setting.provider}")
-                        st.write(f"Daily Limit: {setting.daily_limit}")
-                        if setting.quota:
-                            st.write(f"Emails Sent Today: {setting.quota.emails_sent_today}")
-                            st.write(f"Error Count: {setting.quota.error_count}")
-                    
-                    with col2:
-                        if st.button("Test Email", key=f"test_{setting.id}"):
-                            with st.spinner("Sending test email..."):
-                                success, message = test_email_settings(session, setting.id)
-                                if success:
-                                    st.success(message)
-                                else:
-                                    st.error(message)
-                    
-                    with col3:
-                        if st.button(f"Delete", key=f"delete_{setting.id}"):
-                            session.delete(setting)
-                            session.commit()
-                            st.success(f"Deleted {setting.name}")
-                            st.rerun()
-        
-        # Add new email settings form
-        st.subheader("Add New Email Settings")
-        with st.form("email_settings_form"):
-            name = st.text_input("Settings Name", placeholder="e.g., Company Gmail")
-            email = st.text_input("Email Address")
-            provider = st.selectbox("Provider", ["smtp", "ses"])
-            daily_limit = st.number_input("Daily Email Limit", min_value=1, value=200)
+        with tab1:
+            st.header("Email Settings")
+            email_settings = session.query(EmailSettings).all()
             
-            if provider == "smtp":
-                smtp_server = st.text_input("SMTP Server", placeholder="smtp.gmail.com")
-                smtp_port = st.number_input("SMTP Port", value=587)
-                smtp_username = st.text_input("SMTP Username")
-                smtp_password = st.text_input("SMTP Password", type="password")
+            # Display existing settings
+            if email_settings:
+                st.subheader("Existing Email Settings")
+                for setting in email_settings:
+                    with st.expander(f"{setting.name} ({setting.email})"):
+                        col1, col2, col3 = st.columns([2, 1, 1])
+                        
+                        with col1:
+                            st.write(f"Provider: {setting.provider}")
+                            st.write(f"Daily Limit: {setting.daily_limit}")
+                            if setting.quota:
+                                st.write(f"Emails Sent Today: {setting.quota.emails_sent_today}")
+                                st.write(f"Error Count: {setting.quota.error_count}")
+                        
+                        with col2:
+                            if st.button("Test Email", key=f"test_{setting.id}"):
+                                with st.spinner("Sending test email..."):
+                                    success, message = test_email_settings(session, setting.id)
+                                    if success:
+                                        st.success(message)
+                                    else:
+                                        st.error(message)
+                        
+                        with col3:
+                            if st.button("Delete", key=f"delete_{setting.id}"):
+                                session.delete(setting)
+                                session.commit()
+                                st.success(f"Deleted {setting.name}")
+                                st.experimental_rerun()
+            
+            # Add new email settings form
+            st.subheader("Add New Email Settings")
+            with st.form("email_settings_form"):
+                name = st.text_input("Settings Name", placeholder="e.g., Company Gmail")
+                email = st.text_input("Email Address")
+                provider = st.selectbox("Provider", ["smtp", "ses"])
+                daily_limit = st.number_input("Daily Email Limit", min_value=1, value=200)
                 
-            else:  # ses
-                aws_access_key_id = st.text_input("AWS Access Key ID")
-                aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password")
-                aws_region = st.text_input("AWS Region", placeholder="us-west-2")
-            
-            if st.form_submit_button("Save & Test"):
-                try:
-                    # Create settings object
-                    settings_data = {
-                        "name": name,
-                        "email": email,
-                        "provider": provider,
-                        "daily_limit": daily_limit
-                    }
+                if provider == "smtp":
+                    smtp_server = st.text_input("SMTP Server", placeholder="smtp.gmail.com")
+                    smtp_port = st.number_input("SMTP Port", value=587)
+                    smtp_username = st.text_input("SMTP Username")
+                    smtp_password = st.text_input("SMTP Password", type="password")
                     
-                    if provider == "smtp":
-                        settings_data.update({
-                            "smtp_server": smtp_server,
-                            "smtp_port": smtp_port,
-                            "smtp_username": smtp_username,
-                            "smtp_password": smtp_password
-                        })
-                    else:
-                        settings_data.update({
-                            "aws_access_key_id": aws_access_key_id,
-                            "aws_secret_access_key": aws_secret_access_key,
-                            "aws_region": aws_region
-                        })
-                    
-                    # Save settings
-                    new_settings = EmailSettings(**settings_data)
-                    session.add(new_settings)
-                    session.flush()  # Get ID without committing
-                    
-                    # Create quota record
-                    quota = EmailQuota(
-                        email_settings_id=new_settings.id,
-                        last_reset=datetime.utcnow()
-                    )
-                    session.add(quota)
-                    
-                    # Test the settings
-                    success, message = test_email_settings(session, new_settings.id)
-                    
-                    if success:
-                        session.commit()
-                        st.success("Settings saved and test email sent successfully!")
-                    else:
+                else:  # ses
+                    aws_settings = get_settings_from_db(session, 'aws')
+                    aws_access_key_id = st.text_input("AWS Access Key ID", 
+                                                    value=aws_settings.get('aws_access_key_id', '') if aws_settings else '')
+                    aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password",
+                                                        value=aws_settings.get('aws_secret_access_key', '') if aws_settings else '')
+                    aws_region = st.text_input("AWS Region", 
+                                             value=aws_settings.get('aws_region', 'us-east-1') if aws_settings else 'us-east-1')
+                
+                if st.form_submit_button("Save & Test"):
+                    try:
+                        # Create settings object
+                        settings_data = {
+                            "name": name,
+                            "email": email,
+                            "provider": provider,
+                            "daily_limit": daily_limit
+                        }
+                        
+                        if provider == "smtp":
+                            settings_data.update({
+                                "smtp_server": smtp_server,
+                                "smtp_port": smtp_port,
+                                "smtp_username": smtp_username,
+                                "smtp_password": smtp_password
+                            })
+                        else:
+                            settings_data.update({
+                                "aws_access_key_id": aws_access_key_id,
+                                "aws_secret_access_key": aws_secret_access_key,
+                                "aws_region": aws_region
+                            })
+                            # Update AWS settings in database
+                            update_settings_in_db(session, 'aws', {
+                                "aws_access_key_id": aws_access_key_id,
+                                "aws_secret_access_key": aws_secret_access_key,
+                                "aws_region": aws_region
+                            })
+                        
+                        # Save settings
+                        new_settings = EmailSettings(**settings_data)
+                        session.add(new_settings)
+                        session.flush()
+                        
+                        # Create quota record
+                        quota = EmailQuota(
+                            email_settings_id=new_settings.id,
+                            last_reset=datetime.utcnow()
+                        )
+                        session.add(quota)
+                        
+                        # Test the settings
+                        success, message = test_email_settings(session, new_settings.id)
+                        
+                        if success:
+                            session.commit()
+                            st.success("Settings saved and test email sent successfully!")
+                        else:
+                            session.rollback()
+                            st.error(f"Settings test failed: {message}")
+                        
+                    except Exception as e:
                         session.rollback()
-                        st.error(f"Settings test failed: {message}")
-                    
-                except Exception as e:
-                    session.rollback()
-                    st.error(f"Error saving settings: {str(e)}")
-
-        # Display quota statistics
-        if email_settings:
-            st.subheader("Email Quota Statistics")
-            quota_data = []
-            for setting in email_settings:
-                if setting.quota:
-                    quota_data.append({
-                        "Name": setting.name,
-                        "Email": setting.email,
-                        "Daily Limit": setting.daily_limit,
-                        "Sent Today": setting.quota.emails_sent_today,
-                        "Remaining": setting.daily_limit - setting.quota.emails_sent_today,
-                        "Error Count": setting.quota.error_count,
-                        "Last Error": setting.quota.last_error,
-                        "Last Reset": setting.quota.last_reset
-                    })
+                        st.error(f"Error saving settings: {str(e)}")
+        
+        with tab2:
+            st.header("OpenAI Settings")
+            openai_settings = get_settings_from_db(session, 'openai')
             
-            if quota_data:
-                st.dataframe(pd.DataFrame(quota_data))
-
-@transactional
-def get_available_email_settings(session, exclude_ids=None, max_retries=3):
-    """Get available email settings with proper locking and retry"""
-    exclude_ids = exclude_ids or set()
-    now = datetime.utcnow()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    for attempt in range(max_retries):
-        try:
-            # Use SELECT FOR UPDATE SKIP LOCKED to prevent race conditions
-            stmt = text("""
-                UPDATE email_quotas
-                SET emails_sent_today = 0, last_reset = :now
-                WHERE last_reset < :today_start
-                AND email_settings_id NOT IN :exclude_ids
-                RETURNING email_settings_id;
-            """)
+            with st.form("openai_settings_form"):
+                api_key = st.text_input("API Key", 
+                                      value=openai_settings.get('api_key', '') if openai_settings else '',
+                                      type="password")
+                model = st.selectbox("Model", 
+                                   ["gpt-4", "gpt-3.5-turbo"],
+                                   index=0 if openai_settings and openai_settings.get('model') == 'gpt-4' else 1)
+                temperature = st.slider("Temperature", 
+                                     min_value=0.0, max_value=1.0, value=0.7, step=0.1)
+                
+                if st.form_submit_button("Save OpenAI Settings"):
+                    settings_value = {
+                        "api_key": api_key,
+                        "model": model,
+                        "temperature": temperature
+                    }
+                    if update_settings_in_db(session, 'openai', settings_value):
+                        st.success("OpenAI settings saved successfully!")
+                    else:
+                        st.error("Failed to save OpenAI settings")
+        
+        with tab3:
+            st.header("AWS Settings")
+            aws_settings = get_settings_from_db(session, 'aws')
             
-            session.execute(stmt, {
-                'now': now,
-                'today_start': today_start,
-                'exclude_ids': tuple(exclude_ids) or (0,)
-            })
-            
-            # Get available settings with row lock
-            return session.query(EmailSettings).join(EmailQuota).with_for_update(skip_locked=True).filter(
-                EmailSettings.id.notin_(exclude_ids),
-                EmailQuota.emails_sent_today < EmailSettings.daily_limit,
-                EmailQuota.error_count < 5,
-                or_(
-                    EmailQuota.last_error_time == None,
-                    EmailQuota.last_error_time < now - timedelta(hours=1)
-                )
-            ).order_by(EmailQuota.emails_sent_today).first()
-            
-        except SQLAlchemyError as e:
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(0.1 * (attempt + 1))
-    
-    return None
-
+            with st.form("aws_settings_form"):
+                aws_access_key_id = st.text_input("AWS Access Key ID",
+                                                value=aws_settings.get('aws_access_key_id', '') if aws_settings else '')
+                aws_secret_access_key = st.text_input("AWS Secret Access Key",
+                                                    value=aws_settings.get('aws_secret_access_key', '') if aws_settings else '',
+                                                    type="password")
+                aws_region = st.text_input("AWS Region",
+                                         value=aws_settings.get('aws_region', 'us-east-1') if aws_settings else 'us-east-1')
+                
+                if st.form_submit_button("Save AWS Settings"):
+                    settings_value = {
+                        "aws_access_key_id": aws_access_key_id,
+                        "aws_secret_access_key": aws_secret_access_key,
+                        "aws_region": aws_region
+                    }
+                    if update_settings_in_db(session, 'aws', settings_value):
+                        st.success("AWS settings saved successfully!")
+                    else:
+                        st.error("Failed to save AWS settings")
 def send_email_ses(session, from_email, to_email, subject, body, reply_to=None):
-    """Send email using AWS SES with proper error handling"""
+    """Send email using AWS SES with settings from database"""
     try:
         # Get email settings for the from_email
         email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
@@ -538,12 +565,18 @@ def send_email_ses(session, from_email, to_email, subject, body, reply_to=None):
             return None, None
 
         if email_settings.provider.lower() == 'ses':
-            # Configure AWS SES client
+            # Get AWS settings from database
+            aws_settings = get_settings_from_db(session, 'aws')
+            if not aws_settings:
+                logging.error("AWS settings not found in database")
+                return None, None
+
+            # Configure AWS SES client with database settings
             ses_client = boto3.client(
                 'ses',
-                aws_access_key_id=email_settings.aws_access_key_id,
-                aws_secret_access_key=email_settings.aws_secret_access_key,
-                region_name=email_settings.aws_region
+                aws_access_key_id=aws_settings['aws_access_key_id'],
+                aws_secret_access_key=aws_settings['aws_secret_access_key'],
+                region_name=aws_settings['aws_region']
             )
 
             # Prepare email
@@ -626,11 +659,12 @@ def record_email_success(session, settings_id):
         quota.lock_version += 1
 
 def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
+    """Save email campaign with proper error handling and validation"""
     try:
         lead = session.query(Lead).filter_by(email=lead_email).first()
         if not lead:
             logging.error(f"Lead with email {lead_email} not found.")
-            return
+            return None
 
         new_campaign = EmailCampaign(
             lead_id=lead.id,
@@ -645,9 +679,15 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
         )
         session.add(new_campaign)
         session.commit()
-    except Exception as e:
-        logging.error(f"Error saving email campaign: {str(e)}")
+        return new_campaign
+    except SQLAlchemyError as e:
+        logging.error(f"Database error saving email campaign: {str(e)}")
         session.rollback()
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error saving email campaign: {str(e)}")
+        session.rollback()
+        return None
 
 def update_log(log_container, message, level='info'):
     icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
@@ -2624,6 +2664,27 @@ def ai_automation_page():
         leads_container = st.empty()
         with db_session() as session:
             ai_automation_loop(session, log_container, leads_container)
+
+def openai_chat_completion(messages: List[Dict[str, str]], function_name: str) -> Any:
+    """Make OpenAI chat completion call with settings from database"""
+    try:
+        with db_session() as session:
+            openai_settings = get_settings_from_db(session, 'openai')
+            if not openai_settings:
+                logging.error("OpenAI settings not found in database")
+                return None
+
+            client = OpenAI(api_key=openai_settings['api_key'])
+            response = client.chat.completions.create(
+                model=openai_settings['model'],
+                messages=messages,
+                temperature=openai_settings.get('temperature', 0.7),
+                max_tokens=1500
+            )
+            return response.choices[0].message.content
+    except Exception as e:
+        logging.error(f"Error in {function_name}: {str(e)}")
+        return None
 
 if __name__ == "__main__":
     main()
