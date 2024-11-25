@@ -1820,7 +1820,7 @@ def bulk_send_page():
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -2441,114 +2441,189 @@ def view_sent_email_campaigns():
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
 def main():
-    st.set_page_config(
-        page_title="Autoclient.ai | Lead Generation AI App",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        page_icon=""
-    )
-
-    st.sidebar.title("AutoclientAI")
-    st.sidebar.markdown("Select a page to navigate through the application.")
-
-    pages = {
-        "🔍 Manual Search": manual_search_page,
-        "📦 Bulk Send": bulk_send_page,
-        "👥 View Leads": view_leads_page,
-        "🔑 Search Terms": search_terms_page,
-        "✉️ Email Templates": email_templates_page,
-        "🚀 Projects & Campaigns": projects_campaigns_page,
-        "📚 Knowledge Base": knowledge_base_page,
-        "🤖 AutoclientAI": autoclient_ai_page,
-        "⚙️ Automation Control": automation_control_panel_page,
-        "📨 Email Logs": view_campaign_logs,
-        "🔄 Settings": settings_page,
-        "📨 Sent Campaigns": view_sent_email_campaigns
-    }
-
+    st.set_page_config(page_title="AutoclientAI", layout="wide")
+    
+    # Initialize session state
+    if 'active_project_id' not in st.session_state:
+        st.session_state.active_project_id = 1
+    if 'active_campaign_id' not in st.session_state:
+        st.session_state.active_campaign_id = 1
+    if 'automation_status' not in st.session_state:
+        st.session_state.automation_status = False
+    
+    # Navigation
     with st.sidebar:
         selected = option_menu(
-            menu_title="Navigation",
-            options=list(pages.keys()),
-            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
-            menu_icon="cast",
-            default_index=0
+            "AutoclientAI",
+            ["Projects & Campaigns", "Lead Management", "Search Terms", 
+             "Email Templates", "Bulk Email", "Email Logs", "Settings",
+             "Knowledge Base", "Quick Scan", "AI Automation", "Analytics",
+             "Search Results", "Lead Sources"],
+            icons=['folder', 'person', 'search', 'envelope', 'send', 
+                  'clock-history', 'gear', 'book', 'lightning', 'robot',
+                  'graph-up', 'list', 'database'],
+            menu_icon="app-indicator"
         )
-
+    
+    # Page routing
     try:
-        pages[selected]()
+        if selected == "Projects & Campaigns":
+            projects_campaigns_page()
+        elif selected == "Lead Management":
+            view_leads_page()
+        elif selected == "Search Terms":
+            search_terms_page()
+        elif selected == "Email Templates":
+            email_templates_page()
+        elif selected == "Bulk Email":
+            bulk_send_page()
+        elif selected == "Email Logs":
+            view_campaign_logs()
+        elif selected == "Settings":
+            settings_page()
+        elif selected == "Knowledge Base":
+            knowledge_base_page()
+        elif selected == "Quick Scan":
+            quick_scan_page()
+        elif selected == "AI Automation":
+            ai_automation_page()
+        elif selected == "Analytics":
+            analytics_page()
+        elif selected == "Search Results":
+            search_results_page()
+        elif selected == "Lead Sources":
+            lead_sources_page()
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
-        logging.exception("An error occurred in the main function")
-        st.write("Please try refreshing the page or contact support if the issue persists.")
+        logging.error(f"Error in main navigation: {str(e)}")
 
-    st.sidebar.markdown("---")
-    st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+def quick_scan_page():
+    st.title("Quick Scan")
+    with db_session() as session:
+        if st.button("Start Quick Scan"):
+            results = perform_quick_scan(session)
+            st.success(f"Found {results['new_leads']} new leads using terms: {', '.join(results['terms_used'])}")
 
-def cleanup_stale_email_queue(session):
-    """Clean up stale email queue entries older than 1 hour"""
-    try:
-        cutoff_time = datetime.utcnow() - timedelta(hours=1)
-        session.query(text("email_queue")).filter(
-            text("status = 'processing' AND created_at < :cutoff")
-        ).params(cutoff=cutoff_time).delete()
-        session.commit()
-    except SQLAlchemyError as e:
-        logging.error(f"Error cleaning up stale email queue: {str(e)}")
-        session.rollback()
+def analytics_page():
+    st.title("Analytics Dashboard")
+    with db_session() as session:
+        col1, col2, col3 = st.columns(3)
+        
+        # Lead Growth
+        leads_df = pd.read_sql(
+            "SELECT DATE(created_at) as date, COUNT(*) as count FROM leads GROUP BY DATE(created_at)",
+            session.bind
+        )
+        if not leads_df.empty:
+            leads_df['cumulative'] = leads_df['count'].cumsum()
+            col1.metric("Total Leads", int(leads_df['count'].sum()))
+            st.line_chart(leads_df.set_index('date')['cumulative'])
+        
+        # Email Performance
+        email_stats = pd.read_sql("""
+            SELECT status, COUNT(*) as count 
+            FROM email_campaigns 
+            GROUP BY status
+        """, session.bind)
+        if not email_stats.empty:
+            col2.metric("Emails Sent", int(email_stats['count'].sum()))
+            st.bar_chart(email_stats.set_index('status'))
+        
+        # Search Term Performance
+        term_stats = pd.read_sql("""
+            SELECT st.term, COUNT(DISTINCT l.id) as lead_count
+            FROM search_terms st
+            JOIN lead_sources ls ON st.id = ls.search_term_id
+            JOIN leads l ON ls.lead_id = l.id
+            GROUP BY st.term
+            ORDER BY lead_count DESC
+            LIMIT 10
+        """, session.bind)
+        if not term_stats.empty:
+            col3.metric("Active Search Terms", len(term_stats))
+            st.bar_chart(term_stats.set_index('term'))
 
-# Add after imports
-def get_active_project_id():
-    """Get the active project ID from the session state"""
-    return st.session_state.get('active_project_id', 1)  # Default to 1 if not set
+def search_results_page():
+    st.title("Search Results")
+    with db_session() as session:
+        search_terms = session.query(SearchTerm).all()
+        selected_term = st.selectbox("Select Search Term", 
+                                   options=[term.term for term in search_terms])
+        if selected_term:
+            results = manual_search(session, [selected_term], 10, True)
+            display_search_results(results['results'], selected_term)
 
-def set_active_project_id(project_id):
-    """Set the active project ID in the session state"""
-    st.session_state['active_project_id'] = project_id
+def lead_sources_page():
+    st.title("Lead Sources")
+    with db_session() as session:
+        sources = pd.read_sql("""
+            SELECT 
+                ls.domain,
+                COUNT(DISTINCT l.id) as lead_count,
+                STRING_AGG(DISTINCT st.term, ', ') as search_terms
+            FROM lead_sources ls
+            JOIN leads l ON ls.lead_id = l.id
+            JOIN search_terms st ON ls.search_term_id = st.id
+            GROUP BY ls.domain
+            ORDER BY lead_count DESC
+        """, session.bind)
+        
+        st.dataframe(sources)
+        
+        # Domain Analysis
+        st.subheader("Domain Analysis")
+        domain_stats = sources['domain'].str.split('.').str[-1].value_counts()
+        st.bar_chart(domain_stats)
 
-def get_active_campaign_id():
-    """Get the active campaign ID from the session state"""
-    return st.session_state.get('active_campaign_id', 1)  # Default to 1 if not set
+def knowledge_base_page():
+    st.title("Knowledge Base")
+    with db_session() as session:
+        kb = session.query(KnowledgeBase).filter_by(project_id=get_active_project_id()).first()
+        
+        with st.form("knowledge_base_form"):
+            kb_data = {
+                'kb_name': st.text_input("Knowledge Base Name", value=kb.kb_name if kb else ""),
+                'kb_bio': st.text_area("Bio", value=kb.kb_bio if kb else ""),
+                'kb_values': st.text_area("Values", value=kb.kb_values if kb else ""),
+                'contact_name': st.text_input("Contact Name", value=kb.contact_name if kb else ""),
+                'contact_role': st.text_input("Contact Role", value=kb.contact_role if kb else ""),
+                'contact_email': st.text_input("Contact Email", value=kb.contact_email if kb else ""),
+                'company_description': st.text_area("Company Description", value=kb.company_description if kb else ""),
+                'company_mission': st.text_area("Company Mission", value=kb.company_mission if kb else ""),
+                'company_target_market': st.text_area("Target Market", value=kb.company_target_market if kb else ""),
+                'product_name': st.text_input("Product Name", value=kb.product_name if kb else ""),
+                'product_description': st.text_area("Product Description", value=kb.product_description if kb else ""),
+                'product_target_customer': st.text_area("Target Customer", value=kb.product_target_customer if kb else ""),
+                'example_email': st.text_area("Example Email", value=kb.example_email if kb else "")
+            }
+            
+            if st.form_submit_button("Save Knowledge Base"):
+                try:
+                    if kb:
+                        for key, value in kb_data.items():
+                            setattr(kb, key, value)
+                    else:
+                        kb = KnowledgeBase(project_id=get_active_project_id(), **kb_data)
+                        session.add(kb)
+                    session.commit()
+                    st.success("Knowledge base updated successfully!")
+                except Exception as e:
+                    st.error(f"Error saving knowledge base: {str(e)}")
 
-def set_active_campaign_id(campaign_id):
-    """Set the active campaign ID in the session state"""
-    st.session_state['active_campaign_id'] = campaign_id
-
-def fetch_email_templates(session):
-    """Fetch all email templates with proper error handling"""
-    try:
-        templates = session.query(EmailTemplate).all()
-        return [f"{template.id}: {template.template_name}" for template in templates]
-    except SQLAlchemyError as e:
-        logging.error(f"Database error in fetch_email_templates: {str(e)}")
-        return []
-
-def get_page_title(html_content):
-    """Extract page title from HTML content"""
-    try:
-        soup = BeautifulSoup(html_content, 'html.parser')
-        return soup.title.string if soup.title else "No title found"
-    except Exception as e:
-        logging.error(f"Error extracting page title: {str(e)}")
-        return "Error extracting title"
-
-def add_or_get_search_term(session, term, campaign_id):
-    """Add a new search term or get existing one"""
-    try:
-        search_term = session.query(SearchTerm).filter_by(term=term, campaign_id=campaign_id).first()
-        if not search_term:
-            search_term = SearchTerm(
-                term=term,
-                campaign_id=campaign_id,
-                created_at=datetime.utcnow()
-            )
-            session.add(search_term)
-            session.commit()
-        return search_term.id
-    except SQLAlchemyError as e:
-        session.rollback()
-        logging.error(f"Error in add_or_get_search_term: {str(e)}")
-        raise
+def ai_automation_page():
+    st.title("AI Automation")
+    
+    automation_status = st.session_state.get('automation_status', False)
+    if st.button("Start Automation" if not automation_status else "Stop Automation"):
+        st.session_state.automation_status = not automation_status
+    
+    st.info("Current Status: " + ("Running" if automation_status else "Stopped"))
+    
+    if automation_status:
+        log_container = st.empty()
+        leads_container = st.empty()
+        with db_session() as session:
+            ai_automation_loop(session, log_container, leads_container)
 
 if __name__ == "__main__":
     main()
