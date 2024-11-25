@@ -630,9 +630,11 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
+        )
         session.add(new_campaign)
         session.commit()
         return new_campaign
+        
     except SQLAlchemyError as e:
         logging.error(f"Database error saving email campaign: {str(e)}")
         session.rollback()
