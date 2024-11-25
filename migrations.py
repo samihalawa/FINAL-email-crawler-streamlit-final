@@ -64,6 +64,26 @@ def upgrade():
             """
         )
 
+    # Add EmailQueue table
+    op.create_table(
+        'email_queue',
+        sa.Column('id', sa.BigInteger(), nullable=False),
+        sa.Column('email_settings_id', sa.BigInteger(), nullable=True),
+        sa.Column('status', sa.Text(), default='pending'),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column('started_at', sa.DateTime(timezone=True)),
+        sa.Column('completed_at', sa.DateTime(timezone=True)),
+        sa.Column('lock_id', sa.Text()),
+        sa.Column('retry_count', sa.BigInteger(), default=0),
+        sa.Column('last_error', sa.Text()),
+        sa.ForeignKeyConstraint(['email_settings_id'], ['email_settings.id']),
+        sa.PrimaryKeyConstraint('id')
+    )
+    
+    # Add indexes
+    op.create_index('idx_email_queue_status', 'email_queue', ['status'])
+    op.create_index('idx_email_queue_lock', 'email_queue', ['lock_id'])
+
 def downgrade():
     # We'll make the downgrade safer by checking first
     connection = op.get_bind()
