@@ -3,165 +3,310 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoclientAI</title>
+    <title>AutoclientAI - Automated Lead Generation & Email Marketing</title>
+    <meta name="description" content="Transform your lead generation with AI-powered automation. Find and engage potential clients automatically.">
     
-    <!-- Hyper UI Components -->
-    <script type="module" src="https://unpkg.com/@hyper-ui/core@latest/dist/hyper-ui.js"></script>
+    <!-- Modern UI Libraries -->
+    <link href="https://cdn.jsdelivr.net/npm/@tailwindcss/typography@0.5.0/dist/typography.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
     
-    <!-- Shoelace Components -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/themes/light.css" />
-    <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/shoelace-autoloader.js"></script>
-
-    <!-- Web Components Polyfills -->
-    <script src="https://unpkg.com/@webcomponents/webcomponentsjs@2.8.0/webcomponents-bundle.js"></script>
-
-    <!-- Lit Elements -->
-    <script type="module" src="https://unpkg.com/lit@2.8.0/polyfill-support.js"></script>
-    <script type="module" src="https://unpkg.com/lit@2.8.0/all.js"></script>
+    <style>
+        [data-lang="es"] { display: none; }
+        .lang-es [data-lang="en"] { display: none; }
+        .lang-es [data-lang="es"] { display: block; }
+        .gradient-bg { background: linear-gradient(120deg, #1a365d 0%, #2563eb 100%); }
+        .feature-card { transition: all 0.3s ease; }
+        .feature-card:hover { transform: translateY(-5px); }
+    </style>
 </head>
-<body>
-    <sl-theme name="light">
-        <!-- Navigation -->
-        <sl-navbar>
-            <sl-brand slot="brand">
-                <sl-avatar image="logo.png"></sl-avatar>
-                <sl-text>AutoclientAI</sl-text>
-            </sl-brand>
-            <sl-nav slot="nav">
-                <sl-nav-item href="#features">Features</sl-nav-item>
-                <sl-nav-item href="#pricing">Pricing</sl-nav-item>
-                <sl-button-group>
-                    <sl-button variant="text" onclick="toggleLanguage()">🌐</sl-button>
-                    <sl-button variant="primary">Get Started</sl-button>
-                </sl-button-group>
-            </sl-nav>
-        </sl-navbar>
+<body class="bg-gray-50">
+    <!-- Navigation -->
+    <nav class="fixed w-full bg-white/90 backdrop-blur-sm shadow-sm z-50">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <img src="https://via.placeholder.com/40" alt="AutoclientAI Logo" class="h-8 w-auto">
+                    <span class="ml-2 text-xl font-bold text-gray-900">AutoclientAI</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="#features" class="text-gray-600 hover:text-blue-600" data-lang="en">Features</a>
+                    <a href="#features" class="text-gray-600 hover:text-blue-600" data-lang="es">Características</a>
+                    <a href="#pricing" class="text-gray-600 hover:text-blue-600" data-lang="en">Pricing</a>
+                    <a href="#pricing" class="text-gray-600 hover:text-blue-600" data-lang="es">Precios</a>
+                    <button onclick="toggleLanguage()" class="p-2 text-gray-600 hover:bg-gray-100 rounded-full">
+                        <span data-lang="en">🇺🇸</span>
+                        <span data-lang="es">🇪🇸</span>
+                    </button>
+                    <a href="#" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                        <span data-lang="en">Get Started</span>
+                        <span data-lang="es">Comenzar</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
 
-        <!-- Hero Section -->
-        <sl-hero background="gradient">
-            <sl-container>
-                <sl-grid columns="2">
-                    <sl-stack gap="large">
-                        <sl-heading size="2xl">
-                            Automate Your Lead Generation & Email Marketing
-                        </sl-heading>
-                        <sl-text size="xl">
-                            AI-powered platform that finds and engages potential clients automatically
-                        </sl-text>
-                        <sl-button-group>
-                            <sl-button variant="primary" size="large">Watch Demo</sl-button>
-                            <sl-button variant="outline" size="large">View Pricing</sl-button>
-                        </sl-button-group>
-                    </sl-stack>
-                    <sl-animation name="float">
-                        <img src="dashboard.png" alt="AutoclientAI Dashboard">
-                    </sl-animation>
-                </sl-grid>
-            </sl-container>
-        </sl-hero>
+    <!-- Hero Section -->
+    <section class="gradient-bg pt-28 pb-20 sm:pt-32 sm:pb-24">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+                <div data-aos="fade-right">
+                    <h1 class="text-4xl sm:text-5xl font-extrabold text-white tracking-tight">
+                        <span data-lang="en">Transform Your Lead Generation with AI Power</span>
+                        <span data-lang="es">Transforme su Generación de Leads con IA</span>
+                    </h1>
+                    <p class="mt-6 text-xl text-blue-100 max-w-3xl">
+                        <span data-lang="en">AutoclientAI automatically finds, qualifies, and engages potential clients, saving you hours of manual work.</span>
+                        <span data-lang="es">AutoclientAI encuentra, califica y conecta automáticamente con clientes potenciales, ahorrándole horas de trabajo manual.</span>
+                    </p>
+                    <div class="mt-8 flex flex-wrap gap-4">
+                        <a href="#demo" class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50">
+                            <span data-lang="en">Watch Demo</span>
+                            <span data-lang="es">Ver Demo</span>
+                        </a>
+                        <a href="#pricing" class="inline-flex items-center px-6 py-3 border-2 border-white text-base font-medium rounded-md text-white hover:bg-white hover:text-blue-600">
+                            <span data-lang="en">View Pricing</span>
+                            <span data-lang="es">Ver Precios</span>
+                        </a>
+                    </div>
+                </div>
+                <div class="relative" data-aos="fade-left">
+                    <img src="https://via.placeholder.com/600x400" alt="AutoclientAI Dashboard" class="rounded-lg shadow-xl">
+                    <div class="absolute -bottom-4 -right-4 bg-white p-4 rounded-lg shadow-lg">
+                        <div class="flex items-center space-x-3">
+                            <i class="ri-rocket-line text-blue-600 text-2xl"></i>
+                            <div>
+                                <p class="font-bold text-gray-900">500+</p>
+                                <p class="text-sm text-gray-600">
+                                    <span data-lang="en">Companies Automated</span>
+                                    <span data-lang="es">Empresas Automatizadas</span>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-        <!-- Features -->
-        <sl-section id="features">
-            <sl-container>
-                <sl-heading align="center">Powerful Features</sl-heading>
-                <sl-grid columns="3" gap="large">
-                    <sl-card>
-                        <sl-icon name="robot" slot="icon"></sl-icon>
-                        <sl-heading slot="header">AI Automation</sl-heading>
-                        <sl-text>Intelligent lead finding and engagement</sl-text>
-                    </sl-card>
-                    <sl-card>
-                        <sl-icon name="envelope" slot="icon"></sl-icon>
-                        <sl-heading slot="header">Smart Email Marketing</sl-heading>
-                        <sl-text>Automated personalized campaigns</sl-text>
-                    </sl-card>
-                    <sl-card>
-                        <sl-icon name="graph-up" slot="icon"></sl-icon>
-                        <sl-heading slot="header">Analytics</sl-heading>
-                        <sl-text>Detailed insights and reporting</sl-text>
-                    </sl-card>
-                </sl-grid>
-            </sl-container>
-        </sl-section>
+    <!-- Features -->
+    <section id="features" class="py-20">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center">
+                <h2 class="text-3xl font-extrabold text-gray-900 sm:text-4xl">
+                    <span data-lang="en">Powerful Features</span>
+                    <span data-lang="es">Características Potentes</span>
+                </h2>
+            </div>
+            <div class="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
+                <!-- AI Automation -->
+                <div class="feature-card bg-white rounded-xl shadow-lg p-8" data-aos="fade-up">
+                    <div class="text-blue-600 text-3xl mb-4">
+                        <i class="ri-robot-line"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900 mb-4">
+                        <span data-lang="en">AI-Powered Automation</span>
+                        <span data-lang="es">Automatización con IA</span>
+                    </h3>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Smart algorithms that find and qualify leads based on your ideal customer profile.</span>
+                        <span data-lang="es">Algoritmos inteligentes que encuentran y califican leads según su perfil de cliente ideal.</span>
+                    </p>
+                </div>
 
-        <!-- Pricing -->
-        <sl-section id="pricing" background="light">
-            <sl-container>
-                <sl-heading align="center">Simple Pricing</sl-heading>
-                <sl-pricing-table>
-                    <sl-pricing-plan name="Starter" price="49">
-                        <sl-list>
-                            <sl-list-item>500 Leads/month</sl-list-item>
-                            <sl-list-item>Basic Automation</sl-list-item>
-                            <sl-list-item>Email Templates</sl-list-item>
-                        </sl-list>
-                        <sl-button slot="action" variant="primary">Choose Plan</sl-button>
-                    </sl-pricing-plan>
-                    <sl-pricing-plan name="Pro" price="99" popular>
-                        <sl-list>
-                            <sl-list-item>2000 Leads/month</sl-list-item>
-                            <sl-list-item>Advanced Automation</sl-list-item>
-                            <sl-list-item>AI Customization</sl-list-item>
-                        </sl-list>
-                        <sl-button slot="action" variant="primary">Choose Plan</sl-button>
-                    </sl-pricing-plan>
-                    <sl-pricing-plan name="Enterprise" price="199">
-                        <sl-list>
-                            <sl-list-item>Unlimited Leads</sl-list-item>
-                            <sl-list-item>Custom Automation</sl-list-item>
-                            <sl-list-item>Priority Support</sl-list-item>
-                        </sl-list>
-                        <sl-button slot="action" variant="primary">Contact Sales</sl-button>
-                    </sl-pricing-plan>
-                </sl-pricing-table>
-            </sl-container>
-        </sl-section>
+                <!-- Email Marketing -->
+                <div class="feature-card bg-white rounded-xl shadow-lg p-8" data-aos="fade-up" data-aos-delay="100">
+                    <div class="text-blue-600 text-3xl mb-4">
+                        <i class="ri-mail-line"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900 mb-4">
+                        <span data-lang="en">Smart Email Campaigns</span>
+                        <span data-lang="es">Campañas de Email Inteligentes</span>
+                    </h3>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Personalized email sequences that engage prospects and drive conversions.</span>
+                        <span data-lang="es">Secuencias de email personalizadas que involucran a prospectos y generan conversiones.</span>
+                    </p>
+                </div>
 
-        <!-- Footer -->
-        <sl-footer>
-            <sl-container>
-                <sl-grid columns="4">
-                    <sl-stack>
-                        <sl-heading size="sm">AutoclientAI</sl-heading>
-                        <sl-text>Automated lead generation platform</sl-text>
-                    </sl-stack>
-                    <sl-stack>
-                        <sl-heading size="sm">Product</sl-heading>
-                        <sl-nav vertical>
-                            <sl-nav-item href="#features">Features</sl-nav-item>
-                            <sl-nav-item href="#pricing">Pricing</sl-nav-item>
-                        </sl-nav>
-                    </sl-stack>
-                    <sl-stack>
-                        <sl-heading size="sm">Company</sl-heading>
-                        <sl-nav vertical>
-                            <sl-nav-item href="/about">About</sl-nav-item>
-                            <sl-nav-item href="/contact">Contact</sl-nav-item>
-                        </sl-nav>
-                    </sl-stack>
-                    <sl-stack>
-                        <sl-heading size="sm">Legal</sl-heading>
-                        <sl-nav vertical>
-                            <sl-nav-item href="/privacy">Privacy</sl-nav-item>
-                            <sl-nav-item href="/terms">Terms</sl-nav-item>
-                        </sl-nav>
-                    </sl-stack>
-                </sl-grid>
-            </sl-container>
-        </sl-footer>
-    </sl-theme>
+                <!-- Analytics -->
+                <div class="feature-card bg-white rounded-xl shadow-lg p-8" data-aos="fade-up" data-aos-delay="200">
+                    <div class="text-blue-600 text-3xl mb-4">
+                        <i class="ri-line-chart-line"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900 mb-4">
+                        <span data-lang="en">Advanced Analytics</span>
+                        <span data-lang="es">Análisis Avanzado</span>
+                    </h3>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Detailed insights and reporting to optimize your campaigns.</span>
+                        <span data-lang="es">Informes detallados para optimizar sus campañas.</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
 
+    <!-- Pricing -->
+    <section id="pricing" class="py-20 bg-gray-50">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center">
+                <h2 class="text-3xl font-extrabold text-gray-900 sm:text-4xl">
+                    <span data-lang="en">Simple, Transparent Pricing</span>
+                    <span data-lang="es">Precios Simples y Transparentes</span>
+                </h2>
+            </div>
+            <div class="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
+                <!-- Starter Plan -->
+                <div class="bg-white rounded-xl shadow-lg p-8" data-aos="fade-up">
+                    <h3 class="text-2xl font-bold text-gray-900">
+                        <span data-lang="en">Starter</span>
+                        <span data-lang="es">Inicial</span>
+                    </h3>
+                    <p class="mt-4 text-5xl font-extrabold text-gray-900">$49<span class="text-xl font-normal text-gray-500">/mo</span></p>
+                    <ul class="mt-8 space-y-4">
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">500 Leads/month</span>
+                            <span data-lang="es">500 Leads/mes</span>
+                        </li>
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">Basic Automation</span>
+                            <span data-lang="es">Automatización Básica</span>
+                        </li>
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">Email Templates</span>
+                            <span data-lang="es">Plantillas de Email</span>
+                        </li>
+                    </ul>
+                    <a href="#" class="mt-8 block w-full text-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                        <span data-lang="en">Get Started</span>
+                        <span data-lang="es">Comenzar</span>
+                    </a>
+                </div>
+
+                <!-- Pro Plan -->
+                <div class="bg-white rounded-xl shadow-lg p-8 border-2 border-blue-600" data-aos="fade-up" data-aos-delay="100">
+                    <h3 class="text-2xl font-bold text-gray-900">
+                        <span data-lang="en">Professional</span>
+                        <span data-lang="es">Profesional</span>
+                    </h3>
+                    <p class="mt-4 text-5xl font-extrabold text-gray-900">$99<span class="text-xl font-normal text-gray-500">/mo</span></p>
+                    <ul class="mt-8 space-y-4">
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">2000 Leads/month</span>
+                            <span data-lang="es">2000 Leads/mes</span>
+                        </li>
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">Advanced Automation</span>
+                            <span data-lang="es">Automatización Avanzada</span>
+                        </li>
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">Custom Templates</span>
+                            <span data-lang="es">Plantillas Personalizadas</span>
+                        </li>
+                    </ul>
+                    <a href="#" class="mt-8 block w-full text-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                        <span data-lang="en">Get Started</span>
+                        <span data-lang="es">Comenzar</span>
+                    </a>
+                </div>
+
+                <!-- Enterprise Plan -->
+                <div class="bg-white rounded-xl shadow-lg p-8" data-aos="fade-up" data-aos-delay="200">
+                    <h3 class="text-2xl font-bold text-gray-900">
+                        <span data-lang="en">Enterprise</span>
+                        <span data-lang="es">Empresarial</span>
+                    </h3>
+                    <p class="mt-4 text-5xl font-extrabold text-gray-900">$199<span class="text-xl font-normal text-gray-500">/mo</span></p>
+                    <ul class="mt-8 space-y-4">
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">Unlimited Leads</span>
+                            <span data-lang="es">Leads Ilimitados</span>
+                        </li>
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">Custom Automation</span>
+                            <span data-lang="es">Automatización Personalizada</span>
+                        </li>
+                        <li class="flex items-center">
+                            <i class="ri-check-line text-green-500 mr-2"></i>
+                            <span data-lang="en">Priority Support</span>
+                            <span data-lang="es">Soporte Prioritario</span>
+                        </li>
+                    </ul>
+                    <a href="#" class="mt-8 block w-full text-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                        <span data-lang="en">Contact Sales</span>
+                        <span data-lang="es">Contactar Ventas</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-gray-900">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-12">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
+                <div>
+                    <h3 class="text-white text-sm font-semibold uppercase tracking-wider">AutoclientAI</h3>
+                    <p class="mt-4 text-gray-400 text-sm">
+                        <span data-lang="en">Automated lead generation platform</span>
+                        <span data-lang="es">Plataforma automatizada de generación de leads</span>
+                    </p>
+                </div>
+                <div>
+                    <h3 class="text-white text-sm font-semibold uppercase tracking-wider">
+                        <span data-lang="en">Product</span>
+                        <span data-lang="es">Producto</span>
+                    </h3>
+                    <ul class="mt-4 space-y-2">
+                        <li>
+                            <a href="#features" class="text-gray-400 hover:text-white text-sm">
+                                <span data-lang="en">Features</span>
+                                <span data-lang="es">Características</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#pricing" class="text-gray-400 hover:text-white text-sm">
+                                <span data-lang="en">Pricing</span>
+                                <span data-lang="es">Precios</span>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="mt-8 border-t border-gray-800 pt-8 text-center">
+                <p class="text-gray-400 text-sm">&copy; 2024 AutoclientAI. 
+                    <span data-lang="en">All rights reserved.</span>
+                    <span data-lang="es">Todos los derechos reservados.</span>
+                </p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.js"></script>
     <script>
-        // Language toggle
-        const messages = {
-            en: { /* English translations */ },
-            es: { /* Spanish translations */ }
-        };
+        // Initialize AOS
+        AOS.init({
+            duration: 1000,
+            once: true,
+            offset: 100
+        });
         
+        // Language toggle
         function toggleLanguage() {
-            const currentLang = document.documentElement.lang;
-            document.documentElement.lang = currentLang === 'en' ? 'es' : 'en';
-            // Update content based on language
+            document.body.classList.toggle('lang-es');
+            document.documentElement.lang = document.body.classList.contains('lang-es') ? 'es' : 'en';
         }
     </script>
 </body>
