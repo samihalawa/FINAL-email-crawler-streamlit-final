@@ -252,8 +252,8 @@ class EmailSettings(Base):
     aws_access_key_id = Column(Text)
     aws_secret_access_key = Column(Text)
     aws_region = Column(Text)
-    daily_limit = Column(BigInteger, default=200)  # Add this line
-    quota = relationship("EmailQuota", back_populates="email_settings", uselist=False)  # Add this line
+    daily_limit = Column(BigInteger, default=200)
+    quota = relationship("EmailQuota", back_populates="email_settings", uselist=False)
 
 # Add the EmailQuota model after the EmailSettings model
 class EmailQuota(Base):
@@ -509,28 +509,29 @@ def settings_page():
                         st.success("AWS settings saved successfully!")
                     else:
                         st.error("Failed to save AWS settings")
+
 def send_email_ses(session, from_email, to_email, subject, body, reply_to=None):
-    """Send email using AWS SES with settings from database"""
+    """Send email using AWS SES with proper quota management"""
     try:
-        # Get email settings for the from_email
+        # Get email settings and check quota
         email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
         if not email_settings:
             logging.error(f"No email settings found for {from_email}")
             return None, None
 
-        if email_settings.provider.lower() == 'ses':
-            # Get AWS settings from database
-            aws_settings = get_settings_from_db(session, 'aws')
-            if not aws_settings:
-                logging.error("AWS settings not found in database")
-                return None, None
+        # Check daily quota
+        quota = email_settings.quota
+        if quota and quota.emails_sent_today >= email_settings.daily_limit:
+            logging.warning(f"Daily email quota exceeded for {from_email}")
+            return None, None
 
-            # Configure AWS SES client with database settings
+        if email_settings.provider.lower() == 'ses':
+            # Configure AWS SES client
             ses_client = boto3.client(
                 'ses',
-                aws_access_key_id=aws_settings['aws_access_key_id'],
-                aws_secret_access_key=aws_settings['aws_secret_access_key'],
-                region_name=aws_settings['aws_region']
+                aws_access_key_id=email_settings.aws_access_key_id,
+                aws_secret_access_key=email_settings.aws_secret_access_key,
+                region_name=email_settings.aws_region
             )
 
             # Prepare email
@@ -548,16 +549,22 @@ def send_email_ses(session, from_email, to_email, subject, body, reply_to=None):
             # Send email
             response = ses_client.send_email(**email_msg)
             tracking_id = str(uuid.uuid4())
-            
+
+            # Update quota
+            if quota:
+                quota.emails_sent_today += 1
+                quota.last_error = None
+                quota.last_error_time = None
+                session.commit()
+
             return response, tracking_id
 
         elif email_settings.provider.lower() == 'smtp':
-            # Configure SMTP connection
+            # SMTP sending logic with quota management
             smtp_server = smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port)
             smtp_server.starttls()
             smtp_server.login(email_settings.smtp_username, email_settings.smtp_password)
 
-            # Create message
             msg = MIMEMultipart()
             msg['From'] = from_email
             msg['To'] = to_email
@@ -567,15 +574,27 @@ def send_email_ses(session, from_email, to_email, subject, body, reply_to=None):
 
             msg.attach(MIMEText(body, 'html'))
 
-            # Send email
             smtp_server.send_message(msg)
             smtp_server.quit()
 
             tracking_id = str(uuid.uuid4())
+            
+            # Update quota
+            if quota:
+                quota.emails_sent_today += 1
+                quota.last_error = None
+                quota.last_error_time = None
+                session.commit()
+
             return {'MessageId': f'smtp-{tracking_id}'}, tracking_id
 
     except Exception as e:
         logging.error(f"Error sending email: {str(e)}")
+        if quota:
+            quota.error_count += 1
+            quota.last_error = str(e)
+            quota.last_error_time = datetime.utcnow()
+            session.commit()
         return None, None
 
 def categorize_email_error(error_msg):
@@ -1210,6 +1229,7 @@ def perform_quick_scan(session):
     return {"new_leads": len(res['results']), "terms_used": [term.term for term in terms]}
 
 def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress_bar=None, status_text=None, results=None, log_container=None):
+    """Send bulk emails with proper error handling and rate limiting"""
     template = session.query(EmailTemplate).filter_by(id=template_id).first()
     if not template:
         logging.error(f"Email template with ID {template_id} not found.")
@@ -1218,19 +1238,31 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
     logs, sent_count = [], 0
     total_leads = len(leads)
 
+    # Get email settings for quota check
+    email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
+    if not email_settings:
+        return [], 0
+
     for index, lead in enumerate(leads):
         try:
+            # Check quota before sending
+            if email_settings.quota and email_settings.quota.emails_sent_today >= email_settings.daily_limit:
+                logs.append(f"❌ Daily quota exceeded for {from_email}")
+                break
+
             validate_email(lead['Email'])
             response, tracking_id = send_email_ses(session, from_email, lead['Email'], template.subject, template.body_content, reply_to=reply_to)
             
             status = 'sent' if response else 'failed'
             message_id = response.get('MessageId', f"{'sent' if response else 'failed'}-{uuid.uuid4()}")
-            if response: sent_count += 1
+            if response: 
+                sent_count += 1
             
             save_email_campaign(session, lead['Email'], template_id, status, datetime.utcnow(), template.subject, message_id, template.body_content)
             log_message = f"{'✅' if response else '❌'} {'Sent email to' if response else 'Failed to send email to'}: {lead['Email']}"
             logs.append(log_message)
 
+            # Update progress indicators
             if progress_bar: 
                 progress_bar.progress((index + 1) / total_leads)
             if status_text: 
@@ -1239,6 +1271,9 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
                 results.append({"Email": lead['Email'], "Status": status})
             if log_container: 
                 log_container.text(log_message)
+
+            # Add small delay to prevent rate limiting
+            time.sleep(0.1)
 
         except EmailNotValidError:
             logs.append(f"❌ Invalid email address: {lead['Email']}")
