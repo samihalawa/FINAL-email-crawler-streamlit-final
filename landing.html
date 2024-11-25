@@ -3,326 +3,166 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoclientAI - Intelligent Lead Generation & Email Automation</title>
+    <title>AutoclientAI</title>
     
-    <!-- Modern UI Framework - Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Hyper UI Components -->
+    <script type="module" src="https://unpkg.com/@hyper-ui/core@latest/dist/hyper-ui.js"></script>
     
-    <!-- Animation Library -->
-    <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
-    
-    <!-- Modern Component Library -->
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://unpkg.com/@headlessui/vue@latest/dist/headlessui.js"></script>
-    
-    <!-- Icons -->
-    <script src="https://unpkg.com/@heroicons/vue@latest/outline/index.min.js"></script>
-    
-    <!-- Internationalization -->
-    <script src="https://unpkg.com/vue-i18n@9"></script>
+    <!-- Shoelace Components -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/themes/light.css" />
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/shoelace-autoloader.js"></script>
 
-    <!-- Modern Charts -->
-    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <!-- Web Components Polyfills -->
+    <script src="https://unpkg.com/@webcomponents/webcomponentsjs@2.8.0/webcomponents-bundle.js"></script>
 
-    <!-- Smooth Scroll -->
-    <script src="https://unpkg.com/smooth-scroll@16.1.3/dist/smooth-scroll.polyfills.min.js"></script>
-
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        primary: '#1E88E5',
-                        secondary: '#64B5F6'
-                    }
-                }
-            }
-        }
-    </script>
+    <!-- Lit Elements -->
+    <script type="module" src="https://unpkg.com/lit@2.8.0/polyfill-support.js"></script>
+    <script type="module" src="https://unpkg.com/lit@2.8.0/all.js"></script>
 </head>
-<body class="bg-gray-50">
-    <div id="app" class="min-h-screen">
+<body>
+    <sl-theme name="light">
         <!-- Navigation -->
-        <nav class="fixed w-full bg-white/80 backdrop-blur-md z-50 border-b border-gray-100">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="flex justify-between h-16">
-                    <div class="flex items-center">
-                        <img src="https://placehold.co/40x40" alt="AutoclientAI Logo" class="h-8 w-auto">
-                        <span class="ml-2 text-xl font-bold text-gray-900">AutoclientAI</span>
-                    </div>
-                    <div class="flex items-center space-x-4">
-                        <button @click="toggleLanguage" class="text-gray-600 hover:text-gray-900">
-                            {{ currentLanguage === 'en' ? '🇪🇸' : '🇺🇸' }}
-                        </button>
-                        <a href="#pricing" class="bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary/90 transition">
-                            {{ $t('getStarted') }}
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </nav>
+        <sl-navbar>
+            <sl-brand slot="brand">
+                <sl-avatar image="logo.png"></sl-avatar>
+                <sl-text>AutoclientAI</sl-text>
+            </sl-brand>
+            <sl-nav slot="nav">
+                <sl-nav-item href="#features">Features</sl-nav-item>
+                <sl-nav-item href="#pricing">Pricing</sl-nav-item>
+                <sl-button-group>
+                    <sl-button variant="text" onclick="toggleLanguage()">🌐</sl-button>
+                    <sl-button variant="primary">Get Started</sl-button>
+                </sl-button-group>
+            </sl-nav>
+        </sl-navbar>
 
         <!-- Hero Section -->
-        <section class="pt-32 pb-20 bg-gradient-to-br from-primary to-secondary">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-                    <div class="text-white">
-                        <h1 class="text-5xl font-bold mb-6" v-html="$t('heroTitle')"></h1>
-                        <p class="text-xl mb-8 text-white/90" v-html="$t('heroSubtitle')"></p>
-                        <div class="flex space-x-4">
-                            <a href="#demo" class="bg-white text-primary px-8 py-3 rounded-lg font-medium hover:bg-white/90 transition">
-                                {{ $t('watchDemo') }}
-                            </a>
-                            <a href="#pricing" class="bg-primary/20 text-white border border-white/30 px-8 py-3 rounded-lg font-medium hover:bg-primary/30 transition">
-                                {{ $t('viewPricing') }}
-                            </a>
-                        </div>
-                    </div>
-                    <div class="hidden md:block">
-                        <lottie-player 
-                            src="https://assets2.lottiefiles.com/packages/lf20_xyadoh9h.json"
-                            background="transparent"
-                            speed="1"
-                            style="width: 100%; height: 400px;"
-                            loop
-                            autoplay>
-                        </lottie-player>
-                    </div>
-                </div>
-            </div>
-        </section>
+        <sl-hero background="gradient">
+            <sl-container>
+                <sl-grid columns="2">
+                    <sl-stack gap="large">
+                        <sl-heading size="2xl">
+                            Automate Your Lead Generation & Email Marketing
+                        </sl-heading>
+                        <sl-text size="xl">
+                            AI-powered platform that finds and engages potential clients automatically
+                        </sl-text>
+                        <sl-button-group>
+                            <sl-button variant="primary" size="large">Watch Demo</sl-button>
+                            <sl-button variant="outline" size="large">View Pricing</sl-button>
+                        </sl-button-group>
+                    </sl-stack>
+                    <sl-animation name="float">
+                        <img src="dashboard.png" alt="AutoclientAI Dashboard">
+                    </sl-animation>
+                </sl-grid>
+            </sl-container>
+        </sl-hero>
 
-        <!-- Features Grid -->
-        <section class="py-20">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="text-center mb-16">
-                    <h2 class="text-4xl font-bold text-gray-900 mb-4">{{ $t('featuresTitle') }}</h2>
-                    <p class="text-xl text-gray-600">{{ $t('featuresSubtitle') }}</p>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div v-for="feature in features" :key="feature.id" 
-                         class="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition">
-                        <div class="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-6">
-                            <i :class="feature.icon" class="text-primary text-2xl"></i>
-                        </div>
-                        <h3 class="text-xl font-semibold mb-4">{{ $t(feature.title) }}</h3>
-                        <p class="text-gray-600">{{ $t(feature.description) }}</p>
-                    </div>
-                </div>
-            </div>
-        </section>
+        <!-- Features -->
+        <sl-section id="features">
+            <sl-container>
+                <sl-heading align="center">Powerful Features</sl-heading>
+                <sl-grid columns="3" gap="large">
+                    <sl-card>
+                        <sl-icon name="robot" slot="icon"></sl-icon>
+                        <sl-heading slot="header">AI Automation</sl-heading>
+                        <sl-text>Intelligent lead finding and engagement</sl-text>
+                    </sl-card>
+                    <sl-card>
+                        <sl-icon name="envelope" slot="icon"></sl-icon>
+                        <sl-heading slot="header">Smart Email Marketing</sl-heading>
+                        <sl-text>Automated personalized campaigns</sl-text>
+                    </sl-card>
+                    <sl-card>
+                        <sl-icon name="graph-up" slot="icon"></sl-icon>
+                        <sl-heading slot="header">Analytics</sl-heading>
+                        <sl-text>Detailed insights and reporting</sl-text>
+                    </sl-card>
+                </sl-grid>
+            </sl-container>
+        </sl-section>
 
-        <!-- Demo Section -->
-        <section id="demo" class="py-20 bg-gray-50">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="text-center mb-16">
-                    <h2 class="text-4xl font-bold text-gray-900 mb-4">{{ $t('demoTitle') }}</h2>
-                    <p class="text-xl text-gray-600">{{ $t('demoSubtitle') }}</p>
-                </div>
-                <div class="aspect-w-16 aspect-h-9">
-                    <img src="https://placehold.co/1200x675" alt="AutoclientAI Dashboard" 
-                         class="rounded-2xl shadow-2xl">
-                </div>
-            </div>
-        </section>
-
-        <!-- Pricing Section -->
-        <section id="pricing" class="py-20">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="text-center mb-16">
-                    <h2 class="text-4xl font-bold text-gray-900 mb-4">{{ $t('pricingTitle') }}</h2>
-                    <p class="text-xl text-gray-600">{{ $t('pricingSubtitle') }}</p>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div v-for="plan in plans" :key="plan.id"
-                         class="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition">
-                        <h3 class="text-2xl font-bold mb-4">{{ $t(plan.name) }}</h3>
-                        <div class="mb-6">
-                            <span class="text-4xl font-bold">${{ plan.price }}</span>
-                            <span class="text-gray-600">/{{ $t('month') }}</span>
-                        </div>
-                        <ul class="space-y-4 mb-8">
-                            <li v-for="feature in plan.features" :key="feature"
-                                class="flex items-center text-gray-600">
-                                <i class="fas fa-check text-green-500 mr-2"></i>
-                                {{ $t(feature) }}
-                            </li>
-                        </ul>
-                        <a :href="plan.link" class="block text-center bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition">
-                            {{ $t('choosePlan') }}
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </section>
+        <!-- Pricing -->
+        <sl-section id="pricing" background="light">
+            <sl-container>
+                <sl-heading align="center">Simple Pricing</sl-heading>
+                <sl-pricing-table>
+                    <sl-pricing-plan name="Starter" price="49">
+                        <sl-list>
+                            <sl-list-item>500 Leads/month</sl-list-item>
+                            <sl-list-item>Basic Automation</sl-list-item>
+                            <sl-list-item>Email Templates</sl-list-item>
+                        </sl-list>
+                        <sl-button slot="action" variant="primary">Choose Plan</sl-button>
+                    </sl-pricing-plan>
+                    <sl-pricing-plan name="Pro" price="99" popular>
+                        <sl-list>
+                            <sl-list-item>2000 Leads/month</sl-list-item>
+                            <sl-list-item>Advanced Automation</sl-list-item>
+                            <sl-list-item>AI Customization</sl-list-item>
+                        </sl-list>
+                        <sl-button slot="action" variant="primary">Choose Plan</sl-button>
+                    </sl-pricing-plan>
+                    <sl-pricing-plan name="Enterprise" price="199">
+                        <sl-list>
+                            <sl-list-item>Unlimited Leads</sl-list-item>
+                            <sl-list-item>Custom Automation</sl-list-item>
+                            <sl-list-item>Priority Support</sl-list-item>
+                        </sl-list>
+                        <sl-button slot="action" variant="primary">Contact Sales</sl-button>
+                    </sl-pricing-plan>
+                </sl-pricing-table>
+            </sl-container>
+        </sl-section>
 
         <!-- Footer -->
-        <footer class="bg-gray-900 text-white py-12">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
-                    <div>
-                        <h4 class="text-lg font-semibold mb-4">AutoclientAI</h4>
-                        <p class="text-gray-400">{{ $t('footerDescription') }}</p>
-                    </div>
-                    <div>
-                        <h4 class="text-lg font-semibold mb-4">{{ $t('product') }}</h4>
-                        <ul class="space-y-2">
-                            <li><a href="#features" class="text-gray-400 hover:text-white transition">{{ $t('features') }}</a></li>
-                            <li><a href="#pricing" class="text-gray-400 hover:text-white transition">{{ $t('pricing') }}</a></li>
-                            <li><a href="#demo" class="text-gray-400 hover:text-white transition">{{ $t('demo') }}</a></li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h4 class="text-lg font-semibold mb-4">{{ $t('company') }}</h4>
-                        <ul class="space-y-2">
-                            <li><a href="#about" class="text-gray-400 hover:text-white transition">{{ $t('about') }}</a></li>
-                            <li><a href="#contact" class="text-gray-400 hover:text-white transition">{{ $t('contact') }}</a></li>
-                            <li><a href="#blog" class="text-gray-400 hover:text-white transition">{{ $t('blog') }}</a></li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h4 class="text-lg font-semibold mb-4">{{ $t('legal') }}</h4>
-                        <ul class="space-y-2">
-                            <li><a href="#privacy" class="text-gray-400 hover:text-white transition">{{ $t('privacy') }}</a></li>
-                            <li><a href="#terms" class="text-gray-400 hover:text-white transition">{{ $t('terms') }}</a></li>
-                        </ul>
-                    </div>
-                </div>
-                <div class="border-t border-gray-800 mt-12 pt-8 text-center text-gray-400">
-                    <p>&copy; 2024 AutoclientAI. {{ $t('allRightsReserved') }}</p>
-                </div>
-            </div>
-        </footer>
-    </div>
+        <sl-footer>
+            <sl-container>
+                <sl-grid columns="4">
+                    <sl-stack>
+                        <sl-heading size="sm">AutoclientAI</sl-heading>
+                        <sl-text>Automated lead generation platform</sl-text>
+                    </sl-stack>
+                    <sl-stack>
+                        <sl-heading size="sm">Product</sl-heading>
+                        <sl-nav vertical>
+                            <sl-nav-item href="#features">Features</sl-nav-item>
+                            <sl-nav-item href="#pricing">Pricing</sl-nav-item>
+                        </sl-nav>
+                    </sl-stack>
+                    <sl-stack>
+                        <sl-heading size="sm">Company</sl-heading>
+                        <sl-nav vertical>
+                            <sl-nav-item href="/about">About</sl-nav-item>
+                            <sl-nav-item href="/contact">Contact</sl-nav-item>
+                        </sl-nav>
+                    </sl-stack>
+                    <sl-stack>
+                        <sl-heading size="sm">Legal</sl-heading>
+                        <sl-nav vertical>
+                            <sl-nav-item href="/privacy">Privacy</sl-nav-item>
+                            <sl-nav-item href="/terms">Terms</sl-nav-item>
+                        </sl-nav>
+                    </sl-stack>
+                </sl-grid>
+            </sl-container>
+        </sl-footer>
+    </sl-theme>
 
     <script>
+        // Language toggle
         const messages = {
-            en: {
-                getStarted: 'Get Started',
-                heroTitle: 'Automate Your Lead Generation<br>& Email Marketing',
-                heroSubtitle: 'AI-powered platform that finds, verifies, and engages with potential clients automatically',
-                watchDemo: 'Watch Demo',
-                viewPricing: 'View Pricing',
-                featuresTitle: 'Powerful Features',
-                featuresSubtitle: 'Everything you need to scale your outreach',
-                demoTitle: 'See It In Action',
-                demoSubtitle: 'Watch how AutoclientAI can transform your lead generation',
-                pricingTitle: 'Simple, Transparent Pricing',
-                pricingSubtitle: 'Choose the plan that fits your needs',
-                month: 'month',
-                choosePlan: 'Choose Plan',
-                footerDescription: 'Automated lead generation and email marketing platform powered by AI',
-                product: 'Product',
-                features: 'Features',
-                pricing: 'Pricing',
-                demo: 'Demo',
-                company: 'Company',
-                about: 'About',
-                contact: 'Contact',
-                blog: 'Blog',
-                legal: 'Legal',
-                privacy: 'Privacy',
-                terms: 'Terms',
-                allRightsReserved: 'All rights reserved.'
-            },
-            es: {
-                getStarted: 'Comenzar',
-                heroTitle: 'Automatiza tu Generación de Leads<br>y Marketing por Email',
-                heroSubtitle: 'Plataforma impulsada por IA que encuentra, verifica y se comunica con clientes potenciales automáticamente',
-                watchDemo: 'Ver Demo',
-                viewPricing: 'Ver Precios',
-                featuresTitle: 'Características Potentes',
-                featuresSubtitle: 'Todo lo que necesitas para escalar tu alcance',
-                demoTitle: 'Véalo en Acción',
-                demoSubtitle: 'Observe cómo AutoclientAI puede transformar su generación de leads',
-                pricingTitle: 'Precios Simples y Transparentes',
-                pricingSubtitle: 'Elija el plan que se adapte a sus necesidades',
-                month: 'mes',
-                choosePlan: 'Elegir Plan',
-                footerDescription: 'Plataforma automatizada de generación de leads y marketing por email impulsada por IA',
-                product: 'Producto',
-                features: 'Características',
-                pricing: 'Precios',
-                demo: 'Demo',
-                company: 'Empresa',
-                about: 'Nosotros',
-                contact: 'Contacto',
-                blog: 'Blog',
-                legal: 'Legal',
-                privacy: 'Privacidad',
-                terms: 'Términos',
-                allRightsReserved: 'Todos los derechos reservados.'
-            }
+            en: { /* English translations */ },
+            es: { /* Spanish translations */ }
+        };
+        
+        function toggleLanguage() {
+            const currentLang = document.documentElement.lang;
+            document.documentElement.lang = currentLang === 'en' ? 'es' : 'en';
+            // Update content based on language
         }
-
-        const app = Vue.createApp({
-            data() {
-                return {
-                    currentLanguage: 'en',
-                    features: [
-                        {
-                            id: 1,
-                            icon: 'fas fa-robot',
-                            title: 'aiAutomation',
-                            description: 'aiAutomationDesc'
-                        },
-                        {
-                            id: 2,
-                            icon: 'fas fa-envelope',
-                            title: 'emailMarketing',
-                            description: 'emailMarketingDesc'
-                        },
-                        {
-                            id: 3,
-                            icon: 'fas fa-chart-line',
-                            title: 'analytics',
-                            description: 'analyticsDesc'
-                        }
-                    ],
-                    plans: [
-                        {
-                            id: 1,
-                            name: 'starter',
-                            price: 49,
-                            features: ['feature1', 'feature2', 'feature3'],
-                            link: '#signup'
-                        },
-                        {
-                            id: 2,
-                            name: 'professional',
-                            price: 99,
-                            features: ['feature1', 'feature2', 'feature3', 'feature4', 'feature5'],
-                            link: '#signup'
-                        },
-                        {
-                            id: 3,
-                            name: 'enterprise',
-                            price: 199,
-                            features: ['feature1', 'feature2', 'feature3', 'feature4', 'feature5', 'feature6', 'feature7'],
-                            link: '#signup'
-                        }
-                    ]
-                }
-            },
-            methods: {
-                toggleLanguage() {
-                    this.currentLanguage = this.currentLanguage === 'en' ? 'es' : 'en'
-                    this.$i18n.locale = this.currentLanguage
-                }
-            }
-        })
-
-        const i18n = VueI18n.createI18n({
-            locale: 'en',
-            fallbackLocale: 'en',
-            messages
-        })
-
-        app.use(i18n)
-        app.mount('#app')
-
-        // Initialize smooth scroll
-        new SmoothScroll('a[href*="#"]')
     </script>
 </body>
 </html> 
