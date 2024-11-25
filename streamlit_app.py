@@ -47,19 +47,40 @@ if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
 redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
 @contextmanager
-def email_lock(key, timeout=60):
-    """Distributed lock for email operations"""
-    lock = redis_client.lock(f"email_lock:{key}", timeout=timeout)
+def db_lock(session, lock_key, timeout_seconds=60):
+    """Database-based locking mechanism"""
+    lock_id = str(uuid.uuid4())
     try:
-        if lock.acquire(blocking=True, blocking_timeout=5):
+        # Try to acquire lock using email_queue table
+        result = session.execute(
+            text("""
+                INSERT INTO email_queue (lock_id, status, created_at)
+                VALUES (:lock_id, 'processing', NOW())
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            """),
+            {"lock_id": lock_id}
+        ).scalar()
+        
+        if result:
             yield True
         else:
             yield False
+            
     finally:
         try:
-            lock.release()
+            session.execute(
+                text("""
+                    UPDATE email_queue 
+                    SET status = 'completed',
+                    completed_at = NOW()
+                    WHERE lock_id = :lock_id
+                """),
+                {"lock_id": lock_id}
+            )
+            session.commit()
         except:
-            pass
+            session.rollback()
 
 def transactional(func):
     """Transaction decorator with proper error handling"""
@@ -721,7 +742,7 @@ def save_lead_with_source(session, email, url, name, company, job_title, search_
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, 
                  optimize_english=False, optimize_spanish=False, 
                  shuffle_keywords_option=False, language='ES', 
-                 enable_email_sending=True, log_container=None, 
+                 enable_email_sending=False, log_container=None, 
                  from_email=None, reply_to=None, email_template=None, 
                  lead_save_strategy="All"):
     """Updated manual search with proper lead saving strategies"""
@@ -1239,6 +1260,7 @@ def manual_search_page():
     st.title("Manual Search")
 
     with db_session() as session:
+        cleanup_stale_email_queue(session)
         recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
         recent_search_terms = [term.term for term in recent_searches]
         email_templates = fetch_email_templates(session)
@@ -2137,9 +2159,13 @@ def fetch_leads(session, template_id, send_option, specific_email, selected_term
 def fetch_email_settings(session):
     try:
         settings = session.query(EmailSettings).all()
-        return [{"id": setting.id, "name": setting.name, "email": setting.email} for setting in settings]
+        if not settings:
+            logging.warning("No email settings found")
+            return []
+        return [{"id": setting.id, "name": setting.name, "email": setting.email} 
+                for setting in settings]
     except Exception as e:
-        logging.error(f"Error fetching email settings: {e}")
+        logging.error(f"Error fetching email settings: {str(e)}")
         return []
 
 def fetch_search_terms_with_lead_count(session):
