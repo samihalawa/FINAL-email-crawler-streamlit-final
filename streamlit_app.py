@@ -402,6 +402,8 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
     except Exception as e:
         logging.error(f"Error saving email campaign: {str(e)}")
         session.rollback()
+        return None
+    return new_campaign
 
 def update_log(log_container, message, level='info'):
     icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
@@ -458,6 +460,7 @@ def extract_info_from_page(soup):
 
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None):
     ua, results, total_leads, domains_processed = UserAgent(), [], 0, set()
+    processed_emails = set()  # Track processed emails to prevent duplicates
     for original_term in terms:
         try:
             search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
@@ -485,6 +488,11 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                     # Process all valid emails found on the page
                     valid_emails_processed = False
                     for email in filter(is_valid_email, emails):
+                        # Skip if we've already processed this email
+                        if email in processed_emails:
+                            continue
+                        processed_emails.add(email)  # Add to processed set
+                        
                         lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
                         if lead:
                             total_leads += 1
