@@ -1,28 +1,21 @@
-import os, json, re, logging, asyncio, time, requests, pandas as pd, streamlit as st, openai, boto3, uuid, aiohttp, urllib3, random, html, smtplib, functools
-from datetime import datetime, timedelta
+import os, json, re, logging, time, requests, pandas as pd, streamlit as st, openai, boto3, uuid
+from datetime import datetime
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-from googlesearch import search as google_search
-from fake_useragent import UserAgent
 from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, or_, Index
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from botocore.exceptions import ClientError
-from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed
 from email_validator import validate_email, EmailNotValidError
 from streamlit_option_menu import option_menu
 from openai import OpenAI 
 from typing import List, Optional, Dict, Any
-from urllib.parse import urlparse, urlencode
+from urllib.parse import urlparse
 from streamlit_tags import st_tags
 import plotly.express as px
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
-import redis
-from functools import wraps, lru_cache
 
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -42,44 +35,17 @@ SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
-# Add Redis connection for distributed locking
-redis_client = redis.Redis(host='localhost', port=6379, db=0)
-
 @contextmanager
-def db_lock(session, lock_key, timeout_seconds=60):
-    """Database-based locking mechanism"""
-    lock_id = str(uuid.uuid4())
+def db_session():
+    session = SessionLocal()
     try:
-        # Try to acquire lock using email_queue table
-        result = session.execute(
-            text("""
-                INSERT INTO email_queue (lock_id, status, created_at)
-                VALUES (:lock_id, 'processing', NOW())
-                ON CONFLICT DO NOTHING
-                RETURNING id
-            """),
-            {"lock_id": lock_id}
-        ).scalar()
-        
-        if result:
-            yield True
-        else:
-            yield False
-            
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
-        try:
-            session.execute(
-                text("""
-                    UPDATE email_queue 
-                    SET status = 'completed',
-                    completed_at = NOW()
-                    WHERE lock_id = :lock_id
-                """),
-                {"lock_id": lock_id}
-            )
-            session.commit()
-        except:
-            session.rollback()
+        session.close()
 
 def transactional(func):
     """Transaction decorator with proper error handling"""
@@ -314,18 +280,6 @@ if not DATABASE_URL:
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
-
-@contextmanager
-def db_session():
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 def test_email_settings(session, settings_id):
     """Test email settings by sending a test email"""
@@ -676,7 +630,6 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
-        )
         session.add(new_campaign)
         session.commit()
         return new_campaign
