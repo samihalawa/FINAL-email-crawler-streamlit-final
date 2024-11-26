@@ -40,6 +40,14 @@ SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
+# Initialize session state
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = True
+    st.session_state.active_project_id = 1
+    st.session_state.active_campaign_id = 1
+    st.session_state.automation_status = False
+    st.session_state.log_entries = []
+    st.session_state.leads = pd.DataFrame()
 
 class Project(Base):
     __tablename__ = 'projects'
