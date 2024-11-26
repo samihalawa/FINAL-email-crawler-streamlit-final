@@ -404,7 +404,6 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
-        )
         session.add(new_campaign)
         session.commit()
     except Exception as e:
@@ -439,9 +438,25 @@ def optimize_search_term(search_term, language):
     return search_term
 
 def shuffle_keywords(term):
+    """
+    Shuffle the words in a search term while keeping the original term for record-keeping.
+    Returns a list of shuffled variations to try.
+    """
     words = term.split()
-    random.shuffle(words)
-    return ' '.join(words)
+    variations = []
+    
+    # Always include the original term
+    variations.append(term)
+    
+    # Generate a few random permutations
+    for _ in range(min(len(words), 3)):  # Try up to 3 different permutations
+        shuffled_words = words.copy()
+        random.shuffle(shuffled_words)
+        shuffled_term = ' '.join(shuffled_words)
+        if shuffled_term not in variations:  # Avoid duplicates
+            variations.append(shuffled_term)
+    
+    return variations
 
 def get_domain_from_url(url):
     return urlparse(url).netloc
@@ -473,78 +488,83 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
     for original_term in terms:
         try:
             search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
-            search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
-            search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
-            update_log(log_container, f"Searching for '{original_term}' (Used '{search_term}')")
             
-            for url in google_search(search_term, num_results, lang=language):
-                domain = get_domain_from_url(url)
-                if ignore_previously_fetched and domain in domains_processed:
-                    update_log(log_container, f"Skipping Previously Fetched: {domain}", 'warning')
-                    continue
+            # Get variations of the search term if shuffle is enabled
+            search_variations = shuffle_keywords(original_term) if shuffle_keywords_option else [original_term]
+            results_per_variation = num_results // len(search_variations)
+            
+            for search_term in search_variations:
+                search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
+                update_log(log_container, f"Searching for '{original_term}' (Variation: '{search_term}')")
                 
-                update_log(log_container, f"Fetching: {url}")
-                try:
-                    if not url.startswith(('http://', 'https://')):
-                        url = 'http://' + url
-                    
-                    response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
-                    response.raise_for_status()
-                    html_content, soup = response.text, BeautifulSoup(response.text, 'html.parser')
-                    
-                    # Extract all emails from the page
-                    emails = extract_emails_from_html(html_content)
-                    valid_emails = [email for email in emails if is_valid_email(email)]
-                    update_log(log_container, f"Found {len(valid_emails)} valid email(s) on {url}", 'success')
-                    
-                    if not valid_emails:
+                for url in google_search(search_term, results_per_variation, lang=language):
+                    domain = get_domain_from_url(url)
+                    if ignore_previously_fetched and domain in domains_processed:
+                        update_log(log_container, f"Skipping Previously Fetched: {domain}", 'warning')
                         continue
+                    
+                    update_log(log_container, f"Fetching: {url}")
+                    try:
+                        if not url.startswith(('http://', 'https://')):
+                            url = 'http://' + url
                         
-                    # Extract page info once for all leads from this URL
-                    name, company, job_title = extract_info_from_page(soup)
-                    page_title = get_page_title(html_content)
-                    page_description = get_page_description(html_content)
-                    
-                    # Initialize set for this domain if not exists
-                    if domain not in processed_emails_per_domain:
-                        processed_emails_per_domain[domain] = set()
-                    
-                    # Process each valid email from this URL
-                    for email in valid_emails:
-                        # Skip if we've already processed this email for this domain
-                        if email in processed_emails_per_domain[domain]:
+                        response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
+                        response.raise_for_status()
+                        html_content, soup = response.text, BeautifulSoup(response.text, 'html.parser')
+                        
+                        # Extract all emails from the page
+                        emails = extract_emails_from_html(html_content)
+                        valid_emails = [email for email in emails if is_valid_email(email)]
+                        update_log(log_container, f"Found {len(valid_emails)} valid email(s) on {url}", 'success')
+                        
+                        if not valid_emails:
                             continue
                             
-                        processed_emails_per_domain[domain].add(email)
+                        # Extract page info once for all leads from this URL
+                        name, company, job_title = extract_info_from_page(soup)
+                        page_title = get_page_title(html_content)
+                        page_description = get_page_description(html_content)
                         
-                        lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
-                        if lead:
-                            total_leads += 1
-                            results.append({
-                                'Email': email,
-                                'URL': url,
-                                'Lead Source': original_term,
-                                'Title': page_title,
-                                'Description': page_description,
-                                'Tags': [],
-                                'Name': name,
-                                'Company': company,
-                                'Job Title': job_title,
-                                'Search Term ID': search_term_id
-                            })
-                            update_log(log_container, f"Saved lead: {email}", 'success')
+                        # Initialize set for this domain if not exists
+                        if domain not in processed_emails_per_domain:
+                            processed_emails_per_domain[domain] = set()
+                        
+                        # Process each valid email from this URL
+                        for email in valid_emails:
+                            # Skip if we've already processed this email for this domain
+                            if email in processed_emails_per_domain[domain]:
+                                continue
+                                
+                            processed_emails_per_domain[domain].add(email)
+                            
+                            lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
+                            if lead:
+                                total_leads += 1
+                                results.append({
+                                    'Email': email,
+                                    'URL': url,
+                                    'Lead Source': original_term,
+                                    'Title': page_title,
+                                    'Description': page_description,
+                                    'Tags': [],
+                                    'Name': name,
+                                    'Company': company,
+                                    'Job Title': job_title,
+                                    'Search Term ID': search_term_id
+                                })
+                                update_log(log_container, f"Saved lead: {email}", 'success')
 
-                            if enable_email_sending:
-                                if not from_email or not email_template:
-                                    update_log(log_container, "Email sending is enabled but from_email or email_template is not provided", 'error')
-                                    continue
+                                if enable_email_sending:
+                                    if not from_email or not email_template:
+                                        update_log(log_container, "Email sending is enabled but from_email or email_template is not provided", 'error')
+                                        continue
 
-                                template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                                if not template:
-                                    update_log(log_container, "Email template not found", 'error')
-                                    continue
+                                    template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
+                                    if not template:
+                                        update_log(log_container, "Email template not found", 'error')
+                                        continue
 
-                                wrapped_content = wrap_email_body(template.body_content)
+                                    wrapped_content = wrap_email_body(template.body_content)
                                 response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
                                 if response:
                                     update_log(log_container, f"Sent email to: {email}", 'email_sent')
