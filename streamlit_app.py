@@ -585,6 +585,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                 'Job Title': job_title,
                                 'Search Term ID': search_term_id
                             })
+                            update_log(log_container, f"Saved lead: {email}", 'success')
                             
                             # Send email if enabled and within domain limit
                             if enable_email_sending and from_email and email_template:
