@@ -892,19 +892,6 @@ def update_display(container, items, title, item_key):
 def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
-    # Add background music player
-    st.markdown("""
-        <div style="position: fixed; bottom: 10px; right: 10px; z-index: 9999; opacity: 0.7;">
-            <details>
-                <summary style="color: #666; font-size: 12px;">🎵 Music</summary>
-                <audio controls loop style="width: 200px; height: 40px;">
-                    <source src="https://cdn.pixabay.com/download/audio/2022/02/22/audio_d1718ab41b.mp3" type="audio/mpeg">
-                    Your browser does not support the audio element.
-                </audio>
-            </details>
-        </div>
-    """, unsafe_allow_html=True)
-
     st.title("Manual Search")
 
     with db_session() as session:
