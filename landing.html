@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoclientAI - Next-Gen Lead Generation Platform</title>
+    <title>AutoclientAI - AI-Powered Lead Generation Platform</title>
     <meta name="description" content="Transform your sales pipeline with AI-powered lead generation. Find, qualify, and engage high-value prospects automatically.">
     
     <!-- Modern UI Libraries -->
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@10/swiper-bundle.min.css" />
+    <link href="https://cdn.jsdelivr.net/npm/@tailwindcss/forms@0.5.3/dist/forms.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/micromodal@0.4.10/dist/micromodal.min.js"></script>
     
     <style>
         [data-lang="es"] { display: none; }
@@ -95,126 +96,269 @@
             50% { transform: translate(-50px, 50px) scale(0.9); }
             75% { transform: translate(50px, -50px) scale(1.1); }
         }
+        
+        /* Solid Navbar */
+        .navbar-solid {
+            background-color: white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        /* Modal styles */
+        .modal {
+            display: none;
+        }
+        .modal.is-open {
+            display: block;
+        }
+        .modal__overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .modal__container {
+            background-color: white;
+            padding: 2rem;
+            max-width: 500px;
+            max-height: 100vh;
+            border-radius: 0.5rem;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        
+        /* Checkout process steps */
+        .checkout-step {
+            display: none;
+        }
+        .checkout-step.active {
+            display: block;
+        }
+        
+        /* Benefits highlight */
+        .benefit-card {
+            border-left: 4px solid #3B82F6;
+            background: #F8FAFC;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            transition: all 0.3s ease;
+        }
+        .benefit-card:hover {
+            transform: translateX(5px);
+            background: #EFF6FF;
+        }
+        
+        /* Enhanced demo section */
+        .demo-container {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(59, 130, 246, 0.1);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+        
+        .demo-result {
+            transition: all 0.3s ease;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+        
+        .demo-result:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Black Friday animation */
+        @keyframes pulse-border {
+            0%, 100% { border-color: rgba(59, 130, 246, 0.5); }
+            50% { border-color: rgba(59, 130, 246, 1); }
+        }
+        
+        .black-friday-card {
+            animation: pulse-border 2s infinite;
+            border-width: 2px;
+        }
+        
+        /* Collapsible Banner */
+        .banner-collapse {
+            transition: all 0.3s ease;
+            max-height: 40px;
+            overflow: hidden;
+        }
+        .banner-collapse.collapsed {
+            max-height: 0;
+        }
+        
+        /* WhatsApp Widget */
+        .whatsapp-widget {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+        .whatsapp-widget:hover {
+            transform: scale(1.05);
+        }
+        
+        /* Legal Text Styling */
+        .legal-text {
+            font-size: 0.75rem;
+            line-height: 1.25rem;
+            color: #6B7280;
+        }
     </style>
 </head>
 <body class="bg-gray-50">
-    <!-- Navigation -->
-    <nav class="fixed w-full bg-white/90 backdrop-blur-sm shadow-sm z-50">
+    <!-- Collapsible Black Friday Banner -->
+    <div id="promo-banner" class="banner-collapse bg-gradient-to-r from-black to-blue-900 text-white z-50 fixed w-full top-0">
+        <div class="container mx-auto px-4 py-2 flex justify-between items-center">
+            <div class="flex-1 text-center">
+                <span class="font-bold">🔥 BLACK FRIDAY</span>
+                <span class="ml-2">
+                    <span data-lang="en">Get 200 Extra Leads FREE!</span>
+                    <span data-lang="es">¡Obtén 200 Leads Extra GRATIS!</span>
+                </span>
+            </div>
+            <button onclick="toggleBanner()" class="text-white hover:text-gray-200 focus:outline-none">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Navigation with dynamic positioning -->
+    <nav id="main-nav" class="fixed w-full bg-white shadow-md z-40 transition-all duration-300">
         <div class="container mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
                 <div class="flex items-center">
-                    <span class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-blue-800">AutoclientAI</span>
+                    <a href="#" class="flex items-center">
+                        <img src="https://i.imgur.com/YourLogo.png" alt="AutoclientAI" class="h-8 w-auto" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSIjMUU4OEU1Ii8+PHBhdGggZD0iTTEyIDIwSDI4IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg=='">
+                        <span class="ml-2 text-2xl font-bold text-blue-600">AutoclientAI</span>
+                    </a>
                 </div>
-                <div class="flex items-center space-x-8">
-                    <a href="#features" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="en">Features</a>
-                    <a href="#features" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="es">Características</a>
-                    <a href="#testimonials" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="en">Testimonials</a>
-                    <a href="#testimonials" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="es">Testimonios</a>
-                    <a href="#pricing" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="en">Pricing</a>
-                    <a href="#pricing" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="es">Precios</a>
-                    <button onclick="toggleLanguage()" class="p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
+                <div class="hidden md:flex items-center space-x-8">
+                    <a href="#features" class="nav-link text-gray-700 hover:text-blue-600 transition-colors font-medium">
+                        <span data-lang="en">Features</span>
+                        <span data-lang="es">Características</span>
+                    </a>
+                    <a href="#testimonials" class="nav-link text-gray-700 hover:text-blue-600 transition-colors font-medium">
+                        <span data-lang="en">Testimonials</span>
+                        <span data-lang="es">Testimonios</span>
+                    </a>
+                    <a href="#pricing" class="nav-link text-gray-700 hover:text-blue-600 transition-colors font-medium">
+                        <span data-lang="en">Pricing</span>
+                        <span data-lang="es">Precios</span>
+                    </a>
+                    <a href="https://wa.me/34679794037" target="_blank" class="nav-link text-gray-700 hover:text-blue-600 transition-colors font-medium flex items-center">
+                        <i class="ri-whatsapp-line mr-1"></i>
+                        <span data-lang="en">Contact</span>
+                        <span data-lang="es">Contacto</span>
+                    </a>
+                    <a href="mailto:hello@autoclient.ai" class="nav-link text-gray-700 hover:text-blue-600 transition-colors font-medium flex items-center">
+                        <i class="ri-mail-line mr-1"></i>
+                        <span>hello@autoclient.ai</span>
+                    </a>
+                    <button onclick="toggleLanguage()" class="p-2 text-gray-700 hover:bg-gray-100 rounded-full transition-colors">
                         <span data-lang="en">🇪🇸</span>
                         <span data-lang="es">🇺🇸</span>
                     </button>
-                    <a href="#" class="glow inline-flex items-center px-6 py-3 border border-transparent text-sm font-medium rounded-full text-white bg-blue-600 hover:bg-blue-700 transition-all transform hover:scale-105">
+                    <a href="#" class="glow inline-flex items-center px-6 py-2.5 border border-transparent text-sm font-medium rounded-full text-white bg-blue-600 hover:bg-blue-700 transition-all transform hover:scale-105">
                         <span data-lang="en">Start Free Trial</span>
                         <span data-lang="es">Prueba Gratuita</span>
                     </a>
                 </div>
+                <!-- Mobile menu button -->
+                <div class="md:hidden flex items-center">
+                    <button type="button" class="mobile-menu-button inline-flex items-center justify-center p-2 rounded-md text-gray-700 hover:text-blue-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500" aria-controls="mobile-menu" aria-expanded="false">
+                        <span class="sr-only">Open main menu</span>
+                        <svg class="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- Mobile menu -->
+        <div class="md:hidden hidden" id="mobile-menu">
+            <div class="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+                <a href="#features" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-100">
+                    <span data-lang="en">Features</span>
+                    <span data-lang="es">Características</span>
+                </a>
+                <a href="#testimonials" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-100">
+                    <span data-lang="en">Testimonials</span>
+                    <span data-lang="es">Testimonios</span>
+                </a>
+                <a href="#pricing" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-100">
+                    <span data-lang="en">Pricing</span>
+                    <span data-lang="es">Precios</span>
+                </a>
+                <a href="https://wa.me/34679794037" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-100">
+                    <i class="ri-whatsapp-line mr-1"></i>
+                    <span data-lang="en">Contact</span>
+                    <span data-lang="es">Contacto</span>
+                </a>
+                <a href="mailto:hello@autoclient.ai" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-100">
+                    <i class="ri-mail-line mr-1"></i>
+                    <span>hello@autoclient.ai</span>
+                </a>
+                <button onclick="toggleLanguage()" class="w-full text-left block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-blue-600 hover:bg-gray-100">
+                    <span data-lang="en">🇪🇸 Español</span>
+                    <span data-lang="es">🇺🇸 English</span>
+                </button>
             </div>
         </div>
     </nav>
 
-    <!-- Hero Section -->
+    <!-- Hero Section with Interactive Demo -->
     <section class="gradient-bg pt-32 pb-20 sm:pt-40 sm:pb-24 relative overflow-hidden">
-        <div class="blob top-0 left-0"></div>
-        <div class="blob bottom-0 right-0"></div>
-        <div class="container mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-                <div data-aos="fade-right">
-                    <div class="inline-block px-4 py-2 rounded-full bg-blue-100 text-blue-700 mb-6 transform hover:scale-105 transition-transform">
-                        <span data-lang="en">🚀 Next-Gen Lead Generation</span>
-                        <span data-lang="es">🚀 Generación de Leads de Nueva Generación</span>
-                    </div>
-                    <h1 class="text-4xl sm:text-6xl font-extrabold text-white tracking-tight leading-none mb-8">
-                        <span data-lang="en">Transform Your <span class="text-blue-200">Sales Pipeline</span> with AI</span>
-                        <span data-lang="es">Transforma tu <span class="text-blue-200">Pipeline de Ventas</span> con IA</span>
-                    </h1>
-                    <p class="text-xl text-blue-100 max-w-3xl leading-relaxed">
-                        <span data-lang="en">AutoclientAI revolutionizes lead generation with advanced AI. Find and engage perfect prospects 24/7, while our smart automation handles the heavy lifting.</span>
-                        <span data-lang="es">AutoclientAI revoluciona la generación de leads con IA avanzada. Encuentra y conecta con prospectos perfectos 24/7, mientras nuestra automatización inteligente hace el trabajo pesado.</span>
-                    </p>
-                    <div class="mt-8 flex flex-wrap gap-4">
-                        <a href="#demo" class="inline-flex items-center px-8 py-4 border border-transparent text-base font-medium rounded-full text-blue-700 bg-white hover:bg-blue-50 transition-all transform hover:scale-105 shadow-lg">
-                            <i class="ri-play-circle-line mr-2"></i>
-                            <span data-lang="en">Watch Demo</span>
-                            <span data-lang="es">Ver Demo</span>
-                        </a>
-                        <a href="#pricing" class="inline-flex items-center px-8 py-4 border-2 border-white text-base font-medium rounded-full text-white hover:bg-white hover:text-blue-600 transition-all transform hover:scale-105">
-                            <i class="ri-rocket-line mr-2"></i>
-                            <span data-lang="en">Start Free Trial</span>
-                            <span data-lang="es">Prueba Gratuita</span>
-                        </a>
-                    </div>
-                    <div class="mt-12 grid grid-cols-3 gap-6">
-                        <div class="stats-card rounded-2xl p-6 transform hover:scale-105 transition-transform">
-                            <div class="text-3xl font-bold text-blue-600">500+</div>
-                            <div class="text-sm text-gray-600 mt-2">
-                                <span data-lang="en">Active Companies</span>
-                                <span data-lang="es">Empresas Activas</span>
-                            </div>
-                        </div>
-                        <div class="stats-card rounded-2xl p-6 transform hover:scale-105 transition-transform">
-                            <div class="text-3xl font-bold text-blue-600">1M+</div>
-                            <div class="text-sm text-gray-600 mt-2">
-                                <span data-lang="en">Leads Generated</span>
-                                <span data-lang="es">Leads Generados</span>
-                            </div>
-                        </div>
-                        <div class="stats-card rounded-2xl p-6 transform hover:scale-105 transition-transform">
-                            <div class="text-3xl font-bold text-blue-600">98%</div>
-                            <div class="text-sm text-gray-600 mt-2">
-                                <span data-lang="en">Success Rate</span>
-                                <span data-lang="es">Tasa de Éxito</span>
-                            </div>
+        <div class="container mx-auto px-4 relative z-10">
+            <div class="text-center mb-12">
+                <h1 class="text-4xl sm:text-6xl font-extrabold text-white mb-6">
+                    <span data-lang="en">Transform Your <span class="text-blue-200">Lead Generation</span></span>
+                    <span data-lang="es">Transforma tu <span class="text-blue-200">Generación de Leads</span></span>
+                </h1>
+                <p class="text-xl text-blue-100 max-w-3xl mx-auto mb-8">
+                    <span data-lang="en">Find and engage your perfect prospects instantly with AI-powered lead generation</span>
+                    <span data-lang="es">Encuentra y conecta con tus prospectos perfectos al instante con IA</span>
+                </p>
+            </div>
+            
+            <!-- Interactive Demo -->
+            <div class="max-w-4xl mx-auto demo-container rounded-xl overflow-hidden">
+                <div class="p-8">
+                    <div class="mb-6">
+                        <label class="block text-lg font-medium text-gray-700 mb-4">
+                            <span data-lang="en">Try it now! Enter your target market:</span>
+                            <span data-lang="es">¡Pruébalo ahora! Ingresa tu mercado objetivo:</span>
+                        </label>
+                        <div class="flex gap-4">
+                            <input type="text" id="demo-input" 
+                                   class="flex-1 px-4 py-3 border rounded-lg text-lg" 
+                                   placeholder="digital marketing agencies in Spain">
+                            <button onclick="runDemo()" 
+                                    class="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">
+                                <span data-lang="en">Find Leads</span>
+                                <span data-lang="es">Buscar Leads</span>
+                            </button>
                         </div>
                     </div>
-                </div>
-                <div class="relative" data-aos="fade-left">
-                    <div class="relative">
-                        <div class="absolute inset-0 bg-gradient-to-r from-blue-600 to-blue-800 rounded-2xl transform rotate-6 scale-105 opacity-20"></div>
-                        <img src="https://i.imgur.com/XYZDashboard.png" alt="AutoclientAI Dashboard" class="relative rounded-2xl shadow-2xl transform hover:scale-105 transition-transform">
-                    </div>
-                    <div class="absolute -bottom-8 -right-8 bg-white p-6 rounded-2xl shadow-xl transform hover:scale-105 transition-transform">
-                        <div class="flex items-center space-x-4">
-                            <div class="flex -space-x-4">
-                                <img src="https://i.imgur.com/user1.jpg" alt="User" class="w-10 h-10 rounded-full border-4 border-white">
-                                <img src="https://i.imgur.com/user2.jpg" alt="User" class="w-10 h-10 rounded-full border-4 border-white">
-                                <img src="https://i.imgur.com/user3.jpg" alt="User" class="w-10 h-10 rounded-full border-4 border-white">
-                            </div>
-                            <div>
-                                <p class="font-bold text-gray-900">
-                                    <span data-lang="en">Join 500+ companies</span>
-                                    <span data-lang="es">Únete a 500+ empresas</span>
-                                </p>
-                                <div class="flex items-center mt-1">
-                                    <i class="ri-star-fill text-yellow-400"></i>
-                                    <i class="ri-star-fill text-yellow-400"></i>
-                                    <i class="ri-star-fill text-yellow-400"></i>
-                                    <i class="ri-star-fill text-yellow-400"></i>
-                                    <i class="ri-star-fill text-yellow-400"></i>
-                                    <span class="ml-2 text-sm text-gray-600">5.0</span>
-                                </div>
-                            </div>
-                        </div>
+                    
+                    <div id="demo-results" class="hidden">
+                        <!-- Demo results will be inserted here -->
                     </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Features -->
-    <section id="features" class="py-20">
+    <!-- Features Section -->
+    <section id="features" class="py-20 bg-white">
         <div class="container mx-auto px-4 sm:px-6 lg:px-8">
             <div class="text-center max-w-3xl mx-auto">
                 <h2 class="text-3xl font-extrabold text-gray-900 sm:text-4xl">
@@ -275,203 +419,575 @@
         </div>
     </section>
 
-    <!-- Testimonials -->
-    <section id="testimonials" class="py-20 bg-gray-50">
+    <!-- Black Friday Offer -->
+    <section class="py-20 bg-gray-50">
+        <div class="container mx-auto px-4">
+            <div class="max-w-3xl mx-auto text-center">
+                <div class="inline-block px-4 py-2 bg-black text-white rounded-full mb-6 animate-pulse">
+                    <span data-lang="en">BLACK FRIDAY OFFER</span>
+                    <span data-lang="es">OFERTA BLACK FRIDAY</span>
+                </div>
+                <h2 class="text-4xl font-bold mb-6">
+                    <span data-lang="en">Get 400 Leads for the Price of 200!</span>
+                    <span data-lang="es">¡Obtén 400 Leads por el Precio de 200!</span>
+                </h2>
+                <div class="black-friday-card bg-white rounded-xl shadow-lg p-8 mb-8">
+                    <div class="flex justify-between items-center mb-6 text-3xl font-bold">
+                        <span class="text-gray-400 line-through">$398</span>
+                        <span class="text-blue-600">$199</span>
+                    </div>
+                    <div class="space-y-4 mb-8">
+                        <div class="flex items-center text-lg">
+                            <svg class="w-6 h-6 text-green-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                            <span data-lang="en">200 Leads Package ($199)</span>
+                            <span data-lang="es">Paquete de 200 Leads (199€)</span>
+                        </div>
+                        <div class="flex items-center text-lg text-blue-600 font-medium">
+                            <svg class="w-6 h-6 text-blue-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                            <span data-lang="en">+ 200 BONUS Leads (FREE)</span>
+                            <span data-lang="es">+ 200 Leads EXTRA (GRATIS)</span>
+                        </div>
+                    </div>
+                    <button onclick="MicroModal.show('checkout-modal')" 
+                            class="w-full bg-blue-600 text-white rounded-lg px-8 py-4 text-lg font-medium hover:bg-blue-700 transition-all transform hover:scale-105">
+                        <span data-lang="en">Get Your Leads Now - $199</span>
+                        <span data-lang="es">Obtén Tus Leads Ahora - 199€</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials Section -->
+    <section id="testimonials" class="py-20 bg-white">
         <div class="container mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="text-center">
-                <h2 class="text-3xl font-extrabold text-gray-900 sm:text-4xl mb-16">
-                    <span data-lang="en">Trusted by Industry Leaders</span>
-                    <span data-lang="es">Confían en Nosotros</span>
+            <div class="text-center max-w-3xl mx-auto">
+                <h2 class="text-3xl font-extrabold text-gray-900 sm:text-4xl">
+                    <span data-lang="en">What Our Customers Say</span>
+                    <span data-lang="es">Lo que Dicen Nuestros Clientes</span>
+                </h2>
+                <p class="mt-4 text-xl text-gray-600">
+                    <span data-lang="en">Hear from our users about their experience with AutoclientAI</span>
+                    <span data-lang="es">Escucha lo que dicen nuestros usuarios sobre su experiencia con AutoclientAI</span>
+                </p>
+            </div>
+            <div class="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
+                <!-- Testimonial Card -->
+                <div class="testimonial-card bg-white rounded-xl shadow-lg p-8" data-aos="fade-up">
+                    <div class="flex items-center mb-4">
+                        <img src="https://via.placeholder.com/40" alt="User Avatar" class="w-10 h-10 rounded-full">
+                        <div class="ml-4">
+                            <h3 class="text-lg font-bold text-gray-900">John Doe</h3>
+                            <p class="text-sm text-gray-500">Digital Marketing Agency, Barcelona</p>
+                        </div>
+                    </div>
+                    <p class="text-gray-600">
+                        <span data-lang="en">AutoclientAI has been a game-changer for our business. It has helped us to find and engage with high-value prospects effortlessly.</span>
+                        <span data-lang="es">AutoclientAI ha sido un cambio de juego para nuestro negocio. Nos ha ayudado a encontrar y conectarse con prospectos de alto valor de manera effortless.</span>
+                    </p>
+                </div>
+
+                <!-- Testimonial Card -->
+                <div class="testimonial-card bg-white rounded-xl shadow-lg p-8" data-aos="fade-up" data-aos-delay="100">
+                    <div class="flex items-center mb-4">
+                        <img src="https://via.placeholder.com/40" alt="User Avatar" class="w-10 h-10 rounded-full">
+                        <div class="ml-4">
+                            <h3 class="text-lg font-bold text-gray-900">Jane Smith</h3>
+                            <p class="text-sm text-gray-500">Marketing Consultancy, Madrid</p>
+                        </div>
+                    </div>
+                    <p class="text-gray-600">
+                        <span data-lang="en">AutoclientAI has exceeded our expectations. It has helped us to scale our sales and reach more prospects than ever before.</span>
+                        <span data-lang="es">AutoclientAI ha superado nuestras expectativas. Nos ha ayudado a escalar nuestras ventas y llegar a más prospectos de los que nunca antes.</span>
+                    </p>
+                </div>
+
+                <!-- Testimonial Card -->
+                <div class="testimonial-card bg-white rounded-xl shadow-lg p-8" data-aos="fade-up" data-aos-delay="200">
+                    <div class="flex items-center mb-4">
+                        <img src="https://via.placeholder.com/40" alt="User Avatar" class="w-10 h-10 rounded-full">
+                        <div class="ml-4">
+                            <h3 class="text-lg font-bold text-gray-900">Bob Johnson</h3>
+                            <p class="text-sm text-gray-500">Software Development Company, Berlin</p>
+                        </div>
+                    </div>
+                    <p class="text-gray-600">
+                        <span data-lang="en">AutoclientAI has been a reliable partner for our business. It has helped us to generate leads and outreach efficiently.</span>
+                        <span data-lang="es">AutoclientAI ha sido un socio confiable para nuestro negocio. Nos ha ayudado a generar leads y contactar de manera eficiente.</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Benefits Section -->
+    <section class="py-20 bg-white">
+        <div class="container mx-auto px-4">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">
+                    <span data-lang="en">Why Choose AutoclientAI?</span>
+                    <span data-lang="es">¿Por qué elegir AutoclientAI?</span>
+                </h2>
+                <p class="text-xl text-gray-600 max-w-3xl mx-auto">
+                    <span data-lang="en">Our AI-powered platform finds your perfect leads while you focus on closing deals</span>
+                    <span data-lang="es">Nuestra plataforma con IA encuentra tus leads perfectos mientras te enfocas en cerrar tratos</span>
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- Benefit 1 -->
+                <div class="bg-gray-50 rounded-xl p-8 hover:shadow-lg transition-all">
+                    <div class="text-blue-600 text-3xl mb-4">
+                        <i class="ri-target-line"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900 mb-4">
+                        <span data-lang="en">Precision Targeting</span>
+                        <span data-lang="es">Orientación Precisa</span>
+                    </h3>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Our AI analyzes 50+ data points to find leads that perfectly match your ideal customer profile</span>
+                        <span data-lang="es">Nuestra IA analiza más de 50 puntos de datos para encontrar leads que coincidan perfectamente con tu perfil de cliente ideal</span>
+                    </p>
+                </div>
+
+                <!-- Benefit 2 -->
+                <div class="bg-gray-50 rounded-xl p-8 hover:shadow-lg transition-all">
+                    <div class="text-blue-600 text-3xl mb-4">
+                        <i class="ri-mail-check-line"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900 mb-4">
+                        <span data-lang="en">Verified Contacts</span>
+                        <span data-lang="es">Contactos Verificados</span>
+                    </h3>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Every email is double-verified for deliverability, ensuring 98%+ accuracy rate</span>
+                        <span data-lang="es">Cada email es verificado dos veces para garantizar una tasa de precisión del 98%+</span>
+                    </p>
+                </div>
+
+                <!-- Benefit 3 -->
+                <div class="bg-gray-50 rounded-xl p-8 hover:shadow-lg transition-all">
+                    <div class="text-blue-600 text-3xl mb-4">
+                        <i class="ri-customer-service-2-line"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900 mb-4">
+                        <span data-lang="en">Expert Support</span>
+                        <span data-lang="es">Soporte Experto</span>
+                    </h3>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Get instant help via WhatsApp from our lead generation experts</span>
+                        <span data-lang="es">Obtén ayuda instantánea vía WhatsApp de nuestros expertos en generación de leads</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="py-20 bg-gray-50">
+        <div class="container mx-auto px-4">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">
+                    <span data-lang="en">How It Works</span>
+                    <span data-lang="es">Cómo Funciona</span>
                 </h2>
             </div>
-            <div class="swiper-container">
-                <div class="swiper-wrapper">
-                    <!-- Testimonial 1 -->
-                    <div class="swiper-slide">
-                        <div class="testimonial-card p-8 rounded-xl shadow-lg">
-                            <div class="flex items-center mb-4">
-                                <img src="https://i.imgur.com/testimonial1.jpg" alt="Sarah Johnson" class="w-12 h-12 rounded-full">
-                                <div class="ml-4">
-                                    <h4 class="font-bold text-gray-900">Sarah Johnson</h4>
-                                    <p class="text-gray-600">Sales Director, TechCorp</p>
-                                </div>
-                            </div>
-                            <p class="text-gray-700">
-                                <span data-lang="en">"AutoclientAI has transformed our sales process. We've seen a 300% increase in qualified leads with 75% less manual work."</span>
-                                <span data-lang="es">"AutoclientAI ha transformado nuestro proceso de ventas. Hemos visto un aumento del 300% en leads calificados con 75% menos trabajo manual."</span>
+
+            <div class="max-w-4xl mx-auto">
+                <div class="space-y-12">
+                    <!-- Step 1 -->
+                    <div class="flex items-start space-x-8">
+                        <div class="flex-shrink-0 w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center text-xl font-bold">1</div>
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-900 mb-2">
+                                <span data-lang="en">Define Your Target</span>
+                                <span data-lang="es">Define tu Objetivo</span>
+                            </h3>
+                            <p class="text-gray-600">
+                                <span data-lang="en">Tell us your ideal customer profile - industry, location, company size, or any specific criteria</span>
+                                <span data-lang="es">Dinos tu perfil de cliente ideal - industria, ubicación, tamaño de empresa o cualquier criterio específico</span>
                             </p>
                         </div>
                     </div>
-                    <!-- Add more testimonials here -->
+
+                    <!-- Step 2 -->
+                    <div class="flex items-start space-x-8">
+                        <div class="flex-shrink-0 w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center text-xl font-bold">2</div>
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-900 mb-2">
+                                <span data-lang="en">Get Your Leads</span>
+                                <span data-lang="es">Obtén tus Leads</span>
+                            </h3>
+                            <p class="text-gray-600">
+                                <span data-lang="en">Our AI instantly finds and verifies 400 perfect matches (200 + 200 bonus leads)</span>
+                                <span data-lang="es">Nuestra IA encuentra y verifica instantáneamente 400 coincidencias perfectas (200 + 200 leads de bonificación)</span>
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Step 3 -->
+                    <div class="flex items-start space-x-8">
+                        <div class="flex-shrink-0 w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center text-xl font-bold">3</div>
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-900 mb-2">
+                                <span data-lang="en">Start Converting</span>
+                                <span data-lang="es">Empieza a Convertir</span>
+                            </h3>
+                            <p class="text-gray-600">
+                                <span data-lang="en">Use our proven email templates or export leads to your favorite CRM</span>
+                                <span data-lang="es">Usa nuestras plantillas de email probadas o exporta los leads a tu CRM favorito</span>
+                            </p>
+                        </div>
+                    </div>
                 </div>
-                <div class="swiper-pagination"></div>
             </div>
         </div>
     </section>
 
-    <!-- Pricing -->
-    <section id="pricing" class="py-20 bg-gray-50">
-        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="text-center">
-                <h2 class="text-3xl font-extrabold text-gray-900 sm:text-4xl">
-                    <span data-lang="en">Simple, Transparent Pricing</span>
-                    <span data-lang="es">Precios Simples y Transparentes</span>
+    <!-- FAQ Section -->
+    <section class="py-20 bg-white">
+        <div class="container mx-auto px-4">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">
+                    <span data-lang="en">Frequently Asked Questions</span>
+                    <span data-lang="es">Preguntas Frecuentes</span>
                 </h2>
             </div>
-            <div class="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
-                <!-- Starter Plan -->
-                <div class="bg-white rounded-xl shadow-lg p-8" data-aos="fade-up">
-                    <h3 class="text-2xl font-bold text-gray-900">
-                        <span data-lang="en">Starter</span>
-                        <span data-lang="es">Inicial</span>
+
+            <div class="max-w-3xl mx-auto space-y-6">
+                <!-- FAQ Item 1 -->
+                <div class="bg-gray-50 rounded-xl p-6">
+                    <h3 class="text-lg font-bold text-gray-900 mb-2">
+                        <span data-lang="en">How accurate are the leads?</span>
+                        <span data-lang="es">¿Qué tan precisos son los leads?</span>
                     </h3>
-                    <p class="mt-4 text-5xl font-extrabold text-gray-900">$49<span class="text-xl font-normal text-gray-500">/mo</span></p>
-                    <ul class="mt-8 space-y-4">
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">500 Leads/month</span>
-                            <span data-lang="es">500 Leads/mes</span>
-                        </li>
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">Basic Automation</span>
-                            <span data-lang="es">Automatización Básica</span>
-                        </li>
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">Email Templates</span>
-                            <span data-lang="es">Plantillas de Email</span>
-                        </li>
-                    </ul>
-                    <a href="#" class="mt-8 block w-full text-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
-                        <span data-lang="en">Get Started</span>
-                        <span data-lang="es">Comenzar</span>
-                    </a>
-                </div>
-
-                <!-- Pro Plan -->
-                <div class="bg-white rounded-xl shadow-lg p-8 border-2 border-blue-600" data-aos="fade-up" data-aos-delay="100">
-                    <h3 class="text-2xl font-bold text-gray-900">
-                        <span data-lang="en">Professional</span>
-                        <span data-lang="es">Profesional</span>
-                    </h3>
-                    <p class="mt-4 text-5xl font-extrabold text-gray-900">$99<span class="text-xl font-normal text-gray-500">/mo</span></p>
-                    <ul class="mt-8 space-y-4">
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">2000 Leads/month</span>
-                            <span data-lang="es">2000 Leads/mes</span>
-                        </li>
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">Advanced Automation</span>
-                            <span data-lang="es">Automatización Avanzada</span>
-                        </li>
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">Custom Templates</span>
-                            <span data-lang="es">Plantillas Personalizadas</span>
-                        </li>
-                    </ul>
-                    <a href="#" class="mt-8 block w-full text-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
-                        <span data-lang="en">Get Started</span>
-                        <span data-lang="es">Comenzar</span>
-                    </a>
-                </div>
-
-                <!-- Enterprise Plan -->
-                <div class="bg-white rounded-xl shadow-lg p-8" data-aos="fade-up" data-aos-delay="200">
-                    <h3 class="text-2xl font-bold text-gray-900">
-                        <span data-lang="en">Enterprise</span>
-                        <span data-lang="es">Empresarial</span>
-                    </h3>
-                    <p class="mt-4 text-5xl font-extrabold text-gray-900">$199<span class="text-xl font-normal text-gray-500">/mo</span></p>
-                    <ul class="mt-8 space-y-4">
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">Unlimited Leads</span>
-                            <span data-lang="es">Leads Ilimitados</span>
-                        </li>
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">Custom Automation</span>
-                            <span data-lang="es">Automatización Personalizada</span>
-                        </li>
-                        <li class="flex items-center">
-                            <i class="ri-check-line text-green-500 mr-2"></i>
-                            <span data-lang="en">Priority Support</span>
-                            <span data-lang="es">Soporte Prioritario</span>
-                        </li>
-                    </ul>
-                    <a href="#" class="mt-8 block w-full text-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
-                        <span data-lang="en">Contact Sales</span>
-                        <span data-lang="es">Contactar Ventas</span>
-                    </a>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- CTA Section -->
-    <section class="gradient-bg py-20">
-        <div class="container mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <h2 class="text-3xl font-extrabold text-white sm:text-4xl">
-                <span data-lang="en">Ready to Transform Your Sales?</span>
-                <span data-lang="es">¿Listo para Transformar tus Ventas?</span>
-            </h2>
-            <p class="mt-4 text-xl text-blue-100">
-                <span data-lang="en">Start your 14-day free trial today. No credit card required.</span>
-                <span data-lang="es">Comienza tu prueba gratuita de 14 días hoy. No se requiere tarjeta de crédito.</span>
-            </p>
-            <div class="mt-8">
-                <a href="#" class="inline-flex items-center px-8 py-4 border border-transparent text-lg font-medium rounded-md text-blue-600 bg-white hover:bg-blue-50 transition-colors">
-                    <span data-lang="en">Start Free Trial</span>
-                    <span data-lang="es">Comenzar Prueba Gratuita</span>
-                </a>
-            </div>
-        </div>
-    </section>
-
-    <!-- Footer -->
-    <footer class="bg-gray-900">
-        <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-12">
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
-                <div>
-                    <h3 class="text-white text-sm font-semibold uppercase tracking-wider">AutoclientAI</h3>
-                    <p class="mt-4 text-gray-400 text-sm">
-                        <span data-lang="en">Automated lead generation platform</span>
-                        <span data-lang="es">Plataforma automatizada de generación de leads</span>
+                    <p class="text-gray-600">
+                        <span data-lang="en">All leads are verified in real-time with a 98%+ accuracy rate. We double-check email deliverability and company information before providing them to you.</span>
+                        <span data-lang="es">Todos los leads son verificados en tiempo real con una tasa de precisión del 98%+. Verificamos dos veces la entregabilidad del email y la información de la empresa antes de proporcionártelos.</span>
                     </p>
                 </div>
-                <div>
-                    <h3 class="text-white text-sm font-semibold uppercase tracking-wider">
-                        <span data-lang="en">Product</span>
-                        <span data-lang="es">Producto</span>
+
+                <!-- FAQ Item 2 -->
+                <div class="bg-gray-50 rounded-xl p-6">
+                    <h3 class="text-lg font-bold text-gray-900 mb-2">
+                        <span data-lang="en">Is this a subscription?</span>
+                        <span data-lang="es">¿Es una suscripción?</span>
                     </h3>
-                    <ul class="mt-4 space-y-2">
-                        <li>
-                            <a href="#features" class="text-gray-400 hover:text-white text-sm">
-                                <span data-lang="en">Features</span>
-                                <span data-lang="es">Características</span>
-                            </a>
-                        </li>
-                        <li>
-                            <a href="#pricing" class="text-gray-400 hover:text-white text-sm">
-                                <span data-lang="en">Pricing</span>
-                                <span data-lang="es">Precios</span>
-                            </a>
-                        </li>
+                    <p class="text-gray-600">
+                        <span data-lang="en">No, this is a one-time payment of $199 for 400 leads (200 + 200 bonus leads). You can use these leads anytime, there's no expiration.</span>
+                        <span data-lang="es">No, es un pago único de 199€ por 400 leads (200 + 200 leads de bonificación). Puedes usar estos leads en cualquier momento, no hay fecha de vencimiento.</span>
+                    </p>
+                </div>
+
+                <!-- FAQ Item 3 -->
+                <div class="bg-gray-50 rounded-xl p-6">
+                    <h3 class="text-lg font-bold text-gray-900 mb-2">
+                        <span data-lang="en">How do I get my leads?</span>
+                        <span data-lang="es">¿Cómo obtengo mis leads?</span>
+                    </h3>
+                    <p class="text-gray-600">
+                        <span data-lang="en">After payment confirmation, you'll get immediate access to your dashboard where you can search, filter, and export your leads. We also provide email templates to help you start reaching out.</span>
+                        <span data-lang="es">Después de confirmar el pago, obtendrás acceso inmediato a tu panel donde podrás buscar, filtrar y exportar tus leads. También proporcionamos plantillas de email para ayudarte a comenzar el contacto.</span>
+                    </p>
+                </div>
+
+                <!-- FAQ Item 4 -->
+                <div class="bg-gray-50 rounded-xl p-6">
+                    <h3 class="text-lg font-bold text-gray-900 mb-2">
+                        <span data-lang="en">What information do I get for each lead?</span>
+                        <span data-lang="es">¿Qué información obtengo por cada lead?</span>
+                    </h3>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Each lead includes: verified email, full name, company name, position, company size, industry, location, and LinkedIn profile (when available).</span>
+                        <span data-lang="es">Cada lead incluye: email verificado, nombre completo, nombre de empresa, cargo, tamaño de empresa, industria, ubicación y perfil de LinkedIn (cuando está disponible).</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Trust Indicators -->
+    <section class="py-12 bg-gray-50">
+        <div class="container mx-auto px-4">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-8 items-center justify-center">
+                <div class="text-center">
+                    <div class="text-4xl font-bold text-blue-600 mb-2">98%</div>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Accuracy Rate</span>
+                        <span data-lang="es">Tasa de Precisión</span>
+                    </p>
+                </div>
+                <div class="text-center">
+                    <div class="text-4xl font-bold text-blue-600 mb-2">24/7</div>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Support Available</span>
+                        <span data-lang="es">Soporte Disponible</span>
+                    </p>
+                </div>
+                <div class="text-center">
+                    <div class="text-4xl font-bold text-blue-600 mb-2">1M+</div>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Leads Generated</span>
+                        <span data-lang="es">Leads Generados</span>
+                    </p>
+                </div>
+                <div class="text-center">
+                    <div class="text-4xl font-bold text-blue-600 mb-2">500+</div>
+                    <p class="text-gray-600">
+                        <span data-lang="en">Happy Clients</span>
+                        <span data-lang="es">Clientes Satisfechos</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Enhanced Footer -->
+    <footer class="bg-gray-900 text-white py-12">
+        <div class="container mx-auto px-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div>
+                    <h3 class="text-lg font-bold mb-4">Company</h3>
+                    <address class="text-gray-400 not-italic">
+                        Autoclient AI Tech Ltd.<br>
+                        167-169, Great Portland Street 5th Floor<br>
+                        London W1W 5PF<br>
+                        United Kingdom
+                    </address>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold mb-4">Legal</h3>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="#" class="hover:text-white transition-colors">Terms of Service</a></li>
+                        <li><a href="#" class="hover:text-white transition-colors">Privacy Policy</a></li>
+                        <li><a href="#" class="hover:text-white transition-colors">Cookie Policy</a></li>
+                        <li><a href="#" class="hover:text-white transition-colors">GDPR Compliance</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="text-lg font-bold mb-4">Support</h3>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="#" class="hover:text-white transition-colors">Help Center</a></li>
+                        <li><a href="#" class="hover:text-white transition-colors">API Documentation</a></li>
+                        <li><a href="#" class="hover:text-white transition-colors">System Status</a></li>
+                        <li><a href="#" class="hover:text-white transition-colors">Contact Support</a></li>
                     </ul>
                 </div>
             </div>
-            <div class="mt-8 border-t border-gray-800 pt-8 text-center">
-                <p class="text-gray-400 text-sm">&copy; 2024 AutoclientAI. 
-                    <span data-lang="en">All rights reserved.</span>
-                    <span data-lang="es">Todos los derechos reservados.</span>
-                </p>
+            <div class="mt-8 pt-8 border-t border-gray-800">
+                <div class="text-gray-400 text-sm">
+                    <p class="mb-4">© 2024 Autoclient AI Tech Ltd. All rights reserved.</p>
+                    <p class="legal-text">
+                        Autoclient AI is a registered trademark of Autoclient AI Tech Ltd. By using this service, you agree to our Terms of Service and Privacy Policy. 
+                        All lead generation activities must comply with applicable laws and regulations, including GDPR and CAN-SPAM Act.
+                    </p>
+                </div>
             </div>
         </div>
     </footer>
+
+    <!-- WhatsApp Widget -->
+    <div class="whatsapp-widget">
+        <a href="https://wa.me/34679794037" 
+           class="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded-full shadow-lg hover:bg-green-600 transition-colors">
+            <i class="ri-whatsapp-line text-xl"></i>
+            <span class="font-medium">
+                <span data-lang="en">Chat with us</span>
+                <span data-lang="es">Chatea con nosotros</span>
+            </span>
+        </a>
+    </div>
+
+    <!-- Checkout Modal -->
+    <div class="modal" id="checkout-modal" aria-hidden="true">
+        <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+            <div class="modal__container" role="dialog" aria-modal="true">
+                <!-- Step 1: Order Summary -->
+                <div class="checkout-step active" id="step-summary">
+                    <h2 class="text-2xl font-bold mb-6">
+                        <span data-lang="en">Black Friday Special Offer</span>
+                        <span data-lang="es">Oferta Especial Black Friday</span>
+                    </h2>
+                    
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                        <div class="flex items-start">
+                            <div class="flex-shrink-0">
+                                <svg class="w-5 h-5 text-blue-600 mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <h3 class="text-sm font-medium text-blue-800">
+                                    <span data-lang="en">Limited Time Offer</span>
+                                    <span data-lang="es">Oferta por Tiempo Limitado</span>
+                                </h3>
+                                <div class="mt-2 text-sm text-blue-700">
+                                    <ul class="list-disc pl-5 space-y-1">
+                                        <li>
+                                            <span data-lang="en">200 Leads ($199 value) - FREE</span>
+                                            <span data-lang="es">200 Leads (valor 199€) - GRATIS</span>
+                                        </li>
+                                        <li>
+                                            <span data-lang="en">200 Additional Leads</span>
+                                            <span data-lang="es">200 Leads Adicionales</span>
+                                        </li>
+                                        <li>
+                                            <span data-lang="en">Full Platform Access</span>
+                                            <span data-lang="es">Acceso Completo a la Plataforma</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-b py-4 mb-6">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-gray-600">
+                                <span data-lang="en">Regular Price</span>
+                                <span data-lang="es">Precio Regular</span>
+                            </span>
+                            <span class="text-gray-600 line-through">$398</span>
+                        </div>
+                        <div class="flex justify-between items-center text-lg font-bold">
+                            <span class="text-gray-900">
+                                <span data-lang="en">Black Friday Price</span>
+                                <span data-lang="es">Precio Black Friday</span>
+                            </span>
+                            <span class="text-blue-600">$199</span>
+                        </div>
+                    </div>
+
+                    <button onclick="nextStep('payment')" class="w-full bg-blue-600 text-white rounded-lg px-4 py-3 hover:bg-blue-700 transition-colors">
+                        <span data-lang="en">Continue to Payment</span>
+                        <span data-lang="es">Continuar al Pago</span>
+                    </button>
+                </div>
+                
+                <!-- Step 2: Bank Transfer Details -->
+                <div class="checkout-step" id="step-payment">
+                    <button onclick="prevStep('summary')" class="mb-4 text-gray-600 hover:text-blue-600 flex items-center">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        <span data-lang="en">Back</span>
+                        <span data-lang="es">Volver</span>
+                    </button>
+                    
+                    <h2 class="text-2xl font-bold mb-6">
+                        <span data-lang="en">Bank Transfer Details</span>
+                        <span data-lang="es">Detalles de Transferencia</span>
+                    </h2>
+                    
+                    <div class="bg-gray-50 rounded-lg p-6 mb-6">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    <span data-lang="en">Account Name</span>
+                                    <span data-lang="es">Nombre de Cuenta</span>
+                                </label>
+                                <p class="text-gray-900 font-medium">Sami Halawa Ribas</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">IBAN</label>
+                                <p class="text-gray-900 font-medium">ES26 1563 2626 3132 6584 2569</p>
+                                <button onclick="copyToClipboard('ES26 1563 2626 3132 6584 2569')" 
+                                        class="mt-1 text-sm text-blue-600 hover:text-blue-800">
+                                    <span data-lang="en">Copy IBAN</span>
+                                    <span data-lang="es">Copiar IBAN</span>
+                                </button>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">SWIFT</label>
+                                <p class="text-gray-900 font-medium">NTSBESM1XXX</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    <span data-lang="en">Bank Name</span>
+                                    <span data-lang="es">Nombre del Banco</span>
+                                </label>
+                                <p class="text-gray-900 font-medium">N26 Bank Gmbh</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    <span data-lang="en">Bank Address</span>
+                                    <span data-lang="es">Dirección del Banco</span>
+                                </label>
+                                <p class="text-gray-900 font-medium">Calle De Manzanares 4, 28005, Madrid, Spain</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    <span data-lang="en">Amount</span>
+                                    <span data-lang="es">Cantidad</span>
+                                </label>
+                                <p class="text-gray-900 font-medium">199 EUR/USD</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <svg class="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <h3 class="text-sm font-medium text-yellow-800">
+                                    <span data-lang="en">Important</span>
+                                    <span data-lang="es">Importante</span>
+                                </h3>
+                                <div class="mt-2 text-sm text-yellow-700">
+                                    <p data-lang="en">Please include your email in the transfer concept for identification.</p>
+                                    <p data-lang="es">Por favor incluye tu email en el concepto de la transferencia para identificación.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form id="contact-form" class="space-y-4" onsubmit="submitContactForm(event)">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                <span data-lang="en">Your Email</span>
+                                <span data-lang="es">Tu Email</span>
+                            </label>
+                            <input type="email" required class="w-full px-4 py-2 border rounded-lg" id="contact-email">
+                        </div>
+                        <button type="submit" class="w-full bg-blue-600 text-white rounded-lg px-4 py-3 hover:bg-blue-700 transition-colors">
+                            <span data-lang="en">Submit & Complete Order</span>
+                            <span data-lang="es">Enviar y Completar Pedido</span>
+                        </button>
+                    </form>
+                </div>
+                
+                <!-- Step 3: Success -->
+                <div class="checkout-step" id="step-success">
+                    <div class="text-center py-8">
+                        <svg class="w-16 h-16 text-green-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        <h2 class="text-2xl font-bold text-gray-900 mb-2">
+                            <span data-lang="en">Order Received!</span>
+                            <span data-lang="es">¡Pedido Recibido!</span>
+                        </h2>
+                        <p class="text-gray-600 mb-6">
+                            <span data-lang="en">Check your email for payment instructions and next steps</span>
+                            <span data-lang="es">Revisa tu email para instrucciones de pago y siguientes pasos</span>
+                        </p>
+                        <button onclick="closeModal()" class="bg-blue-600 text-white rounded-lg px-6 py-2 hover:bg-blue-700 transition-colors">
+                            <span data-lang="en">Got it</span>
+                            <span data-lang="es">Entendido</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.js"></script>
@@ -527,6 +1043,224 @@
                     behavior: 'smooth'
                 });
             });
+        });
+
+        const leadSlider = document.getElementById('leadSlider');
+        const priceDisplay = document.getElementById('priceDisplay');
+        const leadDisplay = document.getElementById('leadDisplay');
+        
+        function updatePrice() {
+            const leads = parseInt(leadSlider.value);
+            leadDisplay.textContent = leads.toLocaleString();
+            
+            let price;
+            if (leads <= 100) {
+                price = 'FREE';
+            } else if (leads <= 1500) {
+                price = '€299';
+            } else {
+                price = '€499';
+            }
+            
+            priceDisplay.textContent = price;
+        }
+        
+        leadSlider.addEventListener('input', updatePrice);
+        updatePrice(); // Initialize display
+
+        // Mobile menu toggle
+        document.querySelector('.mobile-menu-button').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const mobileMenu = document.getElementById('mobile-menu');
+            const mobileMenuButton = document.querySelector('.mobile-menu-button');
+            
+            if (!mobileMenuButton.contains(event.target) && !mobileMenu.contains(event.target)) {
+                mobileMenu.classList.add('hidden');
+            }
+        });
+
+        // Close mobile menu when clicking a link
+        document.querySelectorAll('#mobile-menu a').forEach(link => {
+            link.addEventListener('click', function() {
+                document.getElementById('mobile-menu').classList.add('hidden');
+            });
+        });
+
+        // Initialize libraries
+        MicroModal.init();
+        const stripe = Stripe('your_publishable_key'); // Replace with your Stripe key
+        const elements = stripe.elements();
+        const card = elements.create('card');
+        
+        // Mount card element
+        card.mount('#card-element');
+        
+        // Handle form submission
+        const form = document.getElementById('payment-form');
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            
+            const {token, error} = await stripe.createToken(card);
+            
+            if (error) {
+                const errorElement = document.getElementById('card-errors');
+                errorElement.textContent = error.message;
+            } else {
+                // Here you would send the token to your server
+                // For demo, we'll just show success
+                nextStep('success');
+            }
+        });
+        
+        // Checkout navigation
+        function nextStep(step) {
+            document.querySelector('.checkout-step.active').classList.remove('active');
+            document.getElementById(`step-${step}`).classList.add('active');
+        }
+        
+        function prevStep(step) {
+            document.querySelector('.checkout-step.active').classList.remove('active');
+            document.getElementById(`step-${step}`).classList.add('active');
+        }
+        
+        // Open modal from any CTA
+        document.querySelectorAll('[data-trigger="checkout"]').forEach(button => {
+            button.addEventListener('click', () => {
+                MicroModal.show('checkout-modal');
+            });
+        });
+        
+        function closeModal() {
+            MicroModal.close('checkout-modal');
+            // Reset to first step after closing
+            setTimeout(() => {
+                document.querySelectorAll('.checkout-step').forEach(step => step.classList.remove('active'));
+                document.getElementById('step-plan').classList.add('active');
+            }, 300);
+        }
+        
+        // Update all CTAs to trigger checkout
+        document.querySelectorAll('a[href="#"]').forEach(link => {
+            link.setAttribute('data-trigger', 'checkout');
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                MicroModal.show('checkout-modal');
+            });
+        });
+    </script>
+
+    <!-- Add JavaScript for demo and checkout functionality -->
+    <script>
+        // Demo functionality
+        function runDemo() {
+            const demoInput = document.getElementById('demo-input');
+            const demoResults = document.getElementById('demo-results');
+            
+            if (demoInput.value.trim()) {
+                demoResults.classList.remove('hidden');
+                // Simulate loading
+                setTimeout(() => {
+                    const sampleResults = `
+                        <div class="space-y-4">
+                            <div class="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                                <h3 class="font-medium text-gray-900">Sample Lead 1</h3>
+                                <p class="text-gray-600">contact@*****.com</p>
+                                <p class="text-sm text-gray-500">Digital Marketing Agency, Barcelona</p>
+                            </div>
+                            <div class="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                                <h3 class="font-medium text-gray-900">Sample Lead 2</h3>
+                                <p class="text-gray-600">info@*****.es</p>
+                                <p class="text-sm text-gray-500">Marketing Consultancy, Madrid</p>
+                            </div>
+                            <div class="text-center mt-4">
+                                <p class="text-gray-600">
+                                    <span data-lang="en">+ 398 more leads available with full access</span>
+                                    <span data-lang="es">+ 398 más leads disponibles con acceso completo</span>
+                                </p>
+                            </div>
+                        </div>
+                    `;
+                    demoResults.innerHTML = sampleResults;
+                }, 1500);
+            }
+        }
+
+        // Clipboard functionality
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                // Show success message
+                const button = event.target;
+                const originalText = button.textContent;
+                button.textContent = document.documentElement.lang === 'es' ? 'Copiado!' : 'Copied!';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 2000);
+            });
+        }
+
+        // Form submission
+        function submitContactForm(event) {
+            event.preventDefault();
+            const email = document.getElementById('contact-email').value;
+            // Here you would typically send this to your server
+            // For demo, we'll just show success
+            nextStep('success');
+            
+            // Send email to your system
+            fetch('your-endpoint', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    email: email,
+                    type: 'bank_transfer_order'
+                })
+            }).catch(console.error); // Handle any errors silently
+        }
+
+        // Initialize modal
+        MicroModal.init({
+            onClose: modal => {
+                // Reset to first step when modal is closed
+                setTimeout(() => {
+                    document.querySelectorAll('.checkout-step').forEach(step => step.classList.remove('active'));
+                    document.getElementById('step-summary').classList.add('active');
+                }, 300);
+            }
+        });
+    </script>
+
+    <!-- Add JavaScript for banner and nav handling -->
+    <script>
+        // Banner and Navigation handling
+        const banner = document.getElementById('promo-banner');
+        const nav = document.getElementById('main-nav');
+        
+        function toggleBanner() {
+            banner.classList.toggle('collapsed');
+            updateNavPosition();
+        }
+        
+        function updateNavPosition() {
+            const bannerHeight = banner.classList.contains('collapsed') ? 0 : banner.offsetHeight;
+            nav.style.top = `${bannerHeight}px`;
+        }
+        
+        // Initialize positions
+        updateNavPosition();
+        
+        // Handle scroll for nav transparency
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 100) {
+                nav.classList.add('bg-white/95', 'backdrop-blur-sm');
+            } else {
+                nav.classList.remove('bg-white/95', 'backdrop-blur-sm');
+            }
         });
     </script>
 </body>

@@ -900,6 +900,13 @@ def update_display(container,items,title,item_key):
 def get_domain_from_url(url):return urlparse(url).netloc
 
 def manual_search_page():
+    st.markdown("""
+        <div style="text-align: center; padding: 2rem;">
+            <h1>📧 Lead Generation Dashboard</h1>
+            <p style="font-size: 1.2rem; color: #666;">Find and engage with potential leads efficiently</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
     st.markdown("""<div style="position:fixed;bottom:10px;right:10px;z-index:9999;opacity:0.7;"><details><summary style="color:#666;font-size:12px;">🎵 Music</summary><audio controls loop style="width:200px;height:40px;"><source src="https://cdn.pixabay.com/download/audio/2022/02/22/audio_d1718ab41b.mp3" type="audio/mpeg">Your browser does not support the audio element.</audio></details></div>""",unsafe_allow_html=True)
     st.title("Manual Search")
     with db_session() as session:
@@ -1291,7 +1298,13 @@ def is_valid_email(email):
 
 
 def view_leads_page():
-    st.title("Lead Management Dashboard")
+    st.markdown("""
+        <div style="text-align: center; padding: 2rem;">
+            <h1>👥 Lead Management Dashboard</h1>
+            <p style="font-size: 1.2rem; color: #666;">Monitor and manage your leads effectively</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
     with db_session() as session:
         if 'leads' not in st.session_state or st.button("Refresh Leads"):
             st.session_state.leads = fetch_leads_with_sources(session)
@@ -1411,7 +1424,13 @@ def get_active_campaign_id():
     return st.session_state.get('active_campaign_id', 1)
 
 def search_terms_page():
-    st.markdown("<h1 style='text-align: center; color: #1E88E5;'>Search Terms Dashboard</h1>", unsafe_allow_html=True)
+    st.markdown("""
+        <div style="text-align: center; padding: 2rem;">
+            <h1>🔍 Search Terms Dashboard</h1>
+            <p style="font-size: 1.2rem; color: #666;">Optimize your search terms for better lead generation</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
     with db_session() as session:
         search_terms_df = fetch_search_terms_with_lead_count(session)
         if not search_terms_df.empty:
@@ -1580,7 +1599,13 @@ def delete_search_term_group(session, group_id):
 
 
 def email_templates_page():
-    st.header("Email Templates")
+    st.markdown("""
+        <div style="text-align: center; padding: 2rem;">
+            <h1>✉️ Email Templates</h1>
+            <p style="font-size: 1.2rem; color: #666;">Create and manage your email templates</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
     with db_session() as session:
         templates = session.query(EmailTemplate).all()
         with st.expander("Create New Template", expanded=False):
@@ -1689,7 +1714,12 @@ def get_email_template_by_name(session, template_name):
     return session.query(EmailTemplate).filter_by(template_name=template_name).first()
 
 def bulk_send_page():
-    st.title("Bulk Email Sending")
+    st.markdown("""
+        <div style="text-align: center; padding: 2rem;">
+            <h1>📨 Bulk Email Sending</h1>
+            <p style="font-size: 1.2rem; color: #666;">Send personalized emails to multiple leads</p>
+        </div>
+    """, unsafe_allow_html=True)
     
     with db_session() as session:
         # Fetch and validate email templates and settings
@@ -2371,11 +2401,143 @@ def view_sent_email_campaigns():
 
 def main():
     st.set_page_config(
-        page_title="Autoclient.ai | Lead Generation AI App",
+        page_title="Email Lead Generator",
+        page_icon="📧",
         layout="wide",
-        initial_sidebar_state="expanded",
-        page_icon=""
+        initial_sidebar_state="expanded"
     )
+
+    # Custom CSS for better styling
+    st.markdown("""
+    <style>
+        /* Main container styling */
+        .main {
+            padding: 2rem;
+            background-color: #f8f9fa;
+        }
+        
+        /* Header styling */
+        h1 {
+            color: #1E88E5;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 2rem;
+            text-align: center;
+            padding: 1rem;
+            background: linear-gradient(90deg, #E3F2FD 0%, #BBDEFB 100%);
+            border-radius: 10px;
+        }
+        
+        /* Subheader styling */
+        h2, h3 {
+            color: #0D47A1;
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        /* Card styling */
+        .stCard {
+            background-color: white;
+            padding: 1rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 1rem;
+        }
+        
+        /* Button styling */
+        .stButton>button {
+            background-color: #1E88E5;
+            color: white;
+            border-radius: 5px;
+            padding: 0.5rem 1rem;
+            font-weight: 500;
+            border: none;
+            transition: all 0.3s ease;
+        }
+        
+        .stButton>button:hover {
+            background-color: #1565C0;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        /* Input field styling */
+        .stTextInput>div>div>input {
+            border-radius: 5px;
+            border: 1px solid #E0E0E0;
+        }
+        
+        /* Metric styling */
+        .stMetric {
+            background-color: white;
+            padding: 1rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Table styling */
+        .stDataFrame {
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        /* Expander styling */
+        .streamlit-expanderHeader {
+            background-color: #E3F2FD;
+            border-radius: 5px;
+        }
+        
+        /* Success message styling */
+        .stSuccess {
+            background-color: #C8E6C9;
+            padding: 1rem;
+            border-radius: 5px;
+            color: #2E7D32;
+        }
+        
+        /* Warning message styling */
+        .stWarning {
+            background-color: #FFE0B2;
+            padding: 1rem;
+            border-radius: 5px;
+            color: #E65100;
+        }
+        
+        /* Error message styling */
+        .stError {
+            background-color: #FFCDD2;
+            padding: 1rem;
+            border-radius: 5px;
+            color: #C62828;
+        }
+        
+        /* Progress bar styling */
+        .stProgress > div > div > div > div {
+            background-color: #1E88E5;
+        }
+        
+        /* Sidebar styling */
+        .css-1d391kg {
+            background-color: #E3F2FD;
+        }
+        
+        /* Tabs styling */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 1rem;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            background-color: #E3F2FD;
+            border-radius: 5px;
+            padding: 0.5rem 1rem;
+            color: #1565C0;
+        }
+        
+        .stTabs [aria-selected="true"] {
+            background-color: #1E88E5;
+            color: white;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
     st.sidebar.title("AutoclientAI")
     st.sidebar.markdown("Select a page to navigate through the application.")
