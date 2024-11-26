@@ -1,9 +1,0 @@
-SUPABASE_DB_HOST=your_host
-SUPABASE_DB_NAME=your_db_name
-SUPABASE_DB_USER=your_user
-SUPABASE_DB_PASSWORD=your_password
-SUPABASE_DB_PORT=5432
-
-OPENAI_API_KEY=your_openai_key
-OPENAI_API_BASE=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
