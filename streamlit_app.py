@@ -1692,6 +1692,266 @@ def bulk_send_page():
     st.title("Bulk Email Sending")
     
     with db_session() as session:
+        # Fetch and validate email templates and settings
+        templates = fetch_email_templates(session)
+        email_settings = fetch_email_settings(session)
+        
+        if not templates:
+            st.error("No email templates available. Please create a template first.")
+            return
+        if not email_settings:
+            st.error("No email settings available. Please add email settings first.")
+            return
+
+        # Email template selection
+        template_option = st.selectbox(
+            "Email Template",
+            options=templates,
+            format_func=lambda x: x.split(":")[1].strip()
+        )
+        
+        if not template_option:
+            st.error("Please select an email template")
+            return
+            
+        template_id = int(template_option.split(":")[0])
+        template = session.query(EmailTemplate).filter_by(id=template_id).first()
+        
+        if not template:
+            st.error("Selected template not found. Please refresh the page.")
+            return
+
+        # Email settings
+        col1, col2 = st.columns(2)
+        with col1:
+            subject = st.text_input("Subject", value=template.subject if template else "")
+            if not subject.strip():
+                st.error("Subject is required")
+                return
+                
+            email_setting_option = st.selectbox(
+                "From Email",
+                options=email_settings,
+                format_func=lambda x: f"{x['name']} ({x['email']})"
+            )
+            
+            if email_setting_option:
+                from_email = email_setting_option['email']
+                reply_to = st.text_input("Reply To", email_setting_option['email'])
+                if not is_valid_email(reply_to):
+                    st.error("Please enter a valid reply-to email address")
+                    return
+            else:
+                st.error("Please select a from email address")
+                return
+
+        # Target selection
+        with col2:
+            send_option = st.radio(
+                "Send to:",
+                ["All Leads", "Specific Email", "Leads from Chosen Search Terms", "Leads from Search Term Groups"]
+            )
+            
+            specific_email = None
+            selected_terms = None
+            
+            if send_option == "Specific Email":
+                specific_email = st.text_input("Enter email")
+                if not specific_email or not is_valid_email(specific_email):
+                    st.error("Please enter a valid email address")
+                    return
+                    
+            elif send_option == "Leads from Chosen Search Terms":
+                search_terms_with_counts = fetch_search_terms_with_lead_count(session)
+                if not search_terms_with_counts.empty:
+                    selected_terms = st.multiselect(
+                        "Select Search Terms",
+                        options=search_terms_with_counts['Term'].tolist()
+                    )
+                    if not selected_terms:
+                        st.warning("Please select at least one search term")
+                        return
+                    selected_terms = [term.split(" (")[0] for term in selected_terms]
+                else:
+                    st.error("No search terms available")
+                    return
+                    
+            elif send_option == "Leads from Search Term Groups":
+                groups = fetch_search_term_groups(session)
+                if groups:
+                    selected_groups = st.multiselect("Select Search Term Groups", options=groups)
+                    if selected_groups:
+                        group_ids = [int(group.split(':')[0]) for group in selected_groups]
+                        selected_terms = fetch_search_terms_for_groups(session, group_ids)
+                        if not selected_terms:
+                            st.warning("No search terms found in selected groups")
+                            return
+                    else:
+                        st.warning("Please select at least one group")
+                        return
+                else:
+                    st.error("No search term groups available")
+                    return
+
+        # Domain limit settings
+        exclude_previously_contacted = st.checkbox("Exclude Previously Contacted Domains", value=True)
+        emails_per_domain_limit = st.number_input("Emails per domain limit", min_value=1, max_value=10, value=3)
+        
+        # Preview section
+        st.markdown("### Email Preview")
+        st.text(f"From: {from_email}\nReply-To: {reply_to}\nSubject: {subject}")
+        st.markdown("**Template Content:**")
+        st.text(template.body_content if template else "")
+
+        # Process button
+        if st.button("Send Emails"):
+            try:
+                emails_sent = process_bulk_email_sending(
+                    session=session,
+                    template_id=template_id,
+                    from_email=from_email,
+                    reply_to=reply_to,
+                    send_option=send_option,
+                    specific_email=specific_email,
+                    selected_terms=selected_terms,
+                    exclude_previously_contacted=exclude_previously_contacted,
+                    emails_per_domain_limit=emails_per_domain_limit
+                )
+                
+                if emails_sent:
+                    st.success(f"Successfully sent {len(emails_sent)} emails")
+                    st.write("Sent to:", ", ".join(emails_sent))
+                else:
+                    st.warning("No emails were sent. Please check your selection criteria.")
+                    
+            except Exception as e:
+                st.error(f"An error occurred while sending emails: {str(e)}")
+
+def fetch_leads(session, template_id, send_option, specific_email, selected_terms, exclude_previously_contacted):
+    try:
+        query = session.query(Lead)
+        if send_option == "Specific Email":
+            query = query.filter(Lead.email == specific_email)
+        elif send_option in ["Leads from Chosen Search Terms", "Leads from Search Term Groups"] and selected_terms:
+            query = query.join(LeadSource).join(SearchTerm).filter(SearchTerm.term.in_(selected_terms))
+        
+        if exclude_previously_contacted:
+            subquery = session.query(EmailCampaign.lead_id).filter(EmailCampaign.sent_at.isnot(None)).subquery()
+            query = query.outerjoin(subquery, Lead.id == subquery.c.lead_id).filter(subquery.c.lead_id.is_(None))
+        
+        return [{"Email": lead.email, "ID": lead.id} for lead in query.all()]
+    except Exception as e:
+        logging.error(f"Error fetching leads: {str(e)}")
+        return []
+
+def fetch_email_settings(session):
+    try:
+        settings = session.query(EmailSettings).all()
+        return [{"id": setting.id, "name": setting.name, "email": setting.email} for setting in settings]
+    except Exception as e:
+        logging.error(f"Error fetching email settings: {e}")
+        return []
+
+def fetch_search_terms_with_lead_count(session):
+    query = (session.query(SearchTerm.term, 
+                           func.count(distinct(Lead.id)).label('lead_count'),
+                           func.count(distinct(EmailCampaign.id)).label('email_count'))
+             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+             .join(Lead, LeadSource.lead_id == Lead.id)
+             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+             .group_by(SearchTerm.term))
+    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
+    return df
+
+def fetch_search_term_groups(session):
+    return [f"{group.id}: {group.name}" for group in session.query(SearchTermGroup).all()]
+
+def fetch_search_terms_for_groups(session, group_ids):
+    terms = session.query(SearchTerm).filter(SearchTerm.group_id.in_(group_ids)).all()
+    return [term.term for term in terms]
+
+def ai_automation_loop(session, log_container, leads_container):
+    automation_logs, total_search_terms, total_emails_sent = [], 0, 0
+    while st.session_state.get('automation_status', False):
+        try:
+            log_container.info("Starting automation cycle")
+            kb_info = get_knowledge_base_info(session, get_active_project_id())
+            if not kb_info:
+                log_container.warning("Knowledge Base not found. Skipping cycle.")
+                time.sleep(3600)
+                continue
+
+            base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
+            optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
+            st.subheader("Optimized Search Terms")
+            st.write(", ".join(optimized_terms))
+            total_search_terms = len(optimized_terms)
+            progress_bar = st.progress(0)
+            
+            for idx, term in enumerate(optimized_terms):
+                results = manual_search(session, [term], 10, ignore_previously_fetched=True)
+                new_leads = [(save_lead(session, res['Email'], url=res['URL']).id, res['Email']) for res in results['results'] if save_lead(session, res['Email'], url=res['URL'])]
+                if new_leads:
+                    template = session.query(EmailTemplate).filter_by(project_id=get_active_project_id()).first()
+                    if template:
+                        from_email = kb_info.get('contact_email', 'hello@indosy.com')
+                        reply_to = kb_info.get('contact_email', 'eugproductions@gmail.com')
+                        logs, sent_count = bulk_send_emails(session, template.id, from_email, reply_to, [{'Email': email} for _, email in new_leads])
+                        automation_logs.extend(logs)
+                        total_emails_sent += sent_count
+                
+                leads_container.text_area("New Leads Found", "\n".join([email for _, email in new_leads]), height=200)
+                progress_bar.progress((idx + 1) / len(optimized_terms))
+            
+            st.success(f"Automation cycle completed. Total search terms: {total_search_terms}, Total emails sent: {total_emails_sent}")
+            time.sleep(3600)
+        except Exception as e:
+            log_container.error(f"Critical error in automation cycle: {str(e)}")
+            time.sleep(300)
+    
+    log_container.info("Automation stopped")
+    st.session_state.update({"automation_logs": automation_logs, "total_leads_found": total_search_terms, "total_emails_sent": total_emails_sent})
+
+def display_search_results(results, key_suffix):
+    if not results: return st.warning("No results to display.")
+    with st.expander("Search Results", expanded=True):
+        st.markdown(f"### Total Leads Found: **{len(results)}**")
+        for i, res in enumerate(results):
+            with st.expander(f"Lead: {res['Email']}", key=f"lead_expander_{key_suffix}_{i}"):
+                st.markdown(f"**URL:** [{res['URL']}]({res['URL']})  \n**Title:** {res['Title']}  \n**Description:** {res['Description']}  \n**Tags:** {', '.join(res['Tags'])}  \n**Lead Source:** {res['Lead Source']}  \n**Lead Email:** {res['Email']}")
+
+def perform_quick_scan(session):
+    with st.spinner("Performing quick scan..."):
+        terms = session.query(SearchTerm).order_by(func.random()).limit(3).all()
+        email_setting = fetch_email_settings(session)[0] if fetch_email_settings(session) else None
+        from_email = email_setting['email'] if email_setting else None
+        reply_to = from_email
+        email_template = session.query(EmailTemplate).first()
+        res = manual_search(session, [term.term for term in terms], 10, True, False, False, True, "EN", True, st.empty(), from_email, reply_to, f"{email_template.id}: {email_template.template_name}" if email_template else None)
+    st.success(f"Quick scan completed! Found {len(res['results'])} new leads.")
+    return {"new_leads": len(res['results']), "terms_used": [term.term for term in terms]}
+
+def generate_optimized_search_terms(session, base_terms, kb_info):
+    prompt = f"Optimize and expand these search terms for lead generation:\n{', '.join(base_terms)}\n\nConsider:\n1. Relevance to business and target market\n2. Potential for high-quality leads\n3. Variations and related terms\n4. Industry-specific jargon\n\nRespond with a JSON array of optimized terms."
+    response = openai_chat_completion([{"role": "system", "content": "You're an AI specializing in optimizing search terms for lead generation. Be concise and effective."}, {"role": "user", "content": prompt}], function_name="generate_optimized_search_terms")
+    return response.get('optimized_terms', base_terms) if isinstance(response, dict) else base_terms
+
+def fetch_search_terms_with_lead_count(session):
+    query = (session.query(SearchTerm.term, 
+                           func.count(distinct(Lead.id)).label('lead_count'),
+                           func.count(distinct(EmailCampaign.id)).label('email_count'))
+             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+             .join(Lead, LeadSource.lead_id == Lead.id)
+             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+             .group_by(SearchTerm.term))
+    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
+    return df
+
+def fetch_leads_for_search_terms(session, search_term_ids) -> List[Lead]:
+    return session.query(Lead).distinct().join(LeadSource).filter(LeadSource.search_term_id.in_(search_term_ids)).all()
+
+def projects_campaigns_page():
+    with db_session() as session:
         st.header("Projects and Campaigns")
         st.subheader("Add New Project")
         with st.form("add_project_form"):
