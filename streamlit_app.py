@@ -642,7 +642,7 @@ def fetch_leads_with_sources(session):
         return pd.DataFrame()
 
 def fetch_search_terms_with_lead_count(session):
-    query = session.query(SearchTerm.term, func.count(distinct(Lead.id)).label('lead_count'), func.count(distinct(EmailCampaign.id)).label('email_count')).join(LeadSource, SearchTerm.id == LeadSource.search_term_id).join(Lead, LeadSource.lead_id == Lead.id).outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id).group_by(SearchTerm.term)
+    query = session.query(SearchTerm.term, func.count(distinct(Lead.id)).label('lead_count'), func.count(distinct(EmailCampaign.id)).label('email_count')).join(LeadSource, SearchTerm.id == LeadSource.search_term_id).join(Lead, LeadSource.lead_id == Lead.id).outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id).group_by(SearchTerm.term))
     return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def add_search_term(session, term, campaign_id):
@@ -907,18 +907,30 @@ def manual_search_page():
         </div>
     """, unsafe_allow_html=True)
     
+    # Add processing mode selection
+    processing_mode = st.radio(
+        "Processing Mode",
+        ["Local", "Worker"],
+        help="Local: Process in Streamlit, Worker: Process in background"
+    )
+
     st.markdown("""<div style="position:fixed;bottom:10px;right:10px;z-index:9999;opacity:0.7;"><details><summary style="color:#666;font-size:12px;">🎵 Music</summary><audio controls loop style="width:200px;height:40px;"><source src="https://cdn.pixabay.com/download/audio/2022/02/22/audio_d1718ab41b.mp3" type="audio/mpeg">Your browser does not support the audio element.</audio></details></div>""",unsafe_allow_html=True)
-    st.title("Manual Search")
+    
     with db_session() as session:
-        recent_searches=session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(10).all()
-        all_search_terms=session.query(SearchTerm).all()
-        recent_search_terms=random.sample([term.term for term in recent_searches],min(len(recent_searches),10))
-        email_templates=fetch_email_templates(session)
-        email_settings=fetch_email_settings(session)
-    col1,col2=st.columns([2,1])
+        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(10).all()
+        all_search_terms = session.query(SearchTerm).all()
+        recent_search_terms = random.sample([term.term for term in recent_searches], min(len(recent_searches), 10))
+        email_templates = fetch_email_templates(session)
+        email_settings = fetch_email_settings(session)
+
+    col1, col2 = st.columns([2,1])
     with col1:
-        if 'search_terms' not in st.session_state:st.session_state.search_terms=recent_search_terms
-        if st.button("Browse Existing Terms"):st.session_state.show_terms=True
+        if 'search_terms' not in st.session_state:
+            st.session_state.search_terms = recent_search_terms
+        
+        if st.button("Browse Existing Terms"):
+            st.session_state.show_terms = True
+            
         if st.session_state.get('show_terms',False):
             with st.expander("Existing Search Terms",expanded=True):
                 current_terms=set(st.session_state.search_terms)
@@ -949,77 +961,247 @@ def manual_search_page():
                 if col2.button("Close"):
                     st.session_state.show_terms=False
                     st.rerun()
-        search_terms=st_tags(label='Enter search terms:',text='Press enter to add more',value=st.session_state.search_terms,suggestions=[term.term for term in all_search_terms],maxtags=10,key='search_terms_input')
-        num_results=st.slider("Results per term",1,50000,10)
+        search_terms = st_tags(
+            label='Enter search terms:',
+            text='Press enter to add more',
+            value=st.session_state.search_terms,
+            suggestions=[term.term for term in all_search_terms],
+            maxtags=10,
+            key='search_terms_input'
+        )
+        num_results = st.slider("Results per term", 1, 50000, 10)
+
     with col2:
-        enable_email_sending=st.checkbox("Enable email sending",value=True)
-        ignore_previously_fetched=st.checkbox("Ignore fetched domains",value=True)
-        shuffle_keywords_option=st.checkbox("Shuffle Keywords",value=True)
-        optimize_english=st.checkbox("Optimize (English)",value=False)
-        optimize_spanish=st.checkbox("Optimize (Spanish)",value=False)
-        language=st.selectbox("Select Language",options=["ES","EN"],index=0)
+        enable_email_sending = st.checkbox("Enable email sending", value=True)
+        ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
+        shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
+        optimize_english = st.checkbox("Optimize (English)", value=False)
+        optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
+        language = st.selectbox("Select Language", options=["ES","EN"], index=0)
+
     if enable_email_sending:
-        if not email_templates:return st.error("No email templates available. Please create a template first.")
-        if not email_settings:return st.error("No email settings available. Please add email settings first.")
-        col3,col4=st.columns(2)
-        with col3:email_template=st.selectbox("Email template",options=email_templates,format_func=lambda x:x.split(":")[1].strip())
+        if not email_templates:
+            return st.error("No email templates available. Please create a template first.")
+        if not email_settings:
+            return st.error("No email settings available. Please add email settings first.")
+            
+        col3, col4 = st.columns(2)
+        with col3:
+            email_template = st.selectbox(
+                "Email template",
+                options=email_templates,
+                format_func=lambda x: x.split(":")[1].strip()
+            )
         with col4:
-            email_setting_option=st.selectbox("From Email",options=email_settings,format_func=lambda x:f"{x['name']} ({x['email']})")
+            email_setting_option = st.selectbox(
+                "From Email",
+                options=email_settings,
+                format_func=lambda x: f"{x['name']} ({x['email']})"
+            )
             if email_setting_option:
-                from_email=email_setting_option['email']
-                reply_to=st.text_input("Reply To",email_setting_option['email'])
-            else:return st.error("No email setting selected. Please select an email setting.")
+                from_email = email_setting_option['email']
+                reply_to = st.text_input("Reply To", email_setting_option['email'])
+            else:
+                return st.error("No email setting selected. Please select an email setting.")
+
     if st.button("Search"):
-        if not search_terms:return st.warning("Enter at least one search term.")
-        progress_bar=st.progress(0)
-        status_text=st.empty()
-        email_status=st.empty()
-        results=[]
-        leads_container=st.empty()
-        leads_found,emails_sent=[],[]
-        log_container=st.empty()
-        for i,term in enumerate(search_terms):
-            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
-            with db_session() as session:
-                term_results=manual_search(session,[term],num_results,ignore_previously_fetched,optimize_english,optimize_spanish,shuffle_keywords_option,language,enable_email_sending,log_container,from_email,reply_to,email_template)
-                results.extend(term_results['results'])
-                leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
-                if enable_email_sending:
-                    template=session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                    for result in term_results['results']:
-                        if not result or 'Email' not in result or not is_valid_email(result['Email']):
-                            status_text.text(f"Skipping invalid result or email: {result.get('Email') if result else 'None'}")
-                            continue
-                        wrapped_content=wrap_email_body(template.body_content)
-                        response,tracking_id=send_email_ses(session,from_email,result['Email'],template.subject,wrapped_content,reply_to=reply_to)
-                        if response:
-                            save_email_campaign(session,result['Email'],template.id,'sent',datetime.utcnow(),template.subject,response['MessageId'],wrapped_content)
-                            emails_sent.append(f"✅ {result['Email']}")
-                            status_text.text(f"Email sent to: {result['Email']}")
-                        else:
-                            save_email_campaign(session,result['Email'],template.id,'failed',datetime.utcnow(),template.subject,None,wrapped_content)
-                            emails_sent.append(f"❌ {result['Email']}")
-                            status_text.text(f"Failed to send email to: {result['Email']}")
-            leads_container.dataframe(pd.DataFrame({"Leads Found":leads_found,"Emails Sent":emails_sent+[""]*(len(leads_found)-len(emails_sent))}))
-            progress_bar.progress((i+1)/len(search_terms))
-        st.subheader("Search Results")
-        st.dataframe(pd.DataFrame(results))
-        if enable_email_sending:
-            st.subheader("Email Sending Results")
-            success_rate=sum(1 for email in emails_sent if email.startswith("✅"))/len(emails_sent) if emails_sent else 0
-            st.metric("Email Sending Success Rate",f"{success_rate:.2%}")
-        st.download_button(label="Download CSV",data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),file_name="search_results.csv",mime="text/csv")
+        if not search_terms:
+            return st.warning("Enter at least one search term.")
+            
+        if processing_mode == "Local":
+            # Existing local processing code
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            email_status = st.empty()
+            results = []
+            leads_container = st.empty()
+            leads_found, emails_sent = [], []
+            log_container = st.empty()
+            
+            for i, term in enumerate(search_terms):
+                status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
+                with db_session() as session:
+                    term_results = manual_search(
+                        session=session,
+                        terms=[term],
+                        num_results=num_results,
+                        ignore_previously_fetched=ignore_previously_fetched,
+                        optimize_english=optimize_english,
+                        optimize_spanish=optimize_spanish,
+                        shuffle_keywords_option=shuffle_keywords_option,
+                        language=language,
+                        enable_email_sending=enable_email_sending,
+                        log_container=log_container,
+                        from_email=from_email if enable_email_sending else None,
+                        reply_to=reply_to if enable_email_sending else None,
+                        email_template=email_template if enable_email_sending else None
+                    )
+                    
+                    results.extend(term_results['results'])
+                    leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
+                    
+                    if enable_email_sending:
+                        template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
+                        for result in term_results['results']:
+                            if not result or 'Email' not in result or not is_valid_email(result['Email']):
+                                status_text.text(f"Skipping invalid result or email: {result.get('Email') if result else 'None'}")
+                                continue
+                                
+                            wrapped_content = wrap_email_body(template.body_content)
+                            response, tracking_id = send_email_ses(
+                                session=session,
+                                from_email=from_email,
+                                to_email=result['Email'],
+                                subject=template.subject,
+                                body=wrapped_content,
+                                reply_to=reply_to
+                            )
+                            
+                            if response:
+                                save_email_campaign(
+                                    session=session,
+                                    lead_email=result['Email'],
+                                    template_id=template.id,
+                                    status='sent',
+                                    sent_at=datetime.utcnow(),
+                                    subject=template.subject,
+                                    message_id=response['MessageId'],
+                                    email_body=wrapped_content
+                                )
+                                emails_sent.append(f"✅ {result['Email']}")
+                                status_text.text(f"Email sent to: {result['Email']}")
+                            else:
+                                save_email_campaign(
+                                    session=session,
+                                    lead_email=result['Email'],
+                                    template_id=template.id,
+                                    status='failed',
+                                    sent_at=datetime.utcnow(),
+                                    subject=template.subject,
+                                    message_id=None,
+                                    email_body=wrapped_content
+                                )
+                                emails_sent.append(f"❌ {result['Email']}")
+                                status_text.text(f"Failed to send email to: {result['Email']}")
+                                
+                    leads_container.dataframe(pd.DataFrame({
+                        "Leads Found": leads_found,
+                        "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))
+                    }))
+                    progress_bar.progress((i + 1) / len(search_terms))
+                
+            st.subheader("Search Results")
+            st.dataframe(pd.DataFrame(results))
+            
+            if enable_email_sending:
+                st.subheader("Email Sending Results")
+                success_rate = sum(1 for email in emails_sent if email.startswith("✅")) / len(emails_sent) if emails_sent else 0
+                st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
+                
+            st.download_button(
+                label="Download CSV",
+                data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),
+                file_name="search_results.csv",
+                mime="text/csv"
+            )
+            
+        else:  # Worker mode
+            # Create settings dict for worker
+            worker_settings = {
+                "ignore_previously_fetched": ignore_previously_fetched,
+                "optimize_english": optimize_english,
+                "optimize_spanish": optimize_spanish,
+                "shuffle_keywords": shuffle_keywords_option,
+                "language": language,
+                "enable_email_sending": enable_email_sending
+            }
+            
+            if enable_email_sending:
+                worker_settings.update({
+                    "email_template_id": int(email_template.split(":")[0]),
+                    "from_email": from_email,
+                    "reply_to": reply_to
+                })
+            
+            # Send job to worker
+            try:
+                import requests
+                response = requests.post(
+                    "http://localhost:7860/api/predict",
+                    json={
+                        "data": [
+                            "\n".join(search_terms),
+                            num_results,
+                            json.dumps(worker_settings)
+                        ]
+                    }
+                )
+                
+                if response.status_code == 200:
+                    job_id = response.json()["data"]
+                    st.success(f"Job submitted successfully! Job ID: {job_id}")
+                    
+                    # Create status containers
+                    status_container = st.empty()
+                    progress_container = st.empty()
+                    logs_container = st.empty()
+                    results_container = st.empty()
+                    
+                    # Start polling for updates
+                    while True:
+                        status_response = requests.post(
+                            "http://localhost:7860/api/predict",
+                            json={
+                                "data": [job_id],
+                                "fn_index": 1  # Index of check_job_status function
+                            }
+                        ).json()
+                        
+                        status, progress, logs = status_response["data"]
+                        
+                        status_container.text(f"Status: {status}")
+                        progress_container.progress(float(progress.strip('%')) / 100)
+                        logs_container.text_area("Logs", logs, height=200)
+                        
+                        if status == "completed":
+                            # Get final results
+                            results_response = requests.post(
+                                "http://localhost:7860/api/predict",
+                                json={
+                                    "data": [job_id],
+                                    "fn_index": 2  # Index of get_job_results function
+                                }
+                            ).json()
+                            
+                            results = json.loads(results_response["data"])
+                            results_container.dataframe(pd.DataFrame(results))
+                            
+                            st.download_button(
+                                label="Download CSV",
+                                data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),
+                                file_name="search_results.csv",
+                                mime="text/csv"
+                            )
+                            break
+                            
+                        elif status == "error":
+                            st.error("Job failed. Check logs for details.")
+                            break
+                            
+                        time.sleep(1)  # Poll every second
+                        
+                else:
+                    st.error(f"Failed to submit job: {response.text}")
+                    
+            except Exception as e:
+                st.error(f"Error connecting to worker: {str(e)}")
+                st.info("Make sure the worker is running (python worker.py)")
 
 def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
                            func.count(distinct(Lead.id)).label('lead_count'),
-                           func.count(distinct(EmailCampaign.id)).label('email_count'))
-             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
-             .join(Lead, LeadSource.lead_id == Lead.id)
-             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
-             .group_by(SearchTerm.term))
-    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
-    return df
+                           func.count(distinct(EmailCampaign.id)).label('email_count')).join(LeadSource, SearchTerm.id == LeadSource.search_term_id).join(Lead, LeadSource.lead_id == Lead.id).outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id).group_by(SearchTerm.term))
+    return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def ai_automation_loop(session, log_container, leads_container):
     automation_logs, total_search_terms, total_emails_sent = [], 0, 0
