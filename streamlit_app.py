@@ -395,7 +395,8 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             message_id=message_id or f"unknown-{uuid.uuid4()}",
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
-            tracking_id=str(uuid.uuid4())
+            tracking_id=str(uuid.uuid4()))
+        
         session.add(new_campaign)
         session.commit()
     except Exception as e:
@@ -903,19 +904,127 @@ def update_display(container, items, title, item_key):
 
 def get_domain_from_url(url): return urlparse(url).netloc
 
+class SearchProcess(Base):
+    __tablename__ = 'search_processes'
+    id = Column(BigInteger, primary_key=True)
+    status = Column(Text)  # 'running', 'completed', 'error'
+    current_term = Column(Text)
+    current_term_index = Column(BigInteger)
+    total_terms = Column(BigInteger)
+    results = Column(JSON)
+    logs = Column(JSON, default=list)
+    error_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+def update_search_process(session, process_id, **kwargs):
+    try:
+        process = session.query(SearchProcess).get(process_id)
+        if process:
+            for key, value in kwargs.items():
+                setattr(process, key, value)
+            session.commit()
+    except Exception as e:
+        logging.error(f"Error updating search process: {str(e)}")
+        session.rollback()
+
+def background_manual_search(process_id, search_terms, num_results, ignore_previously_fetched=True, 
+                           optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, 
+                           language='ES', enable_email_sending=True, from_email=None, reply_to=None, 
+                           email_template=None):
+    with db_session() as session:
+        try:
+            results = []
+            total_leads = 0
+            
+            update_search_process(session, process_id, 
+                                status='running',
+                                total_terms=len(search_terms))
+
+            for i, term in enumerate(search_terms):
+                update_search_process(session, process_id,
+                                    current_term=term,
+                                    current_term_index=i)
+                
+                term_results = manual_search(session, [term], num_results,
+                                          ignore_previously_fetched, optimize_english,
+                                          optimize_spanish, shuffle_keywords_option,
+                                          language, enable_email_sending,
+                                          None, from_email, reply_to,
+                                          email_template)
+                
+                if term_results:
+                    results.extend(term_results['results'])
+                    total_leads += term_results['total_leads']
+                
+                update_search_process(session, process_id,
+                                    results=results)
+            
+            update_search_process(session, process_id,
+                                status='completed',
+                                results=results)
+            
+        except Exception as e:
+            error_msg = str(e)
+            logging.error(f"Error in background search: {error_msg}")
+            update_search_process(session, process_id,
+                                status='error',
+                                error_message=error_msg)
+
+def start_background_search(search_terms, num_results, ignore_previously_fetched=True,
+                          optimize_english=False, optimize_spanish=False,
+                          shuffle_keywords_option=False, language='ES',
+                          enable_email_sending=True, from_email=None,
+                          reply_to=None, email_template=None):
+    with db_session() as session:
+        new_process = SearchProcess(status='initializing')
+        session.add(new_process)
+        session.commit()
+        process_id = new_process.id
+        
+        import multiprocessing
+        p = multiprocessing.Process(
+            target=background_manual_search,
+            args=(process_id, search_terms, num_results),
+            kwargs={
+                'ignore_previously_fetched': ignore_previously_fetched,
+                'optimize_english': optimize_english,
+                'optimize_spanish': optimize_spanish,
+                'shuffle_keywords_option': shuffle_keywords_option,
+                'language': language,
+                'enable_email_sending': enable_email_sending,
+                'from_email': from_email,
+                'reply_to': reply_to,
+                'email_template': email_template
+            }
+        )
+        p.start()
+        return process_id
+
+def get_search_process_status(session, process_id):
+    process = session.query(SearchProcess).get(process_id)
+    if not process:
+        return None
+    return {
+        'status': process.status,
+        'current_term': process.current_term,
+        'current_term_index': process.current_term_index,
+        'total_terms': process.total_terms,
+        'results': process.results,
+        'logs': process.logs,
+        'error_message': process.error_message
+    }
+
 def manual_search_page():
     st.title("Manual Search")
 
     with db_session() as session:
         # Initialize session state if needed
-        if 'search_results' not in st.session_state:
-            st.session_state.search_results = []
-        if 'search_logs' not in st.session_state:
-            st.session_state.search_logs = []
+        if 'search_process_id' not in st.session_state:
+            st.session_state.search_process_id = None
 
         # Fetch recent searches within the session
         recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
-        # Materialize the terms within the session
         recent_search_terms = [term.term for term in recent_searches]
         
         email_templates = fetch_email_templates(session)
@@ -925,7 +1034,7 @@ def manual_search_page():
 
     with col1:
         search_terms = st_tags(
-            label='Enter search terms:',
+            label='Enter Search terms:',
             text='Press enter to add more',
             value=recent_search_terms,
             suggestions=['software engineer', 'data scientist', 'product manager'],
@@ -966,69 +1075,52 @@ def manual_search_page():
         if not search_terms:
             return st.warning("Enter at least one search term.")
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        email_status = st.empty()
-        results = []
-
-        leads_container = st.empty()
-        leads_found = []
-        emails_sent = []
-
-        # Create a single log container for all search terms
-        log_container = st.empty()
-
-        try:
-        for i, term in enumerate(search_terms):
-            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
-
-                term_results = manual_search(session, [term], num_results, 
-                                              ignore_previously_fetched, optimize_english, 
-                                              optimize_spanish, shuffle_keywords_option, 
-                                              language, enable_email_sending, 
-                                              log_container, from_email, reply_to, 
-                                              email_template)
-                
-                if term_results:
-                    results.extend(term_results['results'])
-                leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
-
-                if enable_email_sending:
-                        emails_sent.extend([f"✅ {res['Email']}" for res in term_results['results']])
-
-            progress_bar.progress((i + 1) / len(search_terms))
-
-            # Update the display containers
-            if leads_found or emails_sent:
-                leads_container.dataframe(pd.DataFrame({
-                    "Leads Found": leads_found,
-                    "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))
-                }))
-
-            # Store results in session state
-            st.session_state.search_results = results
-
-        except Exception as e:
-            st.error(f"An error occurred during search: {str(e)}")
-            logging.error(f"Search error: {str(e)}", exc_info=True)
-
-        # Display final results
-        st.subheader("Search Results")
-        st.dataframe(pd.DataFrame(results))
-
-        if enable_email_sending:
-            st.subheader("Email Sending Results")
-            success_rate = sum(1 for email in emails_sent if email.startswith("✅")) / len(emails_sent) if emails_sent else 0
-            st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
-
-        st.download_button(
-            label="Download CSV",
-            data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),
-            file_name="search_results.csv",
-            mime="text/csv",
+        # Start the background search process
+        process_id = start_background_search(
+            search_terms, num_results, ignore_previously_fetched,
+            optimize_english, optimize_spanish, shuffle_keywords_option,
+            language, enable_email_sending, from_email, reply_to, email_template
         )
+        st.session_state.search_process_id = process_id
+        st.experimental_rerun()
 
-# Update other functions that might be accessing detached objects
+    # Display search progress and results
+    if st.session_state.search_process_id:
+        process_status = get_search_process_status(session, st.session_state.search_process_id)
+        
+        if process_status:
+            if process_status['status'] == 'running':
+                progress = (process_status['current_term_index'] + 1) / process_status['total_terms']
+                st.progress(progress)
+                st.text(f"Searching: '{process_status['current_term']}' ({process_status['current_term_index'] + 1}/{process_status['total_terms']})")
+                
+                if process_status['results']:
+                    display_partial_results(process_status['results'])
+                
+            elif process_status['status'] == 'completed':
+                st.success("Search completed!")
+                if process_status['results']:
+                    display_search_results(process_status['results'], st.session_state.search_process_id)
+                    
+                    st.download_button(
+                        label="Download CSV",
+                        data=pd.DataFrame(process_status['results']).to_csv(index=False).encode('utf-8'),
+                        file_name="search_results.csv",
+                        mime="text/csv",
+                    )
+                
+            elif process_status['status'] == 'error':
+                st.error(f"An error occurred during search: {process_status['error_message']}")
+            
+            # Add a clear button to start a new search
+            if process_status['status'] in ['completed', 'error']:
+                if st.button("Clear Results"):
+                    st.session_state.search_process_id = None
+                    st.experimental_rerun()
+
+def display_partial_results(results):
+    st.subheader("Current Results")
+    st.dataframe(pd.DataFrame(results))
 
 def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
@@ -1168,7 +1260,7 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
                 status = 'sent'
                 message_id = response.get('MessageId', f"sent-{uuid.uuid4()}")
                 sent_count += 1
-                log_message = f"�� Email sent to: {lead['Email']}"
+                log_message = f"✅ Email sent to: {lead['Email']}"
             else:
                 status = 'failed'
                 message_id = f"failed-{uuid.uuid4()}"
