@@ -395,7 +395,8 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             message_id=message_id or f"unknown-{uuid.uuid4()}",
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
-            tracking_id=str(uuid.uuid4())
+            tracking_id=str(uuid.uuid4()))
+        
         session.add(new_campaign)
         session.commit()
     except Exception as e:
@@ -925,7 +926,7 @@ def manual_search_page():
 
     with col1:
         search_terms = st_tags(
-            label='Enter search terms:',
+            label='Enter Search terms:',
             text='Press enter to add more',
             value=recent_search_terms,
             suggestions=['software engineer', 'data scientist', 'product manager'],
