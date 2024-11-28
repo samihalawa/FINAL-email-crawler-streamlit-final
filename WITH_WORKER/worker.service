@@ -1,0 +1,16 @@
+[Unit]
+Description=Email Lead Generator Worker Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/path/to/your/app
+Environment=PYTHONPATH=/path/to/your/app
+ExecStart=/usr/bin/python3 worker_manager.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 
