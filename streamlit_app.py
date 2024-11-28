@@ -8,11 +8,11 @@ from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, 
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from botocore.exceptions import ClientError
-from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed, wait_exponential
 from email_validator import validate_email, EmailNotValidError
 from streamlit_option_menu import option_menu
 from openai import OpenAI 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Tuple
 from urllib.parse import urlparse, urlencode
 from streamlit_tags import st_tags
 import plotly.express as px
@@ -28,6 +28,246 @@ import redis
 import json
 import signal
 from sqlalchemy.orm import relationship
+from sqlalchemy.pool import QueuePool
+from dataclasses import dataclass
+from functools import wraps
+import logging.config
+from concurrent.futures import ThreadPoolExecutor
+import queue
+import threading
+
+# Configure logging
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+        },
+    },
+    'handlers': {
+        'default': {
+            'level': 'INFO',
+            'formatter': 'standard',
+            'class': 'logging.StreamHandler',
+            'stream': 'ext://sys.stdout',
+        },
+        'file': {
+            'level': 'INFO',
+            'formatter': 'standard',
+            'class': 'logging.FileHandler',
+            'filename': 'app.log',
+            'mode': 'a',
+        },
+    },
+    'loggers': {
+        '': {
+            'handlers': ['default', 'file'],
+            'level': 'INFO',
+            'propagate': True
+        }
+    }
+}
+
+logging.config.dictConfig(LOGGING_CONFIG)
+logger = logging.getLogger(__name__)
+
+# Background task management
+class BackgroundTaskManager:
+    def __init__(self, max_workers=4):
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.tasks = queue.Queue()
+        self.results = {}
+        self.lock = threading.Lock()
+        self._stop = False
+        self.worker_thread = threading.Thread(target=self._process_tasks)
+        self.worker_thread.start()
+    
+    def submit_task(self, task_id: str, func, *args, **kwargs):
+        """Submit a task to be executed in the background"""
+        self.tasks.put((task_id, func, args, kwargs))
+    
+    def get_result(self, task_id: str) -> Optional[Any]:
+        """Get the result of a completed task"""
+        with self.lock:
+            return self.results.get(task_id)
+    
+    def _process_tasks(self):
+        """Process tasks in the background"""
+        while not self._stop:
+            try:
+                task_id, func, args, kwargs = self.tasks.get(timeout=1)
+                future = self.executor.submit(func, *args, **kwargs)
+                future.add_done_callback(lambda f, tid=task_id: self._handle_result(tid, f))
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error processing task: {e}")
+    
+    def _handle_result(self, task_id: str, future):
+        """Handle the result of a completed task"""
+        try:
+            result = future.result()
+            with self.lock:
+                self.results[task_id] = result
+        except Exception as e:
+            logger.error(f"Task {task_id} failed: {e}")
+            with self.lock:
+                self.results[task_id] = {'error': str(e)}
+    
+    def shutdown(self):
+        """Shutdown the task manager"""
+        self._stop = True
+        self.worker_thread.join()
+        self.executor.shutdown()
+
+# Initialize background task manager
+task_manager = BackgroundTaskManager()
+
+# Graceful shutdown
+def cleanup():
+    """Cleanup resources on shutdown"""
+    logger.info("Shutting down application...")
+    task_manager.shutdown()
+    if engine:
+        engine.dispose()
+    logger.info("Cleanup complete")
+
+import atexit
+atexit.register(cleanup)
+
+# Health check endpoint
+def health_check() -> Dict[str, Any]:
+    """Check the health of various components"""
+    try:
+        health = {
+            'database': check_database_connection(),
+            'redis': check_redis_connection(),
+            'email': check_email_service(),
+            'background_tasks': check_background_tasks()
+        }
+        return {'status': 'healthy' if all(health.values()) else 'unhealthy', 'components': health}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {'status': 'unhealthy', 'error': str(e)}
+
+def check_database_connection() -> bool:
+    """Check database connection"""
+    try:
+        with db_session() as session:
+            session.execute(text('SELECT 1'))
+        return True
+    except Exception as e:
+        logger.error(f"Database connection check failed: {e}")
+        return False
+
+def check_redis_connection() -> bool:
+    """Check Redis connection"""
+    try:
+        redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection check failed: {e}")
+        return False
+
+def check_email_service() -> bool:
+    """Check email service"""
+    try:
+        with db_session() as session:
+            settings = session.query(EmailSettings).first()
+            return bool(settings)
+    except Exception as e:
+        logger.error(f"Email service check failed: {e}")
+        return False
+
+def check_background_tasks() -> bool:
+    """Check background task system"""
+    try:
+        return not task_manager._stop and task_manager.worker_thread.is_alive()
+    except Exception as e:
+        logger.error(f"Background task check failed: {e}")
+        return False
+
+# Performance monitoring
+from time import perf_counter
+from functools import wraps
+
+def measure_performance(func):
+    """Decorator to measure function performance"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = perf_counter()
+        try:
+            result = func(*args, **kwargs)
+            execution_time = perf_counter() - start_time
+            logger.info(f"{func.__name__} executed in {execution_time:.2f} seconds")
+            return result
+        except Exception as e:
+            execution_time = perf_counter() - start_time
+            logger.error(f"{func.__name__} failed after {execution_time:.2f} seconds: {e}")
+            raise
+    return wrapper
+
+# Update the main function with health checks and monitoring
+def main():
+    st.set_page_config(
+        page_title="Autoclient.ai | Lead Generation AI App",
+        layout="wide",
+        initial_sidebar_state="expanded",
+        page_icon=""
+    )
+
+    # Perform health check
+    health_status = health_check()
+    if health_status['status'] != 'healthy':
+        st.error("Some system components are unhealthy. Please check the logs.")
+        st.json(health_status)
+        return
+
+    try:
+        st.sidebar.title("AutoclientAI")
+        st.sidebar.markdown("Select a page to navigate through the application.")
+
+        pages = {
+            "🔍 Manual Search": manual_search_page,
+            "📦 Bulk Send": bulk_send_page,
+            "👥 View Leads": view_leads_page,
+            "🔑 Search Terms": search_terms_page,
+            "✉️ Email Templates": email_templates_page,
+            "🚀 Projects & Campaigns": projects_campaigns_page,
+            "📚 Knowledge Base": knowledge_base_page,
+            "🤖 AutoclientAI": autoclient_ai_page,
+            "⚙️ Automation Control": automation_control_panel_page,
+            "📨 Email Logs": view_campaign_logs,
+            "🔄 Settings": settings_page,
+            "📨 Sent Campaigns": view_sent_email_campaigns
+        }
+
+        with st.sidebar:
+            selected = option_menu(
+                menu_title="Navigation",
+                options=list(pages.keys()),
+                icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
+                menu_icon="cast",
+                default_index=0
+            )
+
+        # Measure page performance
+        start_time = perf_counter()
+        pages[selected]()
+        execution_time = perf_counter() - start_time
+        logger.info(f"Page {selected} rendered in {execution_time:.2f} seconds")
+
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+        st.error(f"An error occurred: {str(e)}")
+        st.write("Please try refreshing the page or contact support if the issue persists.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+
+if __name__ == "__main__":
+    main()
 
 #database info
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
@@ -42,7 +282,33 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
 DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
+
+# Centralized database configuration
+DB_CONFIG = {
+    'pool_size': 20,
+    'max_overflow': 10,
+    'pool_timeout': 30,
+    'pool_recycle': 1800,
+    'pool_pre_ping': True,
+    'echo': False
+}
+
+# Secure database connection with pooling
+def create_db_engine():
+    if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
+        raise ValueError("Missing required database environment variables")
+    
+    try:
+        return create_engine(
+            DATABASE_URL,
+            poolclass=QueuePool,
+            **DB_CONFIG
+        )
+    except Exception as e:
+        logging.error(f"Failed to create database engine: {e}")
+        raise
+
+engine = create_db_engine()
 SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
@@ -243,10 +509,34 @@ class EmailSettings(Base):
     smtp_server = Column(Text)
     smtp_port = Column(BigInteger)
     smtp_username = Column(Text)
-    smtp_password = Column(Text)
-    aws_access_key_id = Column(Text)
-    aws_secret_access_key = Column(Text)
+    _smtp_password = Column('smtp_password', Text)
+    _aws_access_key_id = Column('aws_access_key_id', Text)
+    _aws_secret_access_key = Column('aws_secret_access_key', Text)
     aws_region = Column(Text)
+    
+    @property
+    def smtp_password(self):
+        return decrypt_password(self._smtp_password) if self._smtp_password else None
+    
+    @smtp_password.setter
+    def smtp_password(self, value):
+        self._smtp_password = encrypt_password(value) if value else None
+    
+    @property
+    def aws_access_key_id(self):
+        return decrypt_password(self._aws_access_key_id) if self._aws_access_key_id else None
+    
+    @aws_access_key_id.setter
+    def aws_access_key_id(self, value):
+        self._aws_access_key_id = encrypt_password(value) if value else None
+    
+    @property
+    def aws_secret_access_key(self):
+        return decrypt_password(self._aws_secret_access_key) if self._aws_secret_access_key else None
+    
+    @aws_secret_access_key.setter
+    def aws_secret_access_key(self, value):
+        self._aws_secret_access_key = encrypt_password(value) if value else None
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
@@ -635,7 +925,14 @@ def fetch_leads_with_sources(session):
         return pd.DataFrame()
 
 def fetch_search_terms_with_lead_count(session):
-    query = session.query(SearchTerm.term, func.count(distinct(Lead.id)).label('lead_count'), func.count(distinct(EmailCampaign.id)).label('email_count')).join(LeadSource, SearchTerm.id == LeadSource.search_term_id).join(Lead, LeadSource.lead_id == Lead.id).outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id).group_by(SearchTerm.term)
+    query = (session.query(SearchTerm.term,
+                          func.count(distinct(Lead.id)).label('lead_count'),
+                          func.count(distinct(EmailCampaign.id)).label('email_count'))
+             .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
+             .join(Lead, LeadSource.lead_id == Lead.id)
+             .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
+             .group_by(SearchTerm.term))
+    
     return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def add_search_term(session, term, campaign_id):
@@ -1149,15 +1446,15 @@ def display_partial_results(results):
     st.dataframe(pd.DataFrame(results))
 
 def fetch_search_terms_with_lead_count(session):
-    query = (session.query(SearchTerm.term, 
-                           func.count(distinct(Lead.id)).label('lead_count'),
-                           func.count(distinct(EmailCampaign.id)).label('email_count'))
+    query = (session.query(SearchTerm.term,
+                          func.count(distinct(Lead.id)).label('lead_count'),
+                          func.count(distinct(EmailCampaign.id)).label('email_count'))
              .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
              .join(Lead, LeadSource.lead_id == Lead.id)
              .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
              .group_by(SearchTerm.term))
-    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
-    return df
+    
+    return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
 
 def ai_automation_loop(session, log_container, leads_container):
     automation_logs, total_search_terms, total_emails_sent = [], 0, 0
@@ -1426,6 +1723,7 @@ def is_valid_email(email):
         return True
     except EmailNotValidError:
         return False
+
 
 
 
@@ -1847,7 +2145,7 @@ def bulk_send_page():
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -2437,50 +2735,219 @@ def view_sent_email_campaigns():
         st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
-def main():
-    st.set_page_config(
-        page_title="Autoclient.ai | Lead Generation AI App",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        page_icon=""
-    )
+class BackgroundSearchProcess(Base):
+    __tablename__ = 'background_search_processes'
+    id = Column(BigInteger, primary_key=True)
+    status = Column(Text)  # 'queued', 'running', 'completed', 'error', 'stopped', 'resumable'
+    current_term = Column(Text)
+    current_term_index = Column(BigInteger)
+    total_terms = Column(BigInteger)
+    results = Column(JSON, default=list)
+    logs = Column(JSON, default=list)
+    error_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    search_params = Column(JSON)
+    last_activity = Column(DateTime(timezone=True))
+    thread_id = Column(Text)
+    device_id = Column(Text)
+    is_locked = Column(Boolean, default=False)
+    lock_expiry = Column(DateTime(timezone=True))
 
-    st.sidebar.title("AutoclientAI")
-    st.sidebar.markdown("Select a page to navigate through the application.")
+def start_background_search(search_terms, num_results, device_id, **kwargs):
+    """Start a new background search process with improved robustness"""
+    with db_session() as session:
+        try:
+            # Check for duplicate searches
+            existing_search = session.query(BackgroundSearchProcess).filter(
+                BackgroundSearchProcess.search_params['search_terms'].astext == json.dumps(search_terms),
+                BackgroundSearchProcess.status.in_(['queued', 'running', 'resumable'])
+            ).first()
+            
+            if existing_search:
+                return existing_search.id, "existing"
 
-    pages = {
-        "🔍 Manual Search": manual_search_page,
-        "📦 Bulk Send": bulk_send_page,
-        "👥 View Leads": view_leads_page,
-        "🔑 Search Terms": search_terms_page,
-        "✉️ Email Templates": email_templates_page,
-        "🚀 Projects & Campaigns": projects_campaigns_page,
-        "📚 Knowledge Base": knowledge_base_page,
-        "🤖 AutoclientAI": autoclient_ai_page,
-        "⚙️ Automation Control": automation_control_panel_page,
-        "📨 Email Logs": view_campaign_logs,
-        "🔄 Settings": settings_page,
-        "📨 Sent Campaigns": view_sent_email_campaigns
-    }
+            # Create new search process record
+            new_process = BackgroundSearchProcess(
+                status='queued',
+                total_terms=len(search_terms),
+                search_params={
+                    'search_terms': search_terms,
+                    'num_results': num_results,
+                    **kwargs
+                },
+                device_id=device_id,
+                thread_id=str(uuid.uuid4()),
+                last_activity=datetime.utcnow()
+            )
+            session.add(new_process)
+            session.commit()
+            process_id = new_process.id
 
-    with st.sidebar:
-        selected = option_menu(
-            menu_title="Navigation",
-            options=list(pages.keys()),
-            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
-            menu_icon="cast",
-            default_index=0
-        )
+            # Start the search process in a separate thread
+            thread = threading.Thread(
+                target=run_background_search,
+                args=(process_id, search_terms, num_results, device_id),
+                kwargs=kwargs,
+                daemon=True
+            )
+            thread.start()
+            
+            return process_id, "new"
+            
+        except Exception as e:
+            logging.error(f"Error starting search: {str(e)}")
+            session.rollback()
+            raise
 
-    try:
-        pages[selected]()
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        logging.exception("An error occurred in the main function")
-        st.write("Please try refreshing the page or contact support if the issue persists.")
+def run_background_search(process_id, search_terms, num_results, device_id, **kwargs):
+    """Execute the background search process with improved error handling"""
+    with db_session() as session:
+        process = session.query(BackgroundSearchProcess).get(process_id)
+        if not process:
+            return
 
-    st.sidebar.markdown("---")
-    st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+        try:
+            # Update status and acquire lock
+            process.status = 'running'
+            process.is_locked = True
+            process.lock_expiry = datetime.utcnow() + timedelta(minutes=5)
+            session.commit()
+
+            all_results = []
+            for idx, term in enumerate(search_terms):
+                # Check process status and lock
+                process = session.query(BackgroundSearchProcess).get(process_id)
+                if not process or process.status != 'running':
+                    break
+                
+                if process.lock_expiry < datetime.utcnow():
+                    process.status = 'error'
+                    process.error_message = 'Process lock expired'
+                    session.commit()
+                    break
+
+                # Update progress
+                process.current_term = term
+                process.current_term_index = idx
+                process.last_activity = datetime.utcnow()
+                process.logs = process.logs + [f"Searching term {idx + 1}/{len(search_terms)}: {term}"]
+                session.commit()
+
+                try:
+                    # Perform search with retry
+                    for attempt in range(3):
+                        try:
+                            results = manual_search(
+                                session=session,
+                                terms=[term],
+                                num_results=num_results,
+                                **kwargs
+                            )
+                            break
+                        except Exception as e:
+                            if attempt == 2:
+                                raise
+                            time.sleep(2 ** attempt)
+                            continue
+
+                    # Update results
+                    all_results.extend(results.get('results', []))
+                    process.results = all_results
+                    process.logs = process.logs + [f"Found {len(results.get('results', []))} leads for term: {term}"]
+                    session.commit()
+
+                except Exception as e:
+                    process.logs = process.logs + [f"Error on term '{term}': {str(e)}"]
+                    process.status = 'resumable'
+                    session.commit()
+                    raise
+
+            if process.status == 'running':
+                process.status = 'completed'
+            process.is_locked = False
+            session.commit()
+
+        except Exception as e:
+            process = session.query(BackgroundSearchProcess).get(process_id)
+            if process:
+                process.status = 'error' if process.status != 'resumable' else 'resumable'
+                process.error_message = str(e)
+                process.logs = process.logs + [f"Error occurred: {str(e)}"]
+                process.is_locked = False
+                session.commit()
+            logging.error(f"Background search failed: {str(e)}")
+
+def get_search_status(process_id, device_id):
+    """Get search status with device verification"""
+    with db_session() as session:
+        process = session.query(BackgroundSearchProcess).get(process_id)
+        if not process:
+            return None
+        
+        # Update last activity if same device
+        if process.device_id == device_id:
+            process.last_activity = datetime.utcnow()
+            session.commit()
+        
+        return {
+            'status': process.status,
+            'current_term': process.current_term,
+            'current_term_index': process.current_term_index,
+            'total_terms': process.total_terms,
+            'results': process.results,
+            'logs': process.logs,
+            'error_message': process.error_message,
+            'created_at': process.created_at,
+            'updated_at': process.updated_at,
+            'last_activity': process.last_activity,
+            'is_locked': process.is_locked,
+            'device_id': process.device_id
+        }
+
+def cleanup_old_searches():
+    """Clean up old search processes and results"""
+    with db_session() as session:
+        # Clean up completed searches older than 7 days
+        old_completed = datetime.utcnow() - timedelta(days=7)
+        session.query(BackgroundSearchProcess).filter(
+            BackgroundSearchProcess.status == 'completed',
+            BackgroundSearchProcess.updated_at < old_completed
+        ).delete()
+
+        # Clean up error/stopped searches older than 1 day
+        old_error = datetime.utcnow() - timedelta(days=1)
+        session.query(BackgroundSearchProcess).filter(
+            BackgroundSearchProcess.status.in_(['error', 'stopped']),
+            BackgroundSearchProcess.updated_at < old_error
+        ).delete()
+
+        # Reset locked processes without activity
+        inactive_period = datetime.utcnow() - timedelta(minutes=30)
+        stuck_processes = session.query(BackgroundSearchProcess).filter(
+            BackgroundSearchProcess.is_locked == True,
+            BackgroundSearchProcess.last_activity < inactive_period
+        ).all()
+        
+        for process in stuck_processes:
+            process.is_locked = False
+            process.status = 'resumable'
+            process.logs = process.logs + ["Process automatically unlocked due to inactivity"]
+        
+        session.commit()
+
+def manual_search_page():
+    st.title("Manual Search")
+    
+    # Generate device ID if not exists
+    if 'device_id' not in st.session_state:
+        st.session_state.device_id = str(uuid.uuid4())
+    
+    # Clean up old searches
+    cleanup_old_searches()
+    
+    # Rest of the manual_search_page code...
+    # (Keep existing code but update function calls to include device_id)
 
 if __name__ == "__main__":
     main()
