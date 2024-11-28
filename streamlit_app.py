@@ -21,9 +21,13 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
-from threading import Thread
-from queue import Queue
-import threading
+from multiprocessing import Process, Queue, Pool, cpu_count, Manager
+import multiprocessing
+import pickle
+import redis
+import json
+import signal
+from sqlalchemy.orm import relationship
 
 #database info
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
@@ -44,6 +48,13 @@ SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
+# Add Redis connection for persistent state
+redis_client = redis.Redis(
+    host=os.getenv('REDIS_HOST', 'localhost'),
+    port=int(os.getenv('REDIS_PORT', 6379)),
+    password=os.getenv('REDIS_PASSWORD', None),
+    decode_responses=True
+)
 
 class Project(Base):
     __tablename__ = 'projects'
@@ -943,157 +954,195 @@ def update_search_process(session, process_id, **kwargs):
         logging.error(f"Error updating search process: {str(e)}")
         session.rollback()
 
-class SearchWorker:
-    _instance = None
-    
-    @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-    
-    def __init__(self):
-        self.queue = Queue()
-        self.thread = None
-        self.running = False
-    
-    def start(self):
-        if not self.running:
-            self.running = True
-            self.thread = Thread(target=self._process_queue, daemon=True)
-            self.thread.start()
-    
-    def _process_queue(self):
-        while self.running:
-            try:
-                if not self.queue.empty():
-                    process_id = self.queue.get()
-                    self._execute_search(process_id)
-                else:
-                    time.sleep(0.1)
-            except Exception as e:
-                logging.error(f"Error in search worker: {str(e)}")
-    
-    def _execute_search(self, process_id):
-        with db_session() as session:
-            process = session.query(SearchProcess).get(process_id)
-            if not process or process.status == 'completed':
-                return
-            
-            try:
-                process.status = 'running'
-                session.commit()
+def search_worker(term_queue, result_queue, search_params):
+    """Worker process for parallel search operations"""
+    while True:
+        try:
+            term = term_queue.get()
+            if term is None:  # Poison pill
+                break
                 
-                params = process.search_params
-                results = []
-                
-                for i, term in enumerate(params['search_terms']):
-                    process.current_term = term
-                    process.current_term_index = i
-                    session.commit()
-                    
-                    term_results = manual_search(
-                        session, [term], 
-                        params['num_results'],
-                        **{k:v for k,v in params.items() if k not in ['search_terms', 'num_results']}
-                    )
-                    
-                    if term_results:
-                        results.extend(term_results['results'])
-                        process.results = results
-                        session.commit()
-                
-                process.status = 'completed'
-                session.commit()
-                
-            except Exception as e:
-                process.status = 'error'
-                process.error_message = str(e)
-                session.commit()
-                raise
+            with db_session() as session:
+                results = manual_search(
+                    session=session,
+                    terms=[term],
+                    num_results=search_params['num_results'],
+                    ignore_previously_fetched=search_params.get('ignore_previously_fetched', True),
+                    optimize_english=search_params.get('optimize_english', False),
+                    optimize_spanish=search_params.get('optimize_spanish', False),
+                    shuffle_keywords_option=search_params.get('shuffle_keywords_option', False),
+                    language=search_params.get('language', 'ES'),
+                    enable_email_sending=search_params.get('enable_email_sending', False),
+                    from_email=search_params.get('from_email'),
+                    reply_to=search_params.get('reply_to'),
+                    email_template=search_params.get('email_template')
+                )
+                result_queue.put((term, results))
+        except Exception as e:
+            logging.error(f"Error in search worker: {str(e)}")
+            result_queue.put((term, {'error': str(e)}))
 
-    def add_search(self, process_id):
-        self.queue.put(process_id)
+def parallel_search(search_terms, search_params, num_processes=None):
+    """Execute searches in parallel using multiple processes"""
+    if num_processes is None:
+        num_processes = min(cpu_count(), len(search_terms))
+    
+    term_queue = multiprocessing.Queue()
+    result_queue = multiprocessing.Queue()
+    
+    # Start worker processes
+    processes = []
+    for _ in range(num_processes):
+        p = Process(target=search_worker, args=(term_queue, result_queue, search_params))
+        p.start()
+        processes.append(p)
+    
+    # Add search terms to queue
+    for term in search_terms:
+        term_queue.put(term)
+    
+    # Add poison pills to stop workers
+    for _ in range(num_processes):
+        term_queue.put(None)
+    
+    # Collect results
+    results = []
+    completed = 0
+    total_terms = len(search_terms)
+    
+    while completed < total_terms:
+        term, result = result_queue.get()
+        if 'error' not in result:
+            results.extend(result.get('results', []))
+        completed += 1
+        
+        # Update progress in session state
+        if 'search_progress' in st.session_state:
+            st.session_state.search_progress = completed / total_terms
+    
+    # Wait for all processes to complete
+    for p in processes:
+        p.join()
+    
+    return results
 
 def start_manual_search(search_terms, num_results, **kwargs):
-    """Start a new search process"""
+    """Start a new parallel search process"""
     with db_session() as session:
         try:
             # Create new search process record
-            new_process = SearchProcess(
-                status='queued',
-                created_at=datetime.utcnow()
-            )
-            session.add(new_process)
-            session.commit()
-            process_id = new_process.id
-            
-            # Add search to worker queue
-            search_worker.add_search(process_id)
-            
-            return process_id
-        except Exception as e:
-            logging.error(f"Error starting search: {str(e)}")
-            session.rollback()
-            raise
-
-def manual_search_page():
-    worker = SearchWorker.get_instance()
-    worker.start()
-    
-    st.title("Manual Search")
-    
-    with db_session() as session:
-        # Show all active and recent searches
-        searches = (session.query(SearchProcess)
-                   .order_by(SearchProcess.created_at.desc())
-                   .limit(5)
-                   .all())
-        
-        for search in searches:
-            with st.expander(f"Search {search.id} - {search.status}", 
-                           expanded=search.status in ['queued', 'running']):
-                if search.total_terms:
-                    progress = (search.current_term_index or 0) / search.total_terms
-                    st.progress(progress)
-                    st.text(f"Searching: '{search.current_term}' ({(search.current_term_index or 0) + 1}/{search.total_terms})")
-                
-                if search.results:
-                    st.dataframe(pd.DataFrame(search.results))
-                
-                if search.error_message:
-                    st.error(search.error_message)
-        
-        # Rest of your existing setup code...
-        
-        if st.button("Search"):
-            if not search_terms:
-                return st.warning("Enter at least one search term.")
-            
-            # Create new search process with all parameters
             new_process = SearchProcess(
                 status='queued',
                 total_terms=len(search_terms),
                 search_params={
                     'search_terms': search_terms,
                     'num_results': num_results,
-                    'ignore_previously_fetched': ignore_previously_fetched,
-                    'optimize_english': optimize_english,
-                    'optimize_spanish': optimize_spanish,
-                    'shuffle_keywords_option': shuffle_keywords_option,
-                    'language': language,
-                    'enable_email_sending': enable_email_sending,
-                    'from_email': from_email,
-                    'reply_to': reply_to,
-                    'email_template': email_template
+                    **kwargs
                 }
             )
             session.add(new_process)
             session.commit()
+            process_id = new_process.id
             
-            worker.add_search(new_process.id)
-            st.success(f"Search started with ID: {new_process.id}")
-            st.experimental_rerun()
+            # Initialize progress in session state
+            st.session_state.search_progress = 0
+            
+            # Start parallel search
+            results = parallel_search(search_terms, new_process.search_params)
+            
+            # Update process with results
+            new_process.status = 'completed'
+            new_process.results = results
+            session.commit()
+            
+            return process_id
+            
+        except Exception as e:
+            logging.error(f"Error starting search: {str(e)}")
+            session.rollback()
+            raise
+
+def manual_search_page():
+    st.title("Manual Search")
+    
+    # Display active searches
+    with db_session() as session:
+        active_processes = session.query(BackgroundSearchProcess).filter(
+            BackgroundSearchProcess.status.in_(['queued', 'running'])
+        ).order_by(BackgroundSearchProcess.created_at.desc()).all()
+        
+        recent_processes = session.query(BackgroundSearchProcess).filter(
+            BackgroundSearchProcess.status.in_(['completed', 'error', 'stopped'])
+        ).order_by(BackgroundSearchProcess.created_at.desc()).limit(5).all()
+        
+        # Show active processes
+        if active_processes:
+            st.header("Active Searches")
+            for process in active_processes:
+                with st.expander(f"Search {process.id} - {process.status}", expanded=True):
+                    status = get_search_status(process.id)
+                    
+                    if status:
+                        if status['total_terms']:
+                            progress = (status['current_term_index'] or 0) / status['total_terms']
+                            st.progress(progress)
+                            st.text(f"Searching: '{status['current_term']}' ({(status['current_term_index'] or 0) + 1}/{status['total_terms']})")
+                        
+                        if status.get('results'):
+                            st.dataframe(pd.DataFrame(status['results']))
+                        
+                        if status.get('logs'):
+                            st.text_area("Logs", "\n".join(status['logs']), height=200)
+                        
+                        if st.button(f"Stop Search {process.id}"):
+                            stop_background_search(process.id)
+                            st.rerun()
+        
+        # Show recent completed/error processes
+        if recent_processes:
+            st.header("Recent Searches")
+            for process in recent_processes:
+                with st.expander(f"Search {process.id} - {process.status}", expanded=False):
+                    status = get_search_status(process.id)
+                    if status:
+                        st.text(f"Completed: {process.updated_at}")
+                        if status.get('results'):
+                            st.dataframe(pd.DataFrame(status['results']))
+                        if status.get('logs'):
+                            st.text_area("Logs", "\n".join(status['logs']), height=200)
+        
+        # Search form
+        st.header("Start New Search")
+        search_terms = st_tags(
+            label="Enter search terms",
+            text="Press enter after each term",
+            value=[],
+            key="search_terms"
+        )
+        
+        num_results = st.number_input("Results per term", min_value=1, value=10)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            ignore_previously_fetched = st.checkbox("Ignore previously fetched", value=True)
+        with col2:
+            optimize_english = st.checkbox("Optimize for English")
+        with col3:
+            optimize_spanish = st.checkbox("Optimize for Spanish")
+        
+        if st.button("Start Background Search"):
+            if not search_terms:
+                st.warning("Enter at least one search term.")
+            else:
+                process_id = start_background_search(
+                    search_terms=search_terms,
+                    num_results=num_results,
+                    ignore_previously_fetched=ignore_previously_fetched,
+                    optimize_english=optimize_english,
+                    optimize_spanish=optimize_spanish
+                )
+                st.success(f"Background search started with ID: {process_id}")
+                st.rerun()
 
 def display_partial_results(results):
     st.subheader("Current Results")
