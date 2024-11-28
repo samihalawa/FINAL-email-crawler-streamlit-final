@@ -99,19 +99,38 @@
 </head>
 <body class="bg-gray-50">
     <!-- Navigation -->
-    <nav class="fixed w-full bg-white/90 backdrop-blur-sm shadow-sm z-50">
+    <nav class="fixed w-full bg-white shadow-lg z-50">
         <div class="container mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16">
+            <div class="flex justify-between items-center h-16">
                 <div class="flex items-center">
                     <span class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-blue-800">AutoclientAI</span>
                 </div>
-                <div class="flex items-center space-x-8">
+                
+                <!-- Mobile menu button -->
+                <div class="flex md:hidden">
+                    <button type="button" onclick="toggleMobileMenu()" class="text-gray-600 hover:text-blue-600 focus:outline-none">
+                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Desktop menu -->
+                <div class="hidden md:flex items-center space-x-8">
                     <a href="#features" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="en">Features</a>
                     <a href="#features" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="es">Características</a>
                     <a href="#testimonials" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="en">Testimonials</a>
                     <a href="#testimonials" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="es">Testimonios</a>
                     <a href="#pricing" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="en">Pricing</a>
                     <a href="#pricing" class="nav-link text-gray-600 hover:text-blue-600 transition-colors" data-lang="es">Precios</a>
+                    <a href="mailto:hello@autoclient.ai" class="nav-link text-gray-600 hover:text-blue-600 transition-colors">
+                        <i class="ri-mail-line mr-1"></i>
+                        <span>Contact</span>
+                    </a>
+                    <a href="https://api.whatsapp.com/send?phone=34679794037" target="_blank" class="nav-link text-gray-600 hover:text-blue-600 transition-colors">
+                        <i class="ri-whatsapp-line mr-1"></i>
+                        <span>WhatsApp</span>
+                    </a>
                     <button onclick="toggleLanguage()" class="p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
                         <span data-lang="en">🇪🇸</span>
                         <span data-lang="es">🇺🇸</span>
@@ -120,6 +139,30 @@
                         <span data-lang="en">Start Free Trial</span>
                         <span data-lang="es">Prueba Gratuita</span>
                     </a>
+                </div>
+            </div>
+
+            <!-- Mobile menu -->
+            <div id="mobile-menu" class="hidden md:hidden bg-white border-t mt-2 py-4">
+                <div class="flex flex-col space-y-4 px-4">
+                    <a href="#features" class="text-gray-600 hover:text-blue-600" data-lang="en">Features</a>
+                    <a href="#features" class="text-gray-600 hover:text-blue-600" data-lang="es">Características</a>
+                    <a href="#testimonials" class="text-gray-600 hover:text-blue-600" data-lang="en">Testimonials</a>
+                    <a href="#testimonials" class="text-gray-600 hover:text-blue-600" data-lang="es">Testimonios</a>
+                    <a href="#pricing" class="text-gray-600 hover:text-blue-600" data-lang="en">Pricing</a>
+                    <a href="#pricing" class="text-gray-600 hover:text-blue-600" data-lang="es">Precios</a>
+                    <a href="mailto:hello@autoclient.ai" class="text-gray-600 hover:text-blue-600">
+                        <i class="ri-mail-line mr-1"></i>
+                        <span>Contact</span>
+                    </a>
+                    <a href="https://api.whatsapp.com/send?phone=34679794037" target="_blank" class="text-gray-600 hover:text-blue-600">
+                        <i class="ri-whatsapp-line mr-1"></i>
+                        <span>WhatsApp</span>
+                    </a>
+                    <button onclick="toggleLanguage()" class="text-left text-gray-600 hover:text-blue-600">
+                        <span data-lang="en">🇪🇸 Español</span>
+                        <span data-lang="es">🇺🇸 English</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -527,6 +570,22 @@
                     behavior: 'smooth'
                 });
             });
+        });
+
+        // Mobile menu toggle
+        function toggleMobileMenu() {
+            const mobileMenu = document.getElementById('mobile-menu');
+            mobileMenu.classList.toggle('hidden');
+        }
+
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const mobileMenu = document.getElementById('mobile-menu');
+            const mobileMenuButton = document.querySelector('button[onclick="toggleMobileMenu()"]');
+            
+            if (!mobileMenuButton.contains(event.target) && !mobileMenu.contains(event.target)) {
+                mobileMenu.classList.add('hidden');
+            }
         });
     </script>
 </body>
