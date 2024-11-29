@@ -21,6 +21,8 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+import threading
+from queue import Queue
 #database info
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -396,32 +398,30 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
-        )
+        )  # Added closing parenthesis
         session.add(new_campaign)
         session.commit()
-    except Exception as e:
+        return new_campaign
+    except Exception as e:  # Added except clause
         logging.error(f"Error saving email campaign: {str(e)}")
         session.rollback()
         return None
-    return new_campaign
 
 def update_log(log_container, message, level='info'):
+    if not log_container:
+        return
+        
     icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
     log_entry = f"{icon} {message}"
-    
-    # Simple console logging without HTML
-    print(f"{icon} {message.split('<')[0]}")  # Only print the first part of the message before any HTML tags
     
     if 'log_entries' not in st.session_state:
         st.session_state.log_entries = []
     
-    # HTML-formatted log entry for Streamlit display
-    html_log_entry = f"{icon} {message}"
-    st.session_state.log_entries.append(html_log_entry)
-    
-    # Update the Streamlit display with all logs
-    log_html = f"<div style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
-    log_container.markdown(log_html, unsafe_allow_html=True)
+    st.session_state.log_entries.append(log_entry)
+    log_container.markdown(
+        f"<div style='height: 300px; overflow-y: auto;'>{'<br>'.join(st.session_state.log_entries)}</div>",
+        unsafe_allow_html=True
+    )
 
 def optimize_search_term(search_term, language):
     if language == 'english':
@@ -459,9 +459,10 @@ def extract_info_from_page(soup):
     return name, company, job_title
 
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None):
+    # Use single session for entire search operation
     ua, results, total_leads, domains_processed = UserAgent(), [], 0, set()
-    processed_emails_per_domain = {}  # Track processed emails per domain
-    
+    processed_emails_per_domain = {}
+
     for original_term in terms:
         try:
             search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
@@ -948,61 +949,81 @@ def manual_search_page():
         if not search_terms:
             return st.warning("Enter at least one search term.")
 
+        # Initialize session state
+        if 'search_thread' not in st.session_state:
+            st.session_state.search_thread = None
+        if 'search_results' not in st.session_state:
+            st.session_state.search_results = []
+        if 'search_status' not in st.session_state:
+            st.session_state.search_status = None
+        if 'search_progress' not in st.session_state:
+            st.session_state.search_progress = 0
+
         progress_bar = st.progress(0)
         status_text = st.empty()
-        email_status = st.empty()
-        results = []
-
-        leads_container = st.empty()
-        leads_found, emails_sent = [], []
-
-        # Create a single log container for all search terms
+        results_container = st.empty()
         log_container = st.empty()
 
-        for i, term in enumerate(search_terms):
-            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
-
+        def background_search():
             with db_session() as session:
-                term_results = manual_search(session, [term], num_results, ignore_previously_fetched, optimize_english, optimize_spanish, shuffle_keywords_option, language, enable_email_sending, log_container, from_email, reply_to, email_template)
-                results.extend(term_results['results'])
+                st.session_state.search_results = []
+                total_terms = len(search_terms)
+                
+                for i, term in enumerate(search_terms):
+                    if st.session_state.search_status != 'running':
+                        break
+                        
+                    st.session_state.search_status = f"Searching: '{term}' ({i+1}/{total_terms})"
+                    st.session_state.search_progress = (i + 1) / total_terms
+                    
+                    results = manual_search(
+                        session,
+                        [term],
+                        num_results,
+                        ignore_previously_fetched,
+                        optimize_english,
+                        optimize_spanish,
+                        shuffle_keywords_option,
+                        language,
+                        enable_email_sending,
+                        log_container,
+                        from_email if enable_email_sending else None,
+                        reply_to if enable_email_sending else None,
+                        email_template if enable_email_sending else None
+                    )
+                    
+                    st.session_state.search_results.extend(results.get('results', []))
+                
+                st.session_state.search_status = 'completed'
 
-                leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
+        # Start background search
+        if st.session_state.search_thread is None or not st.session_state.search_thread.is_alive():
+            st.session_state.search_status = 'running'
+            st.session_state.search_thread = threading.Thread(target=background_search)
+            st.session_state.search_thread.start()
 
-                if enable_email_sending:
-                    template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                    for result in term_results['results']:
-                        if not result or 'Email' not in result or not is_valid_email(result['Email']):
-                            status_text.text(f"Skipping invalid result or email: {result.get('Email') if result else 'None'}")
-                            continue
-                        wrapped_content = wrap_email_body(template.body_content)
-                        response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
-                        if response:
-                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), template.body_content)
-                            emails_sent.append(f"✅ {result['Email']}")
-                            status_text.text(f"Email sent to: {result['Email']}")
-                        else:
-                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, template.body_content)
-                            emails_sent.append(f"❌ {result['Email']}")
-                            status_text.text(f"Failed to send email to: {result['Email']}")
-
-            leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
-            progress_bar.progress((i + 1) / len(search_terms))
-
-        # Display final results
-        st.subheader("Search Results")
-        st.dataframe(pd.DataFrame(results))
-
-        if enable_email_sending:
-            st.subheader("Email Sending Results")
-            success_rate = sum(1 for email in emails_sent if email.startswith("✅")) / len(emails_sent) if emails_sent else 0
-            st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
-
-        st.download_button(
-            label="Download CSV",
-            data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),
-            file_name="search_results.csv",
-            mime="text/csv",
-        )
+        # Update UI based on status
+        if st.session_state.search_status == 'running':
+            status_text.text(st.session_state.search_status)
+            progress_bar.progress(st.session_state.search_progress)
+            
+            if st.button("Stop Search"):
+                st.session_state.search_status = 'stopped'
+                
+        elif st.session_state.search_status == 'completed':
+            status_text.text("Search completed!")
+            progress_bar.progress(1.0)
+            
+            if st.session_state.search_results:
+                df = pd.DataFrame(st.session_state.search_results)
+                results_container.dataframe(df)
+                
+                st.download_button(
+                    label="Download CSV",
+                    data=df.to_csv(index=False).encode('utf-8'),
+                    file_name="search_results.csv",
+                    mime="text/csv",
+                )
 
 # Update other functions that might be accessing detached objects
 
