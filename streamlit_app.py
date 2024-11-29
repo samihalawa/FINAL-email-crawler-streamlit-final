@@ -4,67 +4,85 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_
+from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
-from sqlalchemy.exc import SQLAlchemyError
-from botocore.exceptions import ClientError
-from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed
-from email_validator import validate_email, EmailNotValidError
-from streamlit_option_menu import option_menu
-from openai import OpenAI 
-from typing import List, Optional, Dict, Any
-from urllib.parse import urlparse, urlencode
-from streamlit_tags import st_tags
-import plotly.express as px
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from contextlib import contextmanager
-#database info
-DB_HOST = os.getenv("SUPABASE_DB_HOST")
-DB_NAME = os.getenv("SUPABASE_DB_NAME")
-DB_USER = os.getenv("SUPABASE_DB_USER")
-DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD")
-DB_PORT = os.getenv("SUPABASE_DB_PORT")
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+from sqlalchemy.exc import SQLAlchemyError, OperationalError, IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
+# Load environment variables once
 load_dotenv()
 DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
-SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
+# Create engine with proper configuration
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=20,
+    max_overflow=0,
+    pool_timeout=30,
+    pool_pre_ping=True,
+    pool_recycle=300
+)
+
+# Create session factory
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Improved session context manager
+@contextmanager
+def db_session():
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except OperationalError as e:
+        session.rollback()
+        logging.error(f"Database operational error: {str(e)}")
+        raise
+    except IntegrityError as e:
+        session.rollback()
+        logging.error(f"Database integrity error: {str(e)}")
+        raise
+    except Exception as e:
+        session.rollback()
+        logging.error(f"Unexpected database error: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 class Project(Base):
     __tablename__ = 'projects'
     id = Column(BigInteger, primary_key=True)
     project_name = Column(Text, default="Default Project")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Remove circular reference, keep only forward references
     campaigns = relationship("Campaign", back_populates="project")
     knowledge_base = relationship("KnowledgeBase", back_populates="project", uselist=False)
 
 class Campaign(Base):
     __tablename__ = 'campaigns'
     id = Column(BigInteger, primary_key=True)
-    campaign_name = Column(Text, default="Default Campaign")
-    campaign_type = Column(Text, default="Email")
-    project_id = Column(BigInteger, ForeignKey('projects.id'), default=1)
+    campaign_name = Column(Text, default="Default Campaign", nullable=False)
+    campaign_type = Column(Text, default="Email", nullable=False)
+    project_id = Column(BigInteger, ForeignKey('projects.id', ondelete='CASCADE'), default=1, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     auto_send = Column(Boolean, default=False)
     loop_automation = Column(Boolean, default=False)
     ai_customization = Column(Boolean, default=False)
     max_emails_per_group = Column(BigInteger, default=500)
     loop_interval = Column(BigInteger, default=60)
+    
+    # Add proper cascade relationships
     project = relationship("Project", back_populates="campaigns")
-    email_campaigns = relationship("EmailCampaign", back_populates="campaign")
-    search_terms = relationship("SearchTerm", back_populates="campaign")
-    campaign_leads = relationship("CampaignLead", back_populates="campaign")
+    email_campaigns = relationship("EmailCampaign", back_populates="campaign", cascade="all, delete-orphan")
+    search_terms = relationship("SearchTerm", back_populates="campaign", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index('idx_campaigns_project', project_id),
+    )
 
 class CampaignLead(Base):
     __tablename__ = 'campaign_leads'
@@ -73,8 +91,9 @@ class CampaignLead(Base):
     lead_id = Column(BigInteger, ForeignKey('leads.id'))
     status = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    lead = relationship("Lead", back_populates="campaign_leads")
-    campaign = relationship("Campaign", back_populates="campaign_leads")
+    # Fix circular dependency by removing back-population
+    lead = relationship("Lead")
+    campaign = relationship("Campaign")
 
 class KnowledgeBase(Base):
     __tablename__ = 'knowledge_base'
@@ -91,26 +110,37 @@ class KnowledgeBase(Base):
     def to_dict(self):
         return {attr: getattr(self, attr) for attr in ['kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role', 'contact_email', 'company_description', 'company_mission', 'company_target_market', 'company_other', 'product_name', 'product_description', 'product_target_customer', 'product_other', 'other_context', 'example_email']}
 
-# Update the Lead model to remove the domain attribute
+# Update the Lead model
 class Lead(Base):
     __tablename__ = 'leads'
     id = Column(BigInteger, primary_key=True)
-    email = Column(Text, unique=True)
-    phone, first_name, last_name, company, job_title = [Column(Text) for _ in range(5)]
+    email = Column(Text, unique=True, index=True)
+    phone = Column(Text)
+    first_name = Column(Text)
+    last_name = Column(Text)
+    company = Column(Text)
+    job_title = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    is_processed = Column(Boolean, default=False)  # Add this line
-    campaign_leads = relationship("CampaignLead", back_populates="lead")
-    lead_sources = relationship("LeadSource", back_populates="lead")
-    email_campaigns = relationship("EmailCampaign", back_populates="lead")
+    is_processed = Column(Boolean, default=False)
+    
+    # Add cascade delete to prevent orphaned records
+    lead_sources = relationship("LeadSource", back_populates="lead", cascade="all, delete-orphan")
+    email_campaigns = relationship("EmailCampaign", back_populates="lead", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index('idx_leads_email', email),
+    )
 
 class EmailTemplate(Base):
     __tablename__ = 'email_templates'
     id = Column(BigInteger, primary_key=True)
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    template_name, subject, body_content = Column(Text), Column(Text), Column(Text)
+    template_name = Column(Text)
+    subject = Column(Text)
+    body_content = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_ai_customizable = Column(Boolean, default=False)
-    language = Column(Text, default='ES')  # Add language column
+    language = Column(Text, default='ES')
     campaign = relationship("Campaign")
     email_campaigns = relationship("EmailCampaign", back_populates="template")
 
@@ -232,26 +262,6 @@ class EmailSettings(Base):
     aws_access_key_id = Column(Text)
     aws_secret_access_key = Column(Text)
     aws_region = Column(Text)
-
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL not set")
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base.metadata.create_all(bind=engine)
-
-@contextmanager
-def db_session():
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 def settings_page():
     st.title("Settings")
