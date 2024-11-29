@@ -4,85 +4,67 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index
+from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
-from sqlalchemy.exc import SQLAlchemyError, OperationalError, IntegrityError
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
+from botocore.exceptions import ClientError
+from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed
+from email_validator import validate_email, EmailNotValidError
+from streamlit_option_menu import option_menu
+from openai import OpenAI 
+from typing import List, Optional
+from urllib.parse import urlparse, urlencode
+from streamlit_tags import st_tags
+import plotly.express as px
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from contextlib import contextmanager
+#database info
+DB_HOST = os.getenv("SUPABASE_DB_HOST")
+DB_NAME = os.getenv("SUPABASE_DB_NAME")
+DB_USER = os.getenv("SUPABASE_DB_USER")
+DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD")
+DB_PORT = os.getenv("SUPABASE_DB_PORT")
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Load environment variables once
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 load_dotenv()
 DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
+SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
-# Create engine with proper configuration
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=20,
-    max_overflow=0,
-    pool_timeout=30,
-    pool_pre_ping=True,
-    pool_recycle=300
-)
-
-# Create session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# Improved session context manager
-@contextmanager
-def db_session():
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except OperationalError as e:
-        session.rollback()
-        logging.error(f"Database operational error: {str(e)}")
-        raise
-    except IntegrityError as e:
-        session.rollback()
-        logging.error(f"Database integrity error: {str(e)}")
-        raise
-    except Exception as e:
-        session.rollback()
-        logging.error(f"Unexpected database error: {str(e)}")
-        raise
-    finally:
-        session.close()
 
 class Project(Base):
     __tablename__ = 'projects'
     id = Column(BigInteger, primary_key=True)
     project_name = Column(Text, default="Default Project")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Remove circular reference, keep only forward references
     campaigns = relationship("Campaign", back_populates="project")
     knowledge_base = relationship("KnowledgeBase", back_populates="project", uselist=False)
 
 class Campaign(Base):
     __tablename__ = 'campaigns'
     id = Column(BigInteger, primary_key=True)
-    campaign_name = Column(Text, default="Default Campaign", nullable=False)
-    campaign_type = Column(Text, default="Email", nullable=False)
-    project_id = Column(BigInteger, ForeignKey('projects.id', ondelete='CASCADE'), default=1, nullable=False)
+    campaign_name = Column(Text, default="Default Campaign")
+    campaign_type = Column(Text, default="Email")
+    project_id = Column(BigInteger, ForeignKey('projects.id'), default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     auto_send = Column(Boolean, default=False)
     loop_automation = Column(Boolean, default=False)
     ai_customization = Column(Boolean, default=False)
     max_emails_per_group = Column(BigInteger, default=500)
     loop_interval = Column(BigInteger, default=60)
-    
-    # Add proper cascade relationships
     project = relationship("Project", back_populates="campaigns")
-    email_campaigns = relationship("EmailCampaign", back_populates="campaign", cascade="all, delete-orphan")
-    search_terms = relationship("SearchTerm", back_populates="campaign", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        Index('idx_campaigns_project', project_id),
-    )
+    email_campaigns = relationship("EmailCampaign", back_populates="campaign")
+    search_terms = relationship("SearchTerm", back_populates="campaign")
+    campaign_leads = relationship("CampaignLead", back_populates="campaign")
 
 class CampaignLead(Base):
     __tablename__ = 'campaign_leads'
@@ -91,9 +73,8 @@ class CampaignLead(Base):
     lead_id = Column(BigInteger, ForeignKey('leads.id'))
     status = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Fix circular dependency by removing back-population
-    lead = relationship("Lead")
-    campaign = relationship("Campaign")
+    lead = relationship("Lead", back_populates="campaign_leads")
+    campaign = relationship("Campaign", back_populates="campaign_leads")
 
 class KnowledgeBase(Base):
     __tablename__ = 'knowledge_base'
@@ -110,37 +91,26 @@ class KnowledgeBase(Base):
     def to_dict(self):
         return {attr: getattr(self, attr) for attr in ['kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role', 'contact_email', 'company_description', 'company_mission', 'company_target_market', 'company_other', 'product_name', 'product_description', 'product_target_customer', 'product_other', 'other_context', 'example_email']}
 
-# Update the Lead model
+# Update the Lead model to remove the domain attribute
 class Lead(Base):
     __tablename__ = 'leads'
     id = Column(BigInteger, primary_key=True)
-    email = Column(Text, unique=True, index=True)
-    phone = Column(Text)
-    first_name = Column(Text)
-    last_name = Column(Text)
-    company = Column(Text)
-    job_title = Column(Text)
+    email = Column(Text, unique=True)
+    phone, first_name, last_name, company, job_title = [Column(Text) for _ in range(5)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    is_processed = Column(Boolean, default=False)
-    
-    # Add cascade delete to prevent orphaned records
-    lead_sources = relationship("LeadSource", back_populates="lead", cascade="all, delete-orphan")
-    email_campaigns = relationship("EmailCampaign", back_populates="lead", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        Index('idx_leads_email', email),
-    )
+    # Remove the domain column
+    campaign_leads = relationship("CampaignLead", back_populates="lead")
+    lead_sources = relationship("LeadSource", back_populates="lead")
+    email_campaigns = relationship("EmailCampaign", back_populates="lead")
 
 class EmailTemplate(Base):
     __tablename__ = 'email_templates'
     id = Column(BigInteger, primary_key=True)
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    template_name = Column(Text)
-    subject = Column(Text)
-    body_content = Column(Text)
+    template_name, subject, body_content = Column(Text), Column(Text), Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_ai_customizable = Column(Boolean, default=False)
-    language = Column(Text, default='ES')
+    language = Column(Text, default='ES')  # Add language column
     campaign = relationship("Campaign")
     email_campaigns = relationship("EmailCampaign", back_populates="template")
 
@@ -262,6 +232,26 @@ class EmailSettings(Base):
     aws_access_key_id = Column(Text)
     aws_secret_access_key = Column(Text)
     aws_region = Column(Text)
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL not set")
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base.metadata.create_all(bind=engine)
+
+@contextmanager
+def db_session():
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 def settings_page():
     st.title("Settings")
@@ -406,14 +396,14 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
-        )  # Added missing closing parenthesis
+        )
         session.add(new_campaign)
         session.commit()
-        return new_campaign
-    except Exception as e:  # Added missing except clause
+    except Exception as e:
         logging.error(f"Error saving email campaign: {str(e)}")
         session.rollback()
         return None
+    return new_campaign
 
 def update_log(log_container, message, level='info'):
     icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
@@ -469,11 +459,8 @@ def extract_info_from_page(soup):
     return name, company, job_title
 
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None):
-    ua = UserAgent()
-    results = []
-    total_leads = 0
-    domains_processed = set()
-    processed_emails_per_domain = {}
+    ua, results, total_leads, domains_processed = UserAgent(), [], 0, set()
+    processed_emails_per_domain = {}  # Track processed emails per domain
     
     for original_term in terms:
         try:
@@ -550,14 +537,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                     continue
 
                                 wrapped_content = wrap_email_body(template.body_content)
-                                response, tracking_id = send_email_ses(
-                                    session,
-                                    from_email, 
-                                    email, 
-                                    template.subject, 
-                                    wrapped_content, 
-                                    reply_to=reply_to
-                                )
+                                response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
                                 if response:
                                     update_log(log_container, f"Sent email to: {email}", 'email_sent')
                                     save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
@@ -810,14 +790,15 @@ def save_lead_source(session, lead_id, search_term_id, url, http_status, scrape_
     session.add(LeadSource(lead_id=lead_id, search_term_id=search_term_id, url=url, http_status=http_status, scrape_duration=scrape_duration, page_title=page_title or get_page_title(url), meta_description=meta_description or get_page_description(url), content=content or extract_visible_text(BeautifulSoup(requests.get(url).text, 'html.parser')), tags=tags, phone_numbers=phone_numbers))
     session.commit()
 
-def get_page_title(html_content):
+def get_page_title(url):
     try:
-        soup = BeautifulSoup(html_content, 'html.parser')
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
         title = soup.title.string if soup.title else "No title found"
         return title.strip()
     except Exception as e:
-        logging.error(f"Error getting page title: {str(e)}")
-        return "No title found"
+        logging.error(f"Error getting page title for {url}: {str(e)}")
+        return "Error fetching title"
 
 def extract_visible_text(soup):
     for script in soup(["script", "style"]):
@@ -831,35 +812,19 @@ def log_search_term_effectiveness(session, term, total_results, valid_leads, blo
     session.add(SearchTermEffectiveness(term=term, total_results=total_results, valid_leads=valid_leads, irrelevant_leads=total_results - valid_leads, blogs_found=blogs_found, directories_found=directories_found))
     session.commit()
 
-def get_active_campaign_id():
-    return st.session_state.get('active_campaign_id', 1)
+get_active_project_id = lambda: st.session_state.get('active_project_id', 1)
+get_active_campaign_id = lambda: st.session_state.get('active_campaign_id', 1)
+set_active_project_id = lambda project_id: st.session_state.__setitem__('active_project_id', project_id)
+set_active_campaign_id = lambda campaign_id: st.session_state.__setitem__('active_campaign_id', campaign_id)
 
-def get_active_project_id():
-    return st.session_state.get('active_project_id', 1)
-
-def set_active_campaign_id(campaign_id):
-    st.session_state['active_campaign_id'] = campaign_id
-
-def set_active_project_id(project_id):
-    st.session_state['active_project_id'] = project_id
-
-def add_or_get_search_term(session, term, campaign_id):
-    try:
-        search_term = session.query(SearchTerm).filter_by(term=term, campaign_id=campaign_id).first()
-        if not search_term:
-            search_term = SearchTerm(
-                term=term,
-                campaign_id=campaign_id,
-                created_at=datetime.utcnow()
-            )
-            session.add(search_term)
-            session.commit()
-            session.refresh(search_term)
-        return search_term.id
-    except Exception as e:
-        logging.error(f"Error in add_or_get_search_term: {str(e)}")
-        session.rollback()
-        raise
+def add_or_get_search_term(session, term, campaign_id, created_at=None):
+    search_term = session.query(SearchTerm).filter_by(term=term, campaign_id=campaign_id).first()
+    if not search_term:
+        search_term = SearchTerm(term=term, campaign_id=campaign_id, created_at=created_at or datetime.utcnow())
+        session.add(search_term)
+        session.commit()
+        session.refresh(search_term)
+    return search_term.id
 
 def fetch_campaigns(session):
     return [f"{camp.id}: {camp.campaign_name}" for camp in session.query(Campaign).all()]
@@ -953,7 +918,7 @@ def manual_search_page():
 
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
-        ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)  # Added this line
+        ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
         shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
         optimize_english = st.checkbox("Optimize (English)", value=False)
         optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
@@ -971,7 +936,7 @@ def manual_search_page():
         with col3:
             email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip())
         with col4:
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -981,91 +946,49 @@ def manual_search_page():
 
     if st.button("Search"):
         if not search_terms:
-            st.warning("Please enter at least one search term")
-            return
+            return st.warning("Enter at least one search term.")
 
         progress_bar = st.progress(0)
         status_text = st.empty()
-        leads_container = st.empty()
+        email_status = st.empty()
         results = []
-        leads_found = []
-        emails_sent = []
+
+        leads_container = st.empty()
+        leads_found, emails_sent = [], []
+
+        # Create a single log container for all search terms
+        log_container = st.empty()
 
         for i, term in enumerate(search_terms):
-            status_text.text(f"Searching term {i+1}/{len(search_terms)}: {term}")
-            
-            with db_session() as session:
-                search_results = manual_search(
-                    session,
-                    [term],
-                    num_results,
-                    ignore_previously_fetched,
-                    optimize_english,
-                    optimize_spanish,
-                    shuffle_keywords_option,
-                    language,
-                    enable_email_sending,
-                    status_text,
-                    from_email,
-                    reply_to,
-                    email_template
-                )
-                
-                results.extend(search_results['results'])
-                leads_found.extend([r['Email'] for r in search_results['results']])
+            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
 
-                if enable_email_sending and email_template:
+            with db_session() as session:
+                term_results = manual_search(session, [term], num_results, ignore_previously_fetched, optimize_english, optimize_spanish, shuffle_keywords_option, language, enable_email_sending, log_container, from_email, reply_to, email_template)
+                results.extend(term_results['results'])
+
+                leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
+
+                if enable_email_sending:
                     template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                    
-                    for result in search_results['results']:
+                    for result in term_results['results']:
                         if not result or 'Email' not in result or not is_valid_email(result['Email']):
                             status_text.text(f"Skipping invalid result or email: {result.get('Email') if result else 'None'}")
                             continue
-                            
                         wrapped_content = wrap_email_body(template.body_content)
-                        response, tracking_id = send_email_ses(
-                            session,
-                            from_email, 
-                            result['Email'], 
-                            template.subject, 
-                            wrapped_content, 
-                            reply_to=reply_to
-                        )
-                        
+                        response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
                         if response:
-                            save_email_campaign(
-                                session,
-                                result['Email'], 
-                                template.id, 
-                                'sent', 
-                                datetime.utcnow(), 
-                                template.subject, 
-                                response.get('MessageId', 'Unknown'), 
-                                template.body_content
-                            )
+                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), template.body_content)
                             emails_sent.append(f"✅ {result['Email']}")
                             status_text.text(f"Email sent to: {result['Email']}")
                         else:
-                            save_email_campaign(
-                                session,
-                                result['Email'], 
-                                template.id, 
-                                'failed', 
-                                datetime.utcnow(), 
-                                template.subject, 
-                                None, 
-                                template.body_content
-                            )
+                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, template.body_content)
                             emails_sent.append(f"❌ {result['Email']}")
                             status_text.text(f"Failed to send email to: {result['Email']}")
 
-            leads_container.dataframe(pd.DataFrame({
-                "Leads Found": leads_found,
-                "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))
-            }))
+            leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
             progress_bar.progress((i + 1) / len(search_terms))
 
-        # Final results display
+        # Display final results
         st.subheader("Search Results")
         st.dataframe(pd.DataFrame(results))
 
@@ -1149,27 +1072,9 @@ def shuffle_keywords(term):
     return ' '.join(words)
 
 def get_page_description(html_content):
-    try:
-        soup = BeautifulSoup(html_content, 'html.parser')
-        # Try to get meta description first
-        meta_desc = soup.find('meta', attrs={'name': 'description'})
-        if meta_desc and meta_desc.get('content'):
-            return meta_desc['content']
-        # Try Open Graph description as fallback
-        og_desc = soup.find('meta', attrs={'property': 'og:description'})
-        if og_desc and og_desc.get('content'):
-            return og_desc['content']
-        
-        # If no meta description, try to get first paragraph
-        first_p = soup.find('p')
-        if first_p:
-            text = first_p.get_text().strip()
-            return text[:200] + '...' if len(text) > 200 else text
-        
-        return "No description found"
-    except Exception as e:
-        logging.error(f"Error getting page description: {str(e)}")
-        return "No description found"
+    soup = BeautifulSoup(html_content, 'html.parser')
+    meta_desc = soup.find('meta', attrs={'name': 'description'})
+    return meta_desc['content'] if meta_desc else "No description found"
 
 def is_valid_email(email):
     if email is None: return False
@@ -1800,7 +1705,7 @@ def bulk_send_page():
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -2263,14 +2168,7 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
     for index, lead in enumerate(leads):
         try:
             validate_email(lead['Email'])
-            response, tracking_id = send_email_ses(
-                session,
-                from_email, 
-                lead['Email'], 
-                email_subject, 
-                email_content, 
-                reply_to=reply_to
-            )
+            response, tracking_id = send_email_ses(session, from_email, lead['Email'], email_subject, email_content, reply_to=reply_to)
             if response:
                 status = 'sent'
                 message_id = response.get('MessageId', f"sent-{uuid.uuid4()}")
@@ -2441,10 +2339,6 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
-
-# Configure all mappers
-from sqlalchemy.orm import configure_mappers
-configure_mappers()
 
 if __name__ == "__main__":
     main()
