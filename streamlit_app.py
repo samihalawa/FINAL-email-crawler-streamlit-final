@@ -821,10 +821,17 @@ def log_search_term_effectiveness(session, term, total_results, valid_leads, blo
     session.add(SearchTermEffectiveness(term=term, total_results=total_results, valid_leads=valid_leads, irrelevant_leads=total_results - valid_leads, blogs_found=blogs_found, directories_found=directories_found))
     session.commit()
 
-get_active_project_id = lambda: st.session_state.get('active_project_id', 1)
-get_active_campaign_id = lambda: st.session_state.get('active_campaign_id', 1)
-set_active_project_id = lambda project_id: st.session_state.__setitem__('active_project_id', project_id)
-set_active_campaign_id = lambda campaign_id: st.session_state.__setitem__('active_campaign_id', campaign_id)
+def get_active_campaign_id():
+    return st.session_state.get('active_campaign_id', 1)
+
+def get_active_project_id():
+    return st.session_state.get('active_project_id', 1)
+
+def set_active_campaign_id(campaign_id):
+    st.session_state['active_campaign_id'] = campaign_id
+
+def set_active_project_id(project_id):
+    st.session_state['active_project_id'] = project_id
 
 def add_or_get_search_term(session, term, campaign_id):
     try:
