@@ -1,4 +1,3 @@
-import os, json, re, logging, asyncio, time, requests, pandas as pd, streamlit as st, openai, boto3, uuid, aiohttp, urllib3, random, html, smtplib, whois
 import os, json, re, logging, asyncio, time, requests, pandas as pd, streamlit as st, openai, boto3, uuid, aiohttp, urllib3, random, html, smtplib
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -1236,7 +1235,10 @@ def manual_search_page():
             new_process = SearchProcess(
                 search_terms=search_terms,
                 settings=settings,
-                status='running'
+                status='running',
+                results={},  # Initialize empty JSON
+                logs=[],     # Initialize empty array for logs
+                total_leads_found=0
             )
             session.add(new_process)
             session.commit()
@@ -2462,8 +2464,6 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
-if __name__ == "__main__":
-    main()
 
 def update_process_log(session, process_id, message, level='info'):
     """Update the logs for a search process"""
@@ -2550,3 +2550,33 @@ def background_manual_search(process_id, search_terms, settings):
             update_process_log(session, process_id, error_msg, 'error')
             process.status = 'failed'
             session.commit()
+
+# Add this with the other database models, after AIRequestLog and before Settings:
+
+class SearchProcess(Base):
+    __tablename__ = 'search_processes'
+    __table_args__ = (
+        Index('idx_search_process_status', 'status'),
+        Index('idx_search_process_created', 'created_at'),
+    )
+    id = Column(BigInteger, primary_key=True)
+    search_terms = Column(JSON)  # Store list of search terms
+    settings = Column(JSON)      # Store search settings
+    status = Column(Text)        # 'running', 'completed', 'failed'
+    results = Column(JSON)       # Store search results
+    logs = Column(JSON)          # Store process logs
+    total_leads_found = Column(BigInteger, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    campaign = relationship("Campaign")
+
+# After engine creation
+try:
+    SearchProcess.__table__.create(bind=engine)
+except Exception as e:
+    logging.info(f"SearchProcess table may already exist: {e}")
+
+
+if __name__ == "__main__":
+    main()
