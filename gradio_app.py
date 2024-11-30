@@ -15,6 +15,7 @@ from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
 import plotly.express as px
 from queue import Queue
+import random
 
 # Database configuration
 load_dotenv()
@@ -394,7 +395,7 @@ def manual_search(session: Session, terms: List[str], num_results: int,
                                 if enable_email_sending and from_email and email_template:
                                     template = session.query(EmailTemplate).filter_by(
                                         id=int(email_template.split(":")[0])
-                                    ).first()  # Fixed: Added ).first()
+                                    ).first()
                                     
                                     if template:
                                         wrapped_content = wrap_email_body(template.body_content)
@@ -419,18 +420,24 @@ def manual_search(session: Session, terms: List[str], num_results: int,
                                                 datetime.utcnow(), template.subject,
                                                 None, wrapped_content
                                             )
-                        
-                        domains_processed.add(domain)
-                        
+                            else:
+                                if log_container:
+                                    log_container.update(value=f"Template not found for ID: {email_template}")
+
                     except requests.RequestException as e:
                         if log_container:
                             log_container.update(value=f"Error processing URL {url}: {str(e)}")
                         continue
-                        
+                    except Exception as e:
+                        if log_container:
+                            log_container.update(value=f"Unexpected error processing URL {url}: {str(e)}")
+                        continue
+
             except Exception as e:
                 if log_container:
                     log_container.update(value=f"Error processing term '{original_term}': {str(e)}")
                 continue
+
     except Exception as e:
         if log_container:
             log_container.update(value=f"Fatal error in search process: {str(e)}")
@@ -550,10 +557,12 @@ def save_email_campaign(session: Session, lead_email: str, template_id: int,
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
-        )
+        )  # Close the parentheses here
+        
         session.add(new_campaign)
         session.commit()
         return new_campaign
+        
     except Exception as e:
         logging.error(f"Error saving email campaign: {str(e)}")
         session.rollback()
@@ -2465,7 +2474,7 @@ class GradioAutoclientApp:
                 "Today": today_stats[0],
                 "This Week": week_stats[0],
                 "This Month": month_stats[0]
-            }]
+            }]  # Close both the dictionary and list
 
     def get_error_log(self):
         """Get automation error log"""
@@ -3640,6 +3649,77 @@ def extract_info_from_page(soup):
     except Exception as e:
         logging.error(f"Error extracting info from page: {str(e)}")
         return None, None, None
+
+# Add these utility functions at the top of the file, after the imports
+
+def add_or_get_search_term(session: Session, term: str, campaign_id: int) -> int:
+    """Add a new search term or get existing one"""
+    search_term = session.query(SearchTerm).filter_by(
+        term=term, 
+        campaign_id=campaign_id
+    ).first()
+    
+    if not search_term:
+        search_term = SearchTerm(
+            term=term,
+            campaign_id=campaign_id
+        )
+        session.add(search_term)
+        session.commit()
+    
+    return search_term.id
+
+def shuffle_keywords(term: str) -> str:
+    """Shuffle keywords in search term"""
+    words = term.split()
+    random.shuffle(words)
+    return " ".join(words)
+
+def optimize_search_term(term: str, language: str) -> str:
+    """Optimize search term for given language"""
+    # Add your optimization logic here
+    return term
+
+def get_domain_from_url(url: str) -> str:
+    """Extract domain from URL"""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    return parsed.netloc
+
+def extract_emails_from_html(html_content: str) -> List[str]:
+    """Extract email addresses from HTML content"""
+    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    return list(set(re.findall(email_pattern, html_content)))
+
+def get_page_title(html_content: str) -> str:
+    """Extract page title from HTML content"""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    title = soup.find('title')
+    return title.get_text() if title else "No title"
+
+def save_lead(session: Session, **kwargs) -> Optional[Lead]:
+    """Save lead to database"""
+    try:
+        lead = Lead(**kwargs)
+        session.add(lead)
+        session.commit()
+        return lead
+    except SQLAlchemyError as e:
+        session.rollback()
+        logging.error(f"Error saving lead: {str(e)}")
+        return None
+
+def is_valid_lead(lead: Lead) -> bool:
+    """Check if lead is valid"""
+    return bool(lead and lead.email and is_valid_email(lead.email))
+
+def is_contacted_lead(lead: Lead) -> bool:
+    """Check if lead has been contacted"""
+    return bool(lead.email_campaigns)
+
+def is_successful_lead(lead: Lead) -> bool:
+    """Check if lead was successfully processed"""
+    return bool(lead and lead.email and is_valid_email(lead.email))
 
 if __name__ == "__main__":
     app = GradioAutoclientApp()
