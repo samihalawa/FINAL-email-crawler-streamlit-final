@@ -1,14 +1,15 @@
+import os, json, re, logging, asyncio, time, requests, pandas as pd, streamlit as st, openai, boto3, uuid, aiohttp, urllib3, random, html, smtplib, whois
 import os, json, re, logging, asyncio, time, requests, pandas as pd, streamlit as st, openai, boto3, uuid, aiohttp, urllib3, random, html, smtplib
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_
+from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from botocore.exceptions import ClientError
-from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed, wait_exponential
 from email_validator import validate_email, EmailNotValidError
 from streamlit_option_menu import option_menu
 from openai import OpenAI 
@@ -110,11 +111,21 @@ class KnowledgeBase(Base):
 # Update the Lead model to remove the domain attribute
 class Lead(Base):
     __tablename__ = 'leads'
+    __table_args__ = (
+        Index('idx_lead_email', 'email'),
+        Index('idx_lead_created_at', 'created_at'),
+        Index('idx_lead_status', 'status'),
+    )
     id = Column(BigInteger, primary_key=True)
     email = Column(Text, unique=True)
     phone, first_name, last_name, company, job_title = [Column(Text) for _ in range(5)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Remove the domain column
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    is_processed = Column(Boolean, default=False)
+    last_contacted = Column(DateTime(timezone=True))
+    notes = Column(Text)
+    status = Column(Text, default='New')
+    source = Column(Text)
     campaign_leads = relationship("CampaignLead", back_populates="lead")
     lead_sources = relationship("LeadSource", back_populates="lead")
     email_campaigns = relationship("EmailCampaign", back_populates="lead")
@@ -132,6 +143,11 @@ class EmailTemplate(Base):
 
 class EmailCampaign(Base):
     __tablename__ = 'email_campaigns'
+    __table_args__ = (
+        Index('idx_campaign_sent_at', 'sent_at'),
+        Index('idx_campaign_status', 'status'),
+        Index('idx_campaign_tracking', 'tracking_id'),
+    )
     id = Column(BigInteger, primary_key=True)
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     lead_id = Column(BigInteger, ForeignKey('leads.id'))
@@ -179,6 +195,10 @@ class SearchTermGroup(Base):
 
 class SearchTerm(Base):
     __tablename__ = 'search_terms'
+    __table_args__ = (
+        Index('idx_search_term', 'term'),
+        Index('idx_search_created_at', 'created_at'),
+    )
     id = Column(BigInteger, primary_key=True)
     group_id = Column(BigInteger, ForeignKey('search_term_groups.id'))
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
@@ -193,6 +213,10 @@ class SearchTerm(Base):
 
 class LeadSource(Base):
     __tablename__ = 'lead_sources'
+    __table_args__ = (
+        Index('idx_source_url', 'url'),
+        Index('idx_source_domain', 'domain'),
+    )
     id = Column(BigInteger, primary_key=True)
     lead_id = Column(BigInteger, ForeignKey('leads.id'))
     search_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
@@ -369,6 +393,7 @@ def settings_page():
                     st.error(f"Error saving email setting: {str(e)}")
                     session.rollback()
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
     try:
         email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
@@ -439,7 +464,7 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
             logging.error(f"Unknown email provider: {email_settings.provider}")
             return None, None
     except Exception as e:
-        logging.error(f"Error in send_email_ses: {str(e)}")
+        logging.error(f"Error in send_email_ses after retries: {str(e)}")
         return None, None
 
 def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
@@ -469,8 +494,16 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
         return None
 
 def update_log(log_container, message, level='info'):
-    icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
-    log_entry = f"{icon} {message}"
+    icon = {
+        'info': '🔵',
+        'success': '🟢',
+        'warning': '🟠',
+        'error': '🔴',
+        'email_sent': '🟣'
+    }.get(level, '⚪')
+    
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    log_entry = f"{icon} [{timestamp}] {message}"
     
     if 'log_entries' not in st.session_state:
         st.session_state.log_entries = []
@@ -481,14 +514,42 @@ def update_log(log_container, message, level='info'):
     if len(st.session_state.log_entries) > 1000:
         st.session_state.log_entries = st.session_state.log_entries[-1000:]
     
-    # Create scrollable log container with auto-scroll
+    # Create scrollable log container with auto-scroll and improved styling
     log_html = f"""
-        <div id="log-container" style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2; background: rgba(0,0,0,0.05); padding: 10px; border-radius: 5px;'>
-            {'<br>'.join(st.session_state.log_entries)}
+        <div style='
+            background: rgba(0,0,0,0.05);
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 10px;
+        '>
+            <div id="log-container" style='
+                height: 300px;
+                overflow-y: auto;
+                font-family: monospace;
+                font-size: 0.9em;
+                line-height: 1.4;
+                padding: 10px;
+                background: rgba(255,255,255,0.8);
+                border-radius: 3px;
+            '>
+                {'<br>'.join(st.session_state.log_entries)}
+            </div>
         </div>
         <script>
+            function scrollToBottom() {{
+                var container = document.getElementById('log-container');
+                if (container) {{
+                    container.scrollTop = container.scrollHeight;
+                }}
+            }}
+            // Initial scroll
+            scrollToBottom();
+            // Set up a mutation observer to watch for changes
+            var observer = new MutationObserver(scrollToBottom);
             var container = document.getElementById('log-container');
-            container.scrollTop = container.scrollHeight;
+            if (container) {{
+                observer.observe(container, {{ childList: true, subtree: true }});
+            }}
         </script>
     """
     log_container.markdown(log_html, unsafe_allow_html=True)
@@ -528,20 +589,21 @@ def extract_info_from_page(soup):
     
     return name, company, job_title
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None):
-    ua = UserAgent()
-    results = []
-    total_leads = 0
-    domains_processed = set()
-    
     try:
+        ua = UserAgent()
+        results = []
+        total_leads = 0
+        domains_processed = set()
+        
         for original_term in terms:
             try:
                 search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
                 search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
                 search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
                 
-                update_log(log_container, f"🔍 {original_term}")
+                update_log(log_container, f"🔍 Searching: {original_term}")
                 
                 for url in google_search(search_term, num_results, lang=language):
                     try:
@@ -561,7 +623,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                         valid_emails = [email.lower() for email in emails if is_valid_email(email)]
                         
                         if valid_emails:
-                            update_log(log_container, f"📍 {url}: {len(valid_emails)} emails", 'info')
+                            update_log(log_container, f"📍 Found {len(valid_emails)} emails on {url}")
                             
                             name, company, job_title = extract_info_from_page(soup)
                             page_title = get_page_title(html_content)
@@ -572,6 +634,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                     lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
                                     if lead:
                                         total_leads += 1
+                                        update_log(log_container, f"📧 Found email: {email}")
                                         results.append({
                                             'Email': email,
                                             'URL': url,
@@ -592,31 +655,34 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                                 response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
                                                 
                                                 if response:
-                                                    update_log(log_container, f"✉️ {email}", 'email_sent')
+                                                    update_log(log_container, f"✉️ Email sent to: {email}", 'email_sent')
                                                     save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
                                                 else:
+                                                    update_log(log_container, f"❌ Failed to send email to: {email}", 'error')
                                                     save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
                                 except Exception as e:
                                     logging.error(f"Error processing email {email}: {str(e)}")
+                                    update_log(log_container, f"❌ Error processing email {email}: {str(e)}", 'error')
                                     continue
                         
                         domains_processed.add(domain)
                         
                     except Exception as e:
                         logging.error(f"Error processing URL {url}: {str(e)}")
+                        update_log(log_container, f"❌ Error processing URL {url}: {str(e)}", 'error')
                         continue
                     
             except Exception as e:
                 logging.error(f"Error processing term {original_term}: {str(e)}")
+                update_log(log_container, f"❌ Error processing term {original_term}: {str(e)}", 'error')
                 continue
             
-    except Exception as e:
-        logging.error(f"Critical error in manual_search: {str(e)}")
-    
-    finally:
         if total_leads > 0:
-            update_log(log_container, f"✨ Found {total_leads} leads", 'success')
+            update_log(log_container, f"✨ Found {total_leads} total leads", 'success')
         return {"total_leads": total_leads, "results": results}
+    except Exception as e:
+        logging.error(f"Error in manual_search after retries: {str(e)}")
+        return {"total_leads": 0, "results": []}
 
 def analyze_content_for_tags(content, max_tags=15):
     """
@@ -1144,7 +1210,8 @@ def fetch_search_terms_with_lead_count(session):
              .join(Lead, LeadSource.lead_id == Lead.id)
              .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
              .group_by(SearchTerm.term))
-    return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
+    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
+    return df
 
 def view_campaign_logs():
     st.header("Email Logs")
@@ -1256,6 +1323,7 @@ def is_valid_email(email):
         return True
     except EmailNotValidError:
         return False
+
 
 
 
