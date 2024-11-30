@@ -2035,7 +2035,7 @@ def ai_automation_loop(session, log_container, leads_container):
                         automation_logs.extend(logs)
                         total_emails_sent += sent_count
                 leads_container.text_area("New Leads Found", "\n".join([email for _, email in new_leads]), height=200)
-                progress_bar.progress((idx + 1) / len(optimized_terms))
+                progress_bar.progress((idx + 1) / len(optimized_terms)))
             st.success(f"Automation cycle completed. Total search terms: {total_search_terms}, Total emails sent: {total_emails_sent}")
             time.sleep(3600)
         except Exception as e:
