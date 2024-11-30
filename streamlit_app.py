@@ -1176,7 +1176,101 @@ def manual_search_page():
                 with st.expander(f"Process {process.id} - Started at {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}", expanded=True):
                     display_process_logs(process.id)
         
-        # Rest of the code...
+        # Search terms input
+        search_terms = st_tags(
+            label='Enter Search Terms',
+            text='Press enter after each term',
+            value=st.session_state.get('search_terms', []),
+            key='search_terms_input'
+        )
+
+        # Add buttons for proposing and optimizing search terms
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("PROPOSE NEW SEARCH TERMS", use_container_width=True):
+                with st.spinner("Generating new search term proposals..."):
+                    kb_info = get_knowledge_base_info(session, get_active_project_id())
+                    if kb_info:
+                        prompt = f"""Based on the following business context, propose 5 new search terms that would be effective for lead generation:
+                        Business: {kb_info.get('company_description', '')}
+                        Target Market: {kb_info.get('company_target_market', '')}
+                        Product: {kb_info.get('product_description', '')}
+                        Current Terms: {', '.join(search_terms) if search_terms else 'None'}
+                        """
+                        response = openai_chat_completion(
+                            messages=[
+                                {"role": "system", "content": "You are a lead generation expert. Propose specific, targeted search terms."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            function_name="propose_search_terms"
+                        )
+                        if isinstance(response, str):
+                            new_terms = [term.strip() for term in response.split('\n') if term.strip()]
+                            st.session_state.search_terms = list(set(search_terms + new_terms))
+                            st.success("New search terms proposed! They have been added to your list.")
+                            st.rerun()
+                    else:
+                        st.warning("Please set up your Knowledge Base first to get better search term proposals.")
+
+        with col2:
+            if st.button("OPTIMIZE SEARCH TERMS", use_container_width=True):
+                with st.spinner("Optimizing search terms..."):
+                    if search_terms:
+                        prompt = f"""Optimize these search terms for better lead generation results:
+                        Terms: {', '.join(search_terms)}
+                        
+                        For each term:
+                        1. Add relevant industry-specific keywords
+                        2. Include intent-based modifiers
+                        3. Consider geographic or demographic targeting if applicable
+                        4. Format for better search engine compatibility
+                        """
+                        response = openai_chat_completion(
+                            messages=[
+                                {"role": "system", "content": "You are a search optimization expert. Improve search terms for maximum effectiveness."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            function_name="optimize_search_terms"
+                        )
+                        if isinstance(response, str):
+                            optimized_terms = [term.strip() for term in response.split('\n') if term.strip()]
+                            st.session_state.search_terms = optimized_terms
+                            st.success("Search terms have been optimized!")
+                            st.rerun()
+                    else:
+                        st.warning("Please enter some search terms to optimize.")
+        
+        # Rest of the search settings
+        settings = {
+            'num_results': st.number_input('Results per term', min_value=1, max_value=100, value=10),
+            'ignore_previously_fetched': st.checkbox('Ignore previously fetched domains', value=True),
+            'optimize_english': st.checkbox('Optimize for English'),
+            'optimize_spanish': st.checkbox('Optimize for Spanish'),
+            'shuffle_keywords_option': st.checkbox('Shuffle keywords'),
+            'language': st.selectbox('Language', ['ES', 'EN'], index=0),
+            'enable_email_sending': st.checkbox('Enable automatic email sending')
+        }
+
+        if settings['enable_email_sending']:
+            email_settings = fetch_email_settings(session)
+            if email_settings:
+                email_setting = st.selectbox(
+                    "From Email",
+                    options=email_settings,
+                    format_func=lambda x: f"{x['name']} ({x['email']})"
+                )
+                settings['from_email'] = email_setting['email']
+                settings['reply_to'] = st.text_input("Reply To", value=email_setting['email'])
+                
+                templates = fetch_email_templates(session)
+                if templates:
+                    settings['email_template'] = st.selectbox("Email Template", options=templates)
+                else:
+                    st.warning("No email templates found. Please create one first.")
+                    settings['enable_email_sending'] = False
+            else:
+                st.warning("No email settings found. Please configure email settings first.")
+                settings['enable_email_sending'] = False
         
         if st.button("Start Search", type="primary"):
             if not search_terms:
