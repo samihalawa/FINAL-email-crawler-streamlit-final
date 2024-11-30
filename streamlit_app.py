@@ -1161,6 +1161,10 @@ def update_display(container, items, title, item_key):
 def get_domain_from_url(url):
     return urlparse(url).netloc
 
+# Initialize session state for search terms if not exists
+if 'search_terms' not in st.session_state:
+    st.session_state.search_terms = []
+
 def manual_search_page():
     st.title("Manual Search")
     
@@ -1180,13 +1184,22 @@ def manual_search_page():
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # Search terms input
+            # Get recent search terms for suggestions
+            recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
+            recent_terms = [term.term for term in recent_searches]
+            
+            # Search terms input with suggestions
             search_terms = st_tags(
                 label='Enter Search Terms',
                 text='Press enter after each term',
-                value=st.session_state.get('search_terms', []),
+                value=st.session_state.search_terms,  # Use session state value
+                suggestions=recent_terms,  # Show recent terms as suggestions
                 key='search_terms_input'
             )
+            
+            # Update session state when terms change
+            if search_terms != st.session_state.search_terms:
+                st.session_state.search_terms = search_terms
             
             # Settings
             settings = {
@@ -1342,65 +1355,135 @@ def fetch_search_terms_with_lead_count(session):
     return df
 
 def view_campaign_logs():
-    st.header("Email Logs")
+    st.title("Email Campaign Logs")
+    
     with db_session() as session:
         logs = fetch_all_email_logs(session)
         if logs.empty:
             st.info("No email logs found.")
-        else:
-            st.write(f"Total emails sent: {len(logs)}")
-            st.write(f"Success rate: {(logs['Status'] == 'sent').mean():.2%}")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
-            with col2:
-                end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
-
-            filtered_logs = logs[(logs['Sent At'].dt.date >= start_date) & (logs['Sent At'].dt.date <= end_date)]
-
-            search_term = st.text_input("Search by email or subject")
-            if search_term:
-                filtered_logs = filtered_logs[filtered_logs['Email'].str.contains(search_term, case=False) | 
-                                              filtered_logs['Subject'].str.contains(search_term, case=False)]
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Emails Sent", len(filtered_logs))
-            with col2:
-                st.metric("Unique Recipients", filtered_logs['Email'].nunique())
-            with col3:
-                st.metric("Success Rate", f"{(filtered_logs['Status'] == 'sent').mean():.2%}")
-
-            daily_counts = filtered_logs.resample('D', on='Sent At')['Email'].count()
-            st.bar_chart(daily_counts)
-
-            st.subheader("Detailed Email Logs")
-            for _, log in filtered_logs.iterrows():
-                with st.expander(f"{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')} - {log['Email']} - {log['Status']}"):
-                    st.write(f"**Subject:** {log['Subject']}")
-                    st.write(f"**Content Preview:** {log['Content'][:100]}...")
-                    if st.button("View Full Email", key=f"view_email_{log['ID']}"):
-                        st.components.v1.html(wrap_email_body(log['Content']), height=400, scrolling=True)
-                    if log['Status'] != 'sent':
-                        st.error(f"Status: {log['Status']}")
-
-            logs_per_page = 20
-            total_pages = (len(filtered_logs) - 1) // logs_per_page + 1
-            page = st.number_input("Page", min_value=1, max_value=total_pages, value=1)
-            start_idx = (page - 1) * logs_per_page
-            end_idx = start_idx + logs_per_page
-
-            st.table(filtered_logs.iloc[start_idx:end_idx][['Sent At', 'Email', 'Subject', 'Status']])
-
-            if st.button("Export Logs to CSV"):
-                csv = filtered_logs.to_csv(index=False)
-                st.download_button(
-                    label="Download CSV",
-                    data=csv,
-                    file_name="email_logs.csv",
-                    mime="text/csv"
-                )
+            return
+        
+        # Add CSS for styling
+        st.markdown("""
+            <style>
+                .email-logs-container {
+                    max-height: 600px;
+                    overflow-y: auto;
+                    border: 1px solid rgba(49, 51, 63, 0.2);
+                    border-radius: 0.5rem;
+                    padding: 1rem;
+                    background-color: rgba(49, 51, 63, 0.1);
+                    margin-bottom: 1rem;
+                }
+                .email-log-entry {
+                    padding: 0.75rem;
+                    margin-bottom: 0.5rem;
+                    border-radius: 0.25rem;
+                    background-color: rgba(255, 255, 255, 0.05);
+                    border-left: 4px solid;
+                    animation: fadeIn 0.5s ease-in;
+                }
+                .email-log-entry.success {
+                    border-left-color: #28a745;
+                }
+                .email-log-entry.error {
+                    border-left-color: #dc3545;
+                }
+                .email-log-entry.pending {
+                    border-left-color: #ffc107;
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(-10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        # Summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Emails", len(logs))
+        with col2:
+            success_rate = (logs['Status'] == 'sent').mean() * 100
+            st.metric("Success Rate", f"{success_rate:.1f}%")
+        with col3:
+            st.metric("Unique Recipients", logs['Email'].nunique())
+        
+        # Filters
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
+        with col2:
+            end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
+        
+        search_term = st.text_input("🔍 Search by email or subject")
+        
+        # Filter logs
+        filtered_logs = logs[
+            (logs['Sent At'].dt.date >= start_date) & 
+            (logs['Sent At'].dt.date <= end_date)
+        ]
+        
+        if search_term:
+            filtered_logs = filtered_logs[
+                filtered_logs['Email'].str.contains(search_term, case=False) | 
+                filtered_logs['Subject'].str.contains(search_term, case=False)
+            ]
+        
+        # Display logs
+        st.markdown("<div class='email-logs-container'>", unsafe_allow_html=True)
+        for _, log in filtered_logs.iterrows():
+            status_class = {
+                'sent': 'success',
+                'failed': 'error'
+            }.get(log['Status'], 'pending')
+            
+            st.markdown(f"""
+                <div class='email-log-entry {status_class}'>
+                    <div style='display: flex; justify-content: space-between;'>
+                        <strong>{log['Email']}</strong>
+                        <span>{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')}</span>
+                    </div>
+                    <div style='margin-top: 0.5rem;'>
+                        <strong>Subject:</strong> {log['Subject']}<br>
+                        <strong>Status:</strong> {log['Status']}<br>
+                        <strong>Template:</strong> {log['Template']}
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Add auto-scroll JavaScript
+        st.markdown("""
+            <script>
+                function scrollToBottom() {
+                    const container = document.querySelector('.email-logs-container');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                }
+                
+                // Initial scroll
+                scrollToBottom();
+                
+                // Set up a mutation observer to watch for changes
+                const observer = new MutationObserver(scrollToBottom);
+                const container = document.querySelector('.email-logs-container');
+                if (container) {
+                    observer.observe(container, { childList: true, subtree: true });
+                }
+            </script>
+        """, unsafe_allow_html=True)
+        
+        # Export option
+        if st.button("Export Logs to CSV"):
+            csv = filtered_logs.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name="email_logs.csv",
+                mime="text/csv"
+            )
 
 def fetch_all_email_logs(session):
     try:
@@ -2567,11 +2650,15 @@ def display_process_logs(process_id):
     """Display logs for a search process"""
     with db_session() as session:
         process = session.query(SearchProcess).get(process_id)
-        if not process or not process.logs:
-            st.info("No logs available")
+        if not process:
+            st.info("Process not found")
+            return
+            
+        if not process.logs:
+            st.info("No logs available yet. Logs will appear here as the process runs.")
             return
         
-        # Use container instead of empty() for better stability
+        # Use container for better stability
         log_container = st.container()
         
         with log_container:
@@ -2586,11 +2673,14 @@ def display_process_logs(process_id):
                         padding: 1rem;
                         background-color: rgba(49, 51, 63, 0.1);
                         margin-bottom: 1rem;
+                        font-family: monospace;
                     }
                     .process-log-entry {
                         padding: 0.25rem 0;
                         border-bottom: 1px solid rgba(49, 51, 63, 0.1);
                         animation: fadeIn 0.5s ease-in;
+                        white-space: pre-wrap;
+                        word-wrap: break-word;
                     }
                     @keyframes fadeIn {
                         from { opacity: 0; transform: translateY(-10px); }
@@ -2651,6 +2741,9 @@ def background_manual_search(process_id, search_terms, settings):
             process.status = 'running'
             session.commit()
             
+            # Log start
+            update_process_log(session, process_id, f"Starting search process with {len(search_terms)} terms", 'info')
+            
             results = manual_search(
                 session=session,
                 terms=search_terms,
@@ -2667,6 +2760,9 @@ def background_manual_search(process_id, search_terms, settings):
                 process_id=process_id
             )
             
+            # Log completion
+            update_process_log(session, process_id, f"Search completed. Found {results.get('total_leads', 0)} leads", 'success')
+            
             process.status = 'completed'
             process.results = results
             session.commit()
@@ -2677,6 +2773,137 @@ def background_manual_search(process_id, search_terms, settings):
             update_process_log(session, process_id, error_msg, 'error')
             process.status = 'failed'
             session.commit()
+
+def view_campaign_logs():
+    st.title("Email Campaign Logs")
+    
+    with db_session() as session:
+        logs = fetch_all_email_logs(session)
+        if logs.empty:
+            st.info("No email logs found.")
+            return
+        
+        # Add CSS for styling
+        st.markdown("""
+            <style>
+                .email-logs-container {
+                    max-height: 600px;
+                    overflow-y: auto;
+                    border: 1px solid rgba(49, 51, 63, 0.2);
+                    border-radius: 0.5rem;
+                    padding: 1rem;
+                    background-color: rgba(49, 51, 63, 0.1);
+                    margin-bottom: 1rem;
+                }
+                .email-log-entry {
+                    padding: 0.75rem;
+                    margin-bottom: 0.5rem;
+                    border-radius: 0.25rem;
+                    background-color: rgba(255, 255, 255, 0.05);
+                    border-left: 4px solid;
+                    animation: fadeIn 0.5s ease-in;
+                }
+                .email-log-entry.success {
+                    border-left-color: #28a745;
+                }
+                .email-log-entry.error {
+                    border-left-color: #dc3545;
+                }
+                .email-log-entry.pending {
+                    border-left-color: #ffc107;
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(-10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        # Summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Emails", len(logs))
+        with col2:
+            success_rate = (logs['Status'] == 'sent').mean() * 100
+            st.metric("Success Rate", f"{success_rate:.1f}%")
+        with col3:
+            st.metric("Unique Recipients", logs['Email'].nunique())
+        
+        # Filters
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
+        with col2:
+            end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
+        
+        search_term = st.text_input("🔍 Search by email or subject")
+        
+        # Filter logs
+        filtered_logs = logs[
+            (logs['Sent At'].dt.date >= start_date) & 
+            (logs['Sent At'].dt.date <= end_date)
+        ]
+        
+        if search_term:
+            filtered_logs = filtered_logs[
+                filtered_logs['Email'].str.contains(search_term, case=False) | 
+                filtered_logs['Subject'].str.contains(search_term, case=False)
+            ]
+        
+        # Display logs
+        st.markdown("<div class='email-logs-container'>", unsafe_allow_html=True)
+        for _, log in filtered_logs.iterrows():
+            status_class = {
+                'sent': 'success',
+                'failed': 'error'
+            }.get(log['Status'], 'pending')
+            
+            st.markdown(f"""
+                <div class='email-log-entry {status_class}'>
+                    <div style='display: flex; justify-content: space-between;'>
+                        <strong>{log['Email']}</strong>
+                        <span>{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')}</span>
+                    </div>
+                    <div style='margin-top: 0.5rem;'>
+                        <strong>Subject:</strong> {log['Subject']}<br>
+                        <strong>Status:</strong> {log['Status']}<br>
+                        <strong>Template:</strong> {log['Template']}
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Add auto-scroll JavaScript
+        st.markdown("""
+            <script>
+                function scrollToBottom() {
+                    const container = document.querySelector('.email-logs-container');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                }
+                
+                // Initial scroll
+                scrollToBottom();
+                
+                // Set up a mutation observer to watch for changes
+                const observer = new MutationObserver(scrollToBottom);
+                const container = document.querySelector('.email-logs-container');
+                if (container) {
+                    observer.observe(container, { childList: true, subtree: true });
+                }
+            </script>
+        """, unsafe_allow_html=True)
+        
+        # Export option
+        if st.button("Export Logs to CSV"):
+            csv = filtered_logs.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name="email_logs.csv",
+                mime="text/csv"
+            )
 
 
 if __name__ == "__main__":
