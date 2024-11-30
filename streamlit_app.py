@@ -447,7 +447,7 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
         lead = session.query(Lead).filter_by(email=lead_email).first()
         if not lead:
             logging.error(f"Lead with email {lead_email} not found.")
-            return
+            return None
 
         new_campaign = EmailCampaign(
             lead_id=lead.id,
@@ -462,28 +462,35 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
         )
         session.add(new_campaign)
         session.commit()
+        return new_campaign
     except Exception as e:
         logging.error(f"Error saving email campaign: {str(e)}")
         session.rollback()
         return None
-    return new_campaign
 
 def update_log(log_container, message, level='info'):
     icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
     log_entry = f"{icon} {message}"
     
-    # Simple console logging without HTML
-    print(f"{icon} {message.split('<')[0]}")  # Only print the first part of the message before any HTML tags
-    
     if 'log_entries' not in st.session_state:
         st.session_state.log_entries = []
     
-    # HTML-formatted log entry for Streamlit display
-    html_log_entry = f"{icon} {message}"
-    st.session_state.log_entries.append(html_log_entry)
+    st.session_state.log_entries.append(log_entry)
     
-    # Update the Streamlit display with all logs
-    log_html = f"<div style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
+    # Keep only last 1000 entries to prevent memory issues
+    if len(st.session_state.log_entries) > 1000:
+        st.session_state.log_entries = st.session_state.log_entries[-1000:]
+    
+    # Create scrollable log container with auto-scroll
+    log_html = f"""
+        <div id="log-container" style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2; background: rgba(0,0,0,0.05); padding: 10px; border-radius: 5px;'>
+            {'<br>'.join(st.session_state.log_entries)}
+        </div>
+        <script>
+            var container = document.getElementById('log-container');
+            container.scrollTop = container.scrollHeight;
+        </script>
+    """
     log_container.markdown(log_html, unsafe_allow_html=True)
 
 def optimize_search_term(search_term, language):
@@ -526,142 +533,90 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
     results = []
     total_leads = 0
     domains_processed = set()
-    processed_emails = set()  # Track all processed emails globally
     
-    for original_term in terms:
-        try:
-            with db_session() as term_session:
-                search_term_id = add_or_get_search_term(term_session, original_term, get_active_campaign_id())
-                
-                # Apply term modifications
+    try:
+        for original_term in terms:
+            try:
+                search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
                 search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
                 search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
                 
-                update_log(log_container, f"Searching for '{original_term}' (Used '{search_term}')")
+                update_log(log_container, f"🔍 {original_term}")
                 
                 for url in google_search(search_term, num_results, lang=language):
-                    domain = get_domain_from_url(url)
-                    
-                    # Skip if domain already processed and ignore flag is set
-                    if ignore_previously_fetched and domain in domains_processed:
-                        update_log(log_container, f"Skipping Previously Fetched: {domain}", 'warning')
-                        continue
-                    
-                    update_log(log_container, f"Fetching: {url}")
-                    
                     try:
+                        domain = get_domain_from_url(url)
+                        if ignore_previously_fetched and domain in domains_processed:
+                            continue
+                        
                         if not url.startswith(('http://', 'https://')):
                             url = 'http://' + url
                         
-                        # Set up a session with retries
-                        session = requests.Session()
-                        retries = Retry(total=3, backoff_factor=0.5)
-                        session.mount('http://', HTTPAdapter(max_retries=retries))
-                        session.mount('https://', HTTPAdapter(max_retries=retries))
-                        
-                        response = session.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
+                        response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
                         response.raise_for_status()
                         
                         html_content = response.text
-                        soup = BeautifulSoup(html_content, 'html.parser')
-                        
-                        # Extract all emails from the page
+                        soup = BeautifulSoup(response.text, 'html.parser')
                         emails = extract_emails_from_html(html_content)
-                        # Filter out invalid and already processed emails
-                        valid_emails = {email.lower() for email in emails if is_valid_email(email)}  # Use set for unique emails
-                        valid_emails = valid_emails - processed_emails  # Remove already processed emails
+                        valid_emails = [email.lower() for email in emails if is_valid_email(email)]
                         
-                        if not valid_emails:
-                            continue
-                        
-                        # Extract page info once for all emails from this URL
-                        name, company, job_title = extract_info_from_page(soup)
-                        page_title = get_page_title(html_content)
-                        page_description = get_page_description(html_content)
-                        page_content = extract_visible_text(soup)
-                        tags = analyze_content_for_tags(page_content)
-                        
-                        # Process each unique valid email
-                        for email in valid_emails:
-                            # Check if email already exists in database
-                            existing_lead = term_session.query(Lead).filter(func.lower(Lead.email) == email).first()
+                        if valid_emails:
+                            update_log(log_container, f"📍 {url}: {len(valid_emails)} emails", 'info')
                             
-                            if existing_lead:
-                                # Update existing lead with new information if available
-                                if any([name, company, job_title]):
-                                    update_lead(term_session, existing_lead.id, {
-                                        'first_name': name or existing_lead.first_name,
-                                        'company': company or existing_lead.company,
-                                        'job_title': job_title or existing_lead.job_title
-                                    })
-                                
-                                # Add new lead source if not exists
-                                if not term_session.query(LeadSource).filter_by(lead_id=existing_lead.id, url=url).first():
-                                    save_lead_source(term_session, existing_lead.id, search_term_id, url, response.status_code, None, page_title, page_description, page_content, json.dumps(tags))
-                                
-                                lead = existing_lead
-                                update_log(log_container, f"Updated lead: {email}", 'success')
-                            else:
-                                # Create new lead
-                                lead = save_lead(
-                                    term_session,
-                                    email=email,
-                                    first_name=name,
-                                    company=company,
-                                    job_title=job_title,
-                                    url=url,
-                                    search_term_id=search_term_id,
-                                    created_at=datetime.utcnow()
-                                )
-                                update_log(log_container, f"Saved new lead: {email}", 'success')
+                            name, company, job_title = extract_info_from_page(soup)
+                            page_title = get_page_title(html_content)
+                            page_description = get_page_description(html_content)
                             
-                            if lead:
-                                processed_emails.add(email)  # Add to processed emails set
-                                total_leads += 1
-                                results.append({
-                                    'Email': email,
-                                    'URL': url,
-                                    'Lead Source': original_term,
-                                    'Title': page_title,
-                                    'Description': page_description,
-                                    'Tags': tags,
-                                    'Name': name,
-                                    'Company': company,
-                                    'Job Title': job_title,
-                                    'Search Term ID': search_term_id
-                                })
-                                
-                                # Handle email sending if enabled and lead hasn't been contacted
-                                if enable_email_sending and from_email and email_template:
-                                    # Check if email has been sent before
-                                    previous_email = term_session.query(EmailCampaign).filter_by(lead_id=lead.id).first()
-                                    if not previous_email:
-                                        template = term_session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                                        if template:
-                                            wrapped_content = wrap_email_body(template.body_content)
-                                            response, tracking_id = send_email_ses(term_session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
-                                            
-                                            if response:
-                                                update_log(log_container, f"Sent email to: {email}", 'email_sent')
-                                                save_email_campaign(term_session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
-                                            else:
-                                                update_log(log_container, f"Failed to send email to: {email}", 'error')
-                                                save_email_campaign(term_session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
-                                    else:
-                                        update_log(log_container, f"Skipping email send - already contacted: {email}", 'warning')
+                            for email in valid_emails:
+                                try:
+                                    lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
+                                    if lead:
+                                        total_leads += 1
+                                        results.append({
+                                            'Email': email,
+                                            'URL': url,
+                                            'Lead Source': original_term,
+                                            'Title': page_title,
+                                            'Description': page_description,
+                                            'Tags': [],
+                                            'Name': name,
+                                            'Company': company,
+                                            'Job Title': job_title,
+                                            'Search Term ID': search_term_id
+                                        })
+
+                                        if enable_email_sending and from_email and email_template:
+                                            template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
+                                            if template:
+                                                wrapped_content = wrap_email_body(template.body_content)
+                                                response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
+                                                
+                                                if response:
+                                                    update_log(log_container, f"✉️ {email}", 'email_sent')
+                                                    save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
+                                                else:
+                                                    save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
+                                except Exception as e:
+                                    logging.error(f"Error processing email {email}: {str(e)}")
+                                    continue
                         
                         domains_processed.add(domain)
                         
-                    except requests.RequestException as e:
-                        update_log(log_container, f"Error processing URL {url}: {str(e)}", 'error')
+                    except Exception as e:
+                        logging.error(f"Error processing URL {url}: {str(e)}")
                         continue
                     
-        except Exception as e:
-            update_log(log_container, f"Error processing term '{original_term}': {str(e)}", 'error')
-            continue
+            except Exception as e:
+                logging.error(f"Error processing term {original_term}: {str(e)}")
+                continue
+            
+    except Exception as e:
+        logging.error(f"Critical error in manual_search: {str(e)}")
     
-    update_log(log_container, f"Total leads found: {total_leads}", 'info')
-    return {"total_leads": total_leads, "results": results}
+    finally:
+        if total_leads > 0:
+            update_log(log_container, f"✨ Found {total_leads} leads", 'success')
+        return {"total_leads": total_leads, "results": results}
 
 def analyze_content_for_tags(content, max_tags=15):
     """
@@ -914,26 +869,48 @@ def log_ai_request(session, function_name, prompt, response, lead_id=None, email
 
 def save_lead(session, email, first_name=None, last_name=None, company=None, job_title=None, phone=None, url=None, search_term_id=None, created_at=None):
     try:
+        # Check if lead already exists
         existing_lead = session.query(Lead).filter_by(email=email).first()
         if existing_lead:
+            # Update existing lead with new information if provided
             for attr in ['first_name', 'last_name', 'company', 'job_title', 'phone', 'created_at']:
-                if locals()[attr]: setattr(existing_lead, attr, locals()[attr])
+                if locals()[attr]:
+                    setattr(existing_lead, attr, locals()[attr])
             lead = existing_lead
         else:
-            lead = Lead(email=email, first_name=first_name, last_name=last_name, company=company, job_title=job_title, phone=phone, created_at=created_at or datetime.utcnow())
+            # Create new lead
+            lead = Lead(
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                company=company,
+                job_title=job_title,
+                phone=phone,
+                created_at=created_at or datetime.utcnow()
+            )
             session.add(lead)
         
-        session.flush()  # Flush changes immediately
+        session.flush()  # Flush changes to get lead ID
         
-        # Save lead source immediately
-        lead_source = LeadSource(lead_id=lead.id, url=url, search_term_id=search_term_id)
-        session.add(lead_source)
+        # Save lead source if URL is provided
+        if url and search_term_id:
+            lead_source = LeadSource(
+                lead_id=lead.id,
+                url=url,
+                search_term_id=search_term_id
+            )
+            session.add(lead_source)
         
-        # Save campaign lead immediately
-        campaign_lead = CampaignLead(campaign_id=get_active_campaign_id(), lead_id=lead.id, status="Not Contacted", created_at=datetime.utcnow())
+        # Create campaign lead association
+        campaign_lead = CampaignLead(
+            campaign_id=get_active_campaign_id(),
+            lead_id=lead.id,
+            status="Not Contacted",
+            created_at=datetime.utcnow()
+        )
         session.add(campaign_lead)
         
-        # Commit changes immediately
+        # Commit all changes
         session.commit()
         logging.info(f"Successfully saved/updated lead: {email}")
         return lead
