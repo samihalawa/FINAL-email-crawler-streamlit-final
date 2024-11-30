@@ -1239,6 +1239,10 @@ def manual_search_page():
                 results={},  # Initialize empty JSON
                 logs=[],     # Initialize empty array for logs
                 total_leads_found=0
+                status='running',
+                results={},  # Initialize empty JSON
+                logs=[],     # Initialize empty array for logs
+                total_leads_found=0
             )
             session.add(new_process)
             session.commit()
