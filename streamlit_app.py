@@ -1231,18 +1231,24 @@ def manual_search_page():
                     'reply_to': reply_to,
                     'email_template': email_template
                 })
+                logs = []  # Initialize empty array for logs
+                total_leads_found = 0
+                status = 'running'
+                results = {}  # Initialize empty JSON
+            else:
+                logs = []  # Initialize empty array for logs
+                total_leads_found = 0
+                status = 'running'
+                results = {}  # Initialize empty JSON
             
             new_process = SearchProcess(
-                search_terms=search_terms,
-                settings=settings,
-                status='running',
-                results={},  # Initialize empty JSON
-                logs=[],     # Initialize empty array for logs
-                total_leads_found=0
+                status=status,
+                results=results,
+                logs=logs,
+                total_leads_found=total_leads_found
             )
             session.add(new_process)
             session.commit()
-            
             # Start background thread
             import threading
             thread = threading.Thread(
@@ -2551,8 +2557,7 @@ def background_manual_search(process_id, search_terms, settings):
             process.status = 'failed'
             session.commit()
 
-# Add this with the other database models, after AIRequestLog and before Settings:
-
+# Replace the existing SearchProcess class with this updated version
 class SearchProcess(Base):
     __tablename__ = 'search_processes'
     __table_args__ = (
@@ -2571,11 +2576,23 @@ class SearchProcess(Base):
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     campaign = relationship("Campaign")
 
-# After engine creation
-try:
-    SearchProcess.__table__.create(bind=engine)
-except Exception as e:
-    logging.info(f"SearchProcess table may already exist: {e}")
+# After the model definition, add this code to handle table creation/updates
+def create_search_process_table():
+    # Drop the existing table if it exists
+    try:
+        SearchProcess.__table__.drop(bind=engine)
+    except:
+        pass
+    
+    # Create the table with the new schema
+    try:
+        SearchProcess.__table__.create(bind=engine)
+    except Exception as e:
+        logging.error(f"Error creating SearchProcess table: {e}")
+        raise
+
+# Add this line after Base.metadata.create_all(bind=engine)
+create_search_process_table()
 
 
 if __name__ == "__main__":
