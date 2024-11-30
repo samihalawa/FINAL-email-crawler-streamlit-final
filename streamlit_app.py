@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index
+from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index, inspect
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from botocore.exceptions import ClientError
@@ -81,6 +81,27 @@ class Campaign(Base):
     email_campaigns = relationship("EmailCampaign", back_populates="campaign")
     search_terms = relationship("SearchTerm", back_populates="campaign")
     campaign_leads = relationship("CampaignLead", back_populates="campaign")
+
+
+# Replace the existing SearchProcess class with this updated version
+class SearchProcess(Base):
+    __tablename__ = 'search_processes'
+    __table_args__ = (
+        Index('idx_search_process_status', 'status'),
+        Index('idx_search_process_created', 'created_at'),
+    )
+    id = Column(BigInteger, primary_key=True)
+    search_terms = Column(JSON)  # Store list of search terms
+    settings = Column(JSON)      # Store search settings
+    status = Column(Text)        # 'running', 'completed', 'failed'
+    results = Column(JSON)       # Store search results
+    logs = Column(JSON)          # Store process logs
+    total_leads_found = Column(BigInteger, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    campaign = relationship("Campaign")
+ 
 
 class CampaignLead(Base):
     __tablename__ = 'campaign_leads'
@@ -2556,43 +2577,6 @@ def background_manual_search(process_id, search_terms, settings):
             update_process_log(session, process_id, error_msg, 'error')
             process.status = 'failed'
             session.commit()
-
-# Replace the existing SearchProcess class with this updated version
-class SearchProcess(Base):
-    __tablename__ = 'search_processes'
-    __table_args__ = (
-        Index('idx_search_process_status', 'status'),
-        Index('idx_search_process_created', 'created_at'),
-    )
-    id = Column(BigInteger, primary_key=True)
-    search_terms = Column(JSON)  # Store list of search terms
-    settings = Column(JSON)      # Store search settings
-    status = Column(Text)        # 'running', 'completed', 'failed'
-    results = Column(JSON)       # Store search results
-    logs = Column(JSON)          # Store process logs
-    total_leads_found = Column(BigInteger, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    campaign = relationship("Campaign")
-
-# After the model definition, add this code to handle table creation/updates
-def create_search_process_table():
-    # Drop the existing table if it exists
-    try:
-        SearchProcess.__table__.drop(bind=engine)
-    except:
-        pass
-    
-    # Create the table with the new schema
-    try:
-        SearchProcess.__table__.create(bind=engine)
-    except Exception as e:
-        logging.error(f"Error creating SearchProcess table: {e}")
-        raise
-
-# Add this line after Base.metadata.create_all(bind=engine)
-create_search_process_table()
 
 
 if __name__ == "__main__":
