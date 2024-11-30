@@ -2464,8 +2464,6 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
-if __name__ == "__main__":
-    main()
 
 def update_process_log(session, process_id, message, level='info'):
     """Update the logs for a search process"""
@@ -2578,3 +2576,7 @@ try:
     SearchProcess.__table__.create(bind=engine)
 except Exception as e:
     logging.info(f"SearchProcess table may already exist: {e}")
+
+
+if __name__ == "__main__":
+    main()
