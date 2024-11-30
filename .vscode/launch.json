@@ -5,10 +5,14 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File",
-            "type": "debugpy",
+            "name": "Streamlit",
+            "type": "debugpy", 
             "request": "launch",
-            "program": "${file}",
+            "module": "streamlit",
+            "args": [
+                "run",
+                "${file}"
+            ],
             "console": "integratedTerminal"
         }
     ]

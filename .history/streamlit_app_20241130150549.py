@@ -23,8 +23,6 @@ from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager, wraps
 from threading import local, Lock
 import threading
-from urllib3.util import Retry
-import logging as logger
 
 # Logging Configuration
 LOGGING_CONFIG = {
@@ -2909,117 +2907,6 @@ def optimize_search_terms_page():
                 except Exception as e:
                     st.error(f"Error generating content: {str(e)}")
 
-def generate_or_adjust_email_template(prompt, kb_info=None, current_template=None):
-    try:
-        context = {
-            "prompt": prompt,
-            "knowledge_base": kb_info,
-            "current_template": current_template
-        }
-        messages = [
-            {"role": "system", "content": "You are an expert email copywriter specializing in B2B communication."},
-            {"role": "user", "content": f"Based on this context:\n{json.dumps(context, indent=2)}\n\nGenerate a professional email template with:\n1. Subject line\n2. Body content\n\nRespond with JSON:\n{{\n    \"subject\": \"email subject\",\n    \"body\": \"email body\"\n}}"}
-        ]
-        response = openai_chat_completion(messages, temperature=0.7)
-        if isinstance(response, str):
-            try:
-                response = json.loads(response)
-            except json.JSONDecodeError:
-                return {"subject": "AI Generated Subject", "body": response}
-        return response
-    except Exception as e:
-        logger.error(f"Error generating email template: {str(e)}")
-        return {"subject": "Default Subject", "body": "Default body content"}
-
-def generate_search_term_groups_and_templates(session, kb_info, industry_focus=None, target_market=None):
-    try:
-        context = {
-            "company_info": {
-                "description": kb_info.get('company_description', ''),
-                "mission": kb_info.get('company_mission', ''),
-                "target_market": kb_info.get('company_target_market', ''),
-                "product": kb_info.get('product_description', '')
-            },
-            "industry_focus": industry_focus,
-            "target_market": target_market
-        }
-        prompt = f"Based on this business context:\n{json.dumps(context, indent=2)}\n\nGenerate:\n1. Search term groups with relevant terms for lead generation\n2. Email template variations for each group"
-        response = openai_chat_completion(
-            messages=[
-                {"role": "system", "content": "You are an expert in B2B lead generation and email marketing."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
-        if not response:
-            raise ValueError("Failed to generate search terms and templates")
-        content = response if isinstance(response, dict) else json.loads(response)
-        results = {"groups": [], "templates": []}
-        for group_data in content.get("groups", []):
-            group = SearchTermGroup(
-                name=group_data["name"],
-                description=group_data["description"],
-                created_at=datetime.utcnow()
-            )
-            session.add(group)
-            session.flush()
-            for term in group_data["search_terms"]:
-                search_term = SearchTerm(
-                    term=term,
-                    group_id=group.id,
-                    campaign_id=get_active_campaign_id(),
-                    created_at=datetime.utcnow()
-                )
-                session.add(search_term)
-            template_data = group_data["email_template"]
-            template = EmailTemplate(
-                template_name=template_data["name"],
-                subject=template_data["subject"],
-                body_content=template_data["body"],
-                campaign_id=get_active_campaign_id(),
-                is_ai_customizable=True,
-                created_at=datetime.utcnow()
-            )
-            session.add(template)
-            results["groups"].append({
-                "id": group.id,
-                "name": group.name,
-                "terms": group_data["search_terms"]
-            })
-            results["templates"].append({
-                "name": template_data["name"],
-                "subject": template_data["subject"]
-            })
-        session.commit()
-        return results
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Error generating search terms and templates: {str(e)}")
-        raise
-
-def fetch_leads_for_search_term_groups(session, groups):
-    try:
-        logger.info(f"Fetching leads for groups: {groups}")
-        query = (
-            session.query(Lead)
-            .join(CampaignLead)
-            .join(SearchTerm)
-            .join(SearchTermGroup)
-            .filter(SearchTermGroup.id.in_(groups))
-            .distinct()
-        )
-        return query.all()
-    except Exception as e:
-        logger.error(f"Error fetching leads for groups: {str(e)}")
-        return []
-
-def log_error(message, process_id=None, log_container=None):
-    if process_id:
-        with get_db() as session:
-            update_process_log(session, process_id, message, 'error')
-    elif log_container:
-        update_log(log_container, message, 'error')
-    logger.error(message)
 
 if __name__ == "__main__":
     main()
