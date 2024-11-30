@@ -22,11 +22,11 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
 #database info
-DB_HOST = os.getenv("SUPABASE_DB_HOST")
-DB_NAME = os.getenv("SUPABASE_DB_NAME")
-DB_USER = os.getenv("SUPABASE_DB_USER")
-DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD")
-DB_PORT = os.getenv("SUPABASE_DB_PORT")
+DB_HOST = os.getenv("SUPABASE_DB_HOST", "localhost")
+DB_NAME = os.getenv("SUPABASE_DB_NAME", "postgres")
+DB_USER = os.getenv("SUPABASE_DB_USER", "postgres")
+DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD", "")
+DB_PORT = os.getenv("SUPABASE_DB_PORT", "5432")
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,8 +34,24 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
 DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
+engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0, pool_pre_ping=True)
 SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
+
+if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
+    raise ValueError("One or more required database environment variables are not set")
+
+try:
+    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0, pool_pre_ping=True)
+    # Test the connection
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+except Exception as e:
+    st.error(f"Failed to connect to database: {str(e)}")
+    raise
+
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+Base = declarative_base()
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
@@ -312,71 +328,76 @@ def settings_page():
                     session.rollback()
 
 def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
-    email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
-    if not email_settings:
-        logging.error(f"No email settings found for {from_email}")
-        return None, None
-
-    tracking_id = str(uuid.uuid4())
-    tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
-    wrapped_body = wrap_email_body(body)
-    tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
-
-    soup = BeautifulSoup(tracked_body, 'html.parser')
-    for a in soup.find_all('a', href=True):
-        original_url = a['href']
-        tracked_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'click', 'url': original_url})}"
-        a['href'] = tracked_url
-    tracked_body = str(soup)
-
     try:
-        test_response = requests.get(f"https://autoclient-email-analytics.trigox.workers.dev/test", timeout=5)
-        if test_response.status_code != 200:
-            logging.warning("Analytics worker is down. Using original URLs.")
-            tracked_body = wrapped_body
-    except requests.RequestException:
-        logging.warning("Failed to reach analytics worker. Using original URLs.")
-        tracked_body = wrapped_body
+        email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
+        if not email_settings:
+            logging.error(f"No email settings found for {from_email}")
+            return None, None
 
-    try:
+        if not all([to_email, subject, body]):
+            logging.error("Missing required email parameters")
+            return None, None
+
+        tracking_id = str(uuid.uuid4())
+        tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
+        wrapped_body = wrap_email_body(body)
+        tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+
         if email_settings.provider == 'ses':
-            if ses_client is None:
-                aws_session = boto3.Session(
-                    aws_access_key_id=email_settings.aws_access_key_id,
-                    aws_secret_access_key=email_settings.aws_secret_access_key,
-                    region_name=email_settings.aws_region
-                )
-                ses_client = aws_session.client('ses')
-            
-            response = ses_client.send_email(
-                Source=from_email,
-                Destination={'ToAddresses': [to_email]},
-                Message={
-                    'Subject': {'Data': subject, 'Charset': charset},
-                    'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
-                },
-                ReplyToAddresses=[reply_to] if reply_to else []
-            )
-            return response, tracking_id
-        elif email_settings.provider == 'smtp':
-            msg = MIMEMultipart()
-            msg['From'] = from_email
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            if reply_to:
-                msg['Reply-To'] = reply_to
-            msg.attach(MIMEText(tracked_body, 'html'))
+            if not all([email_settings.aws_access_key_id, email_settings.aws_secret_access_key, email_settings.aws_region]):
+                logging.error("Missing AWS credentials")
+                return None, None
 
-            with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
-                server.starttls()
-                server.login(email_settings.smtp_username, email_settings.smtp_password)
-                server.send_message(msg)
-            return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
+            try:
+                if ses_client is None:
+                    aws_session = boto3.Session(
+                        aws_access_key_id=email_settings.aws_access_key_id,
+                        aws_secret_access_key=email_settings.aws_secret_access_key,
+                        region_name=email_settings.aws_region
+                    )
+                    ses_client = aws_session.client('ses')
+                
+                response = ses_client.send_email(
+                    Source=from_email,
+                    Destination={'ToAddresses': [to_email]},
+                    Message={
+                        'Subject': {'Data': subject, 'Charset': charset},
+                        'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
+                    },
+                    ReplyToAddresses=[reply_to] if reply_to else []
+                )
+                return response, tracking_id
+            except Exception as e:
+                logging.error(f"AWS SES error: {str(e)}")
+                return None, None
+
+        elif email_settings.provider == 'smtp':
+            if not all([email_settings.smtp_server, email_settings.smtp_port, email_settings.smtp_username, email_settings.smtp_password]):
+                logging.error("Missing SMTP credentials")
+                return None, None
+
+            try:
+                msg = MIMEMultipart()
+                msg['From'] = from_email
+                msg['To'] = to_email
+                msg['Subject'] = subject
+                if reply_to:
+                    msg['Reply-To'] = reply_to
+                msg.attach(MIMEText(tracked_body, 'html'))
+
+                with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
+                    server.starttls()
+                    server.login(email_settings.smtp_username, email_settings.smtp_password)
+                    server.send_message(msg)
+                return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
+            except Exception as e:
+                logging.error(f"SMTP error: {str(e)}")
+                return None, None
         else:
             logging.error(f"Unknown email provider: {email_settings.provider}")
             return None, None
     except Exception as e:
-        logging.error(f"Error sending email: {str(e)}")
+        logging.error(f"Error in send_email_ses: {str(e)}")
         return None, None
 
 def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
@@ -505,7 +526,8 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                         
                         # Extract all emails from the page
                         emails = extract_emails_from_html(html_content)
-                        valid_emails = [email for email in emails if is_valid_email(email) and email not in processed_emails]
+                        # Filter out invalid and already processed emails
+                        valid_emails = [email.lower() for email in emails if is_valid_email(email) and email.lower() not in processed_emails]
                         
                         if not valid_emails:
                             continue
@@ -517,25 +539,42 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                         
                         # Extract and analyze page content for tags
                         page_content = extract_visible_text(soup)
-                        tags = analyze_content_for_tags(page_content)  # New function to extract meaningful tags
+                        tags = analyze_content_for_tags(page_content)
                         
                         # Process each valid email
                         for email in valid_emails:
-                            processed_emails.add(email)  # Add to global processed emails set
+                            # Check if email already exists in database
+                            existing_lead = term_session.query(Lead).filter(func.lower(Lead.email) == email).first()
                             
-                            # Save lead with enhanced information
-                            lead = save_lead(
-                                term_session,
-                                email=email,
-                                first_name=name,
-                                company=company,
-                                job_title=job_title,
-                                url=url,
-                                search_term_id=search_term_id,
-                                created_at=datetime.utcnow()
-                            )
+                            if existing_lead:
+                                # Update existing lead with new information if available
+                                if any([name, company, job_title]):
+                                    update_lead(term_session, existing_lead.id, {
+                                        'first_name': name or existing_lead.first_name,
+                                        'company': company or existing_lead.company,
+                                        'job_title': job_title or existing_lead.job_title
+                                    })
+                                
+                                # Add new lead source if not exists
+                                if not term_session.query(LeadSource).filter_by(lead_id=existing_lead.id, url=url).first():
+                                    save_lead_source(term_session, existing_lead.id, search_term_id, url, response.status_code, None, page_title, page_description, page_content, json.dumps(tags))
+                                
+                                lead = existing_lead
+                            else:
+                                # Create new lead
+                                lead = save_lead(
+                                    term_session,
+                                    email=email,
+                                    first_name=name,
+                                    company=company,
+                                    job_title=job_title,
+                                    url=url,
+                                    search_term_id=search_term_id,
+                                    created_at=datetime.utcnow()
+                                )
                             
                             if lead:
+                                processed_emails.add(email)  # Add to processed emails set
                                 total_leads += 1
                                 results.append({
                                     'Email': email,
@@ -543,28 +582,33 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                     'Lead Source': original_term,
                                     'Title': page_title,
                                     'Description': page_description,
-                                    'Tags': tags,  # Enhanced tags
+                                    'Tags': tags,
                                     'Name': name,
                                     'Company': company,
                                     'Job Title': job_title,
                                     'Search Term ID': search_term_id
                                 })
                                 
-                                update_log(log_container, f"Saved lead: {email}", 'success')
+                                update_log(log_container, f"{'Updated' if existing_lead else 'Saved'} lead: {email}", 'success')
                                 
-                                # Handle email sending if enabled
+                                # Handle email sending if enabled and lead hasn't been contacted
                                 if enable_email_sending and from_email and email_template:
-                                    template = term_session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                                    if template:
-                                        wrapped_content = wrap_email_body(template.body_content)
-                                        response, tracking_id = send_email_ses(term_session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
-                                        
-                                        if response:
-                                            update_log(log_container, f"Sent email to: {email}", 'email_sent')
-                                            save_email_campaign(term_session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
-                                        else:
-                                            update_log(log_container, f"Failed to send email to: {email}", 'error')
-                                            save_email_campaign(term_session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
+                                    # Check if email has been sent before
+                                    previous_email = term_session.query(EmailCampaign).filter_by(lead_id=lead.id).first()
+                                    if not previous_email:
+                                        template = term_session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
+                                        if template:
+                                            wrapped_content = wrap_email_body(template.body_content)
+                                            response, tracking_id = send_email_ses(term_session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
+                                            
+                                            if response:
+                                                update_log(log_container, f"Sent email to: {email}", 'email_sent')
+                                                save_email_campaign(term_session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
+                                            else:
+                                                update_log(log_container, f"Failed to send email to: {email}", 'error')
+                                                save_email_campaign(term_session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
+                                    else:
+                                        update_log(log_container, f"Skipping email send - already contacted: {email}", 'warning')
                         
                         domains_processed.add(domain)
                         
@@ -779,33 +823,41 @@ def ai_automation_loop(session, log_container, leads_container):
     st.session_state.total_emails_sent = total_emails_sent
 
 def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_id=None, email_campaign_id=None):
-    with db_session() as session:
-        general_settings = session.query(Settings).filter_by(setting_type='general').first()
-        if not general_settings or 'openai_api_key' not in general_settings.value:
-            st.error("OpenAI API key not set. Please configure it in the settings.")
-            return None
-
-        client = OpenAI(api_key=general_settings.value['openai_api_key'])
-        model = general_settings.value.get('openai_model', "gpt-4o-mini")
-
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature
-        )
-        result = response.choices[0].message.content
         with db_session() as session:
-            log_ai_request(session, function_name, messages, result, lead_id, email_campaign_id, model)
-        
-        try:
-            return json.loads(result)
-        except json.JSONDecodeError:
-            return result
+            general_settings = session.query(Settings).filter_by(setting_type='general').first()
+            if not general_settings or 'openai_api_key' not in general_settings.value:
+                st.error("OpenAI API key not set. Please configure it in the settings.")
+                return None
+
+            # Initialize OpenAI client with Hugging Face endpoint
+            client = OpenAI(
+                base_url=general_settings.value.get('openai_api_base', 'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-72B-Instruct/v1/'),
+                api_key=general_settings.value.get('openai_api_key', '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')
+            )
+
+            try:
+                # Make request to Hugging Face endpoint
+                response = client.chat.completions.create(
+                    model="Qwen/Qwen2.5-72B-Instruct",  # Model name is required but may be ignored
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=500
+                )
+                
+                result = response.choices[0].message.content
+                log_ai_request(session, function_name, messages, result, lead_id, email_campaign_id, "Qwen/Qwen2.5-72B-Instruct")
+                
+                try:
+                    return json.loads(result)
+                except json.JSONDecodeError:
+                    return result
+            except Exception as e:
+                st.error(f"Error in API call: {str(e)}")
+                log_ai_request(session, function_name, messages, str(e), lead_id, email_campaign_id, "Qwen/Qwen2.5-72B-Instruct")
+                return None
     except Exception as e:
-        st.error(f"Error in OpenAI API call: {str(e)}")
-        with db_session() as session:
-            log_ai_request(session, function_name, messages, str(e), lead_id, email_campaign_id, model)
+        st.error(f"Error in database operation: {str(e)}")
         return None
 
 def log_ai_request(session, function_name, prompt, response, lead_id=None, email_campaign_id=None, model_used=None):
@@ -916,24 +968,23 @@ def fetch_leads(session, template_id, send_option, specific_email, selected_term
     except Exception as e:
         logging.error(f"Error fetching leads: {str(e)}")
         return []
-
 def update_display(container, items, title, item_key):
     container.markdown(
         f"""
         <style>
             .container {{
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid rgba(49, 51, 63, 0.2);
-            border-radius: 0.25rem;
-            padding: 1rem;
-            background-color: rgba(49, 51, 63, 0.1);
-        }}
-        .entry {{
-            margin-bottom: 0.5rem;
-            padding: 0.5rem;
-            background-color: rgba(255, 255, 255, 0.1);
-            border-radius: 0.25rem;
+                max-height: 400px;
+                overflow-y: auto;
+                border: 1px solid rgba(49, 51, 63, 0.2);
+                border-radius: 0.25rem;
+                padding: 1rem;
+                background-color: rgba(49, 51, 63, 0.1);
+            }}
+            .entry {{
+                margin-bottom: 0.5rem;
+                padding: 0.5rem;
+                background-color: rgba(255, 255, 255, 0.1);
+                border-radius: 0.25rem;
             }}
         </style>
         <div class="container">
@@ -944,7 +995,8 @@ def update_display(container, items, title, item_key):
         unsafe_allow_html=True
     )
 
-def get_domain_from_url(url): return urlparse(url).netloc
+def get_domain_from_url(url):
+    return urlparse(url).netloc
 
 def manual_search_page():
     st.title("Manual Search")
