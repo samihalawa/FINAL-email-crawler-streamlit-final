@@ -1176,17 +1176,55 @@ def manual_search_page():
                 with st.expander(f"Process {process.id} - Started at {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}", expanded=True):
                     display_process_logs(process.id)
         
-        # Search terms input
-        search_terms = st_tags(
-            label='Enter Search Terms',
-            text='Press enter after each term',
-            value=st.session_state.get('search_terms', []),
-            key='search_terms_input'
-        )
-
-        # Add buttons for proposing and optimizing search terms
-        col1, col2 = st.columns(2)
+        # Main search interface
+        col1, col2 = st.columns([2, 1])
+        
         with col1:
+            # Search terms input
+            search_terms = st_tags(
+                label='Enter Search Terms',
+                text='Press enter after each term',
+                value=st.session_state.get('search_terms', []),
+                key='search_terms_input'
+            )
+            
+            # Settings
+            settings = {
+                'num_results': st.number_input('Results per term', min_value=1, max_value=100, value=10),
+                'ignore_previously_fetched': st.checkbox('Ignore previously fetched domains', value=True),
+                'optimize_english': st.checkbox('Optimize for English'),
+                'optimize_spanish': st.checkbox('Optimize for Spanish'),
+                'shuffle_keywords_option': st.checkbox('Shuffle keywords'),
+                'language': st.selectbox('Language', ['ES', 'EN'], index=0),
+                'enable_email_sending': st.checkbox('Enable automatic email sending')
+            }
+            
+            # Email settings if enabled
+            if settings['enable_email_sending']:
+                email_settings = fetch_email_settings(session)
+                if email_settings:
+                    email_setting = st.selectbox(
+                        "From Email",
+                        options=email_settings,
+                        format_func=lambda x: f"{x['name']} ({x['email']})"
+                    )
+                    settings['from_email'] = email_setting['email']
+                    settings['reply_to'] = st.text_input("Reply To", value=email_setting['email'])
+                    
+                    templates = fetch_email_templates(session)
+                    if templates:
+                        settings['email_template'] = st.selectbox("Email Template", options=templates)
+                    else:
+                        st.warning("No email templates found. Please create one first.")
+                        settings['enable_email_sending'] = False
+                else:
+                    st.warning("No email settings found. Please configure email settings first.")
+                    settings['enable_email_sending'] = False
+        
+        with col2:
+            st.subheader("AI Assistant")
+            
+            # AI Propose button
             if st.button("PROPOSE NEW SEARCH TERMS", use_container_width=True):
                 with st.spinner("Generating new search term proposals..."):
                     kb_info = get_knowledge_base_info(session, get_active_project_id())
@@ -1206,13 +1244,19 @@ def manual_search_page():
                         )
                         if isinstance(response, str):
                             new_terms = [term.strip() for term in response.split('\n') if term.strip()]
+                            # Update session state without rerunning
                             st.session_state.search_terms = list(set(search_terms + new_terms))
-                            st.success("New search terms proposed! They have been added to your list.")
-                            st.rerun()
+                            # Show the new terms
+                            st.success("New terms proposed!")
+                            st.write("New terms added:")
+                            for term in new_terms:
+                                st.write(f"• {term}")
                     else:
                         st.warning("Please set up your Knowledge Base first to get better search term proposals.")
-
-        with col2:
+            
+            st.markdown("---")
+            
+            # AI Optimize button
             if st.button("OPTIMIZE SEARCH TERMS", use_container_width=True):
                 with st.spinner("Optimizing search terms..."):
                     if search_terms:
@@ -1234,75 +1278,50 @@ def manual_search_page():
                         )
                         if isinstance(response, str):
                             optimized_terms = [term.strip() for term in response.split('\n') if term.strip()]
+                            # Update session state without rerunning
                             st.session_state.search_terms = optimized_terms
-                            st.success("Search terms have been optimized!")
-                            st.rerun()
+                            # Show the optimized terms
+                            st.success("Terms optimized!")
+                            st.write("Optimized terms:")
+                            for term in optimized_terms:
+                                st.write(f"• {term}")
                     else:
                         st.warning("Please enter some search terms to optimize.")
-        
-        # Rest of the search settings
-        settings = {
-            'num_results': st.number_input('Results per term', min_value=1, max_value=100, value=10),
-            'ignore_previously_fetched': st.checkbox('Ignore previously fetched domains', value=True),
-            'optimize_english': st.checkbox('Optimize for English'),
-            'optimize_spanish': st.checkbox('Optimize for Spanish'),
-            'shuffle_keywords_option': st.checkbox('Shuffle keywords'),
-            'language': st.selectbox('Language', ['ES', 'EN'], index=0),
-            'enable_email_sending': st.checkbox('Enable automatic email sending')
-        }
-
-        if settings['enable_email_sending']:
-            email_settings = fetch_email_settings(session)
-            if email_settings:
-                email_setting = st.selectbox(
-                    "From Email",
-                    options=email_settings,
-                    format_func=lambda x: f"{x['name']} ({x['email']})"
-                )
-                settings['from_email'] = email_setting['email']
-                settings['reply_to'] = st.text_input("Reply To", value=email_setting['email'])
+            
+            st.markdown("---")
+            
+            # Start Search button
+            if st.button("Start Search", type="primary", use_container_width=True):
+                if not search_terms:
+                    st.warning("Please enter at least one search term")
+                    return
                 
-                templates = fetch_email_templates(session)
-                if templates:
-                    settings['email_template'] = st.selectbox("Email Template", options=templates)
-                else:
-                    st.warning("No email templates found. Please create one first.")
-                    settings['enable_email_sending'] = False
-            else:
-                st.warning("No email settings found. Please configure email settings first.")
-                settings['enable_email_sending'] = False
-        
-        if st.button("Start Search", type="primary"):
-            if not search_terms:
-                st.warning("Please enter at least one search term")
-                return
-            
-            new_process = SearchProcess(
-                search_terms=search_terms,
-                settings=settings,
-                status='running',
-                results={},
-                logs=[],
-                total_leads_found=0,
-                campaign_id=get_active_campaign_id()
-            )
-            session.add(new_process)
-            session.commit()
-            
-            # Start background thread
-            import threading
-            thread = threading.Thread(
-                target=background_manual_search,
-                args=(new_process.id, search_terms, settings)
-            )
-            thread.daemon = True
-            thread.start()
-            
-            st.success("Search process started in background!")
-            st.info(f"Process ID: {new_process.id}")
-            
-            # Show logs immediately
-            display_process_logs(new_process.id)
+                new_process = SearchProcess(
+                    search_terms=search_terms,
+                    settings=settings,
+                    status='running',
+                    results={},
+                    logs=[],
+                    total_leads_found=0,
+                    campaign_id=get_active_campaign_id()
+                )
+                session.add(new_process)
+                session.commit()
+                
+                # Start background thread
+                import threading
+                thread = threading.Thread(
+                    target=background_manual_search,
+                    args=(new_process.id, search_terms, settings)
+                )
+                thread.daemon = True
+                thread.start()
+                
+                st.success("Search process started in background!")
+                st.info(f"Process ID: {new_process.id}")
+                
+                # Show logs immediately
+                display_process_logs(new_process.id)
 
 def get_page_description(html_content):
     """Extract page description from HTML meta tags."""
@@ -2556,16 +2575,26 @@ def display_process_logs(process_id):
         log_container = st.container()
         
         with log_container:
-            # Add CSS for scrollable container
+            # Add CSS for scrollable container with unique class
             st.markdown("""
                 <style>
-                    .stMarkdown {
+                    .process-logs-container {
                         max-height: 400px;
                         overflow-y: auto;
                         border: 1px solid rgba(49, 51, 63, 0.2);
                         border-radius: 0.25rem;
                         padding: 1rem;
                         background-color: rgba(49, 51, 63, 0.1);
+                        margin-bottom: 1rem;
+                    }
+                    .process-log-entry {
+                        padding: 0.25rem 0;
+                        border-bottom: 1px solid rgba(49, 51, 63, 0.1);
+                        animation: fadeIn 0.5s ease-in;
+                    }
+                    @keyframes fadeIn {
+                        from { opacity: 0; transform: translateY(-10px); }
+                        to { opacity: 1; transform: translateY(0); }
                     }
                 </style>
             """, unsafe_allow_html=True)
@@ -2583,10 +2612,32 @@ def display_process_logs(process_id):
                     'error': '🔴',
                     'email_sent': '🟣'
                 }.get(level, '⚪')
-                log_entries.append(f'{icon} [{timestamp}] {message}')
+                log_entries.append(f'<div class="process-log-entry">{icon} [{timestamp}] {message}</div>')
             
-            # Display all logs at once
-            st.markdown('\n'.join(log_entries))
+            # Display all logs at once in the container
+            st.markdown(f'<div class="process-logs-container">{"".join(log_entries)}</div>', unsafe_allow_html=True)
+            
+            # Add auto-scroll JavaScript
+            st.markdown("""
+                <script>
+                    function scrollToBottom() {
+                        const containers = document.getElementsByClassName('process-logs-container');
+                        for (let container of containers) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                    
+                    // Initial scroll
+                    scrollToBottom();
+                    
+                    // Set up a mutation observer to watch for changes
+                    const observer = new MutationObserver(scrollToBottom);
+                    const containers = document.getElementsByClassName('process-logs-container');
+                    for (let container of containers) {
+                        observer.observe(container, { childList: true, subtree: true });
+                    }
+                </script>
+            """, unsafe_allow_html=True)
 
 def background_manual_search(process_id, search_terms, settings):
     """Execute manual search in background"""
