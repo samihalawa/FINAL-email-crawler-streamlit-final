@@ -274,12 +274,54 @@ def settings_page():
     with db_session() as session:
         general_settings = session.query(Settings).filter_by(setting_type='general').first() or Settings(name='General Settings', setting_type='general', value={})
         st.header("General Settings")
+        
         with st.form("general_settings_form"):
-            openai_api_key = st.text_input("OpenAI API Key", value=general_settings.value.get('openai_api_key', ''), type="password")
-            openai_api_base = st.text_input("OpenAI API Base URL", value=general_settings.value.get('openai_api_base', 'https://api.openai.com/v1'))
-            openai_model = st.text_input("OpenAI Model", value=general_settings.value.get('openai_model', 'gpt-4o-mini'))
+            # Predefined model configurations
+            model_configs = {
+                "Qwen 2.5 72B": {
+                    "model": "Qwen/Qwen2.5-72B-Instruct",
+                    "api_base": "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-72B-Instruct/v1/",
+                    "api_key": "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"
+                },
+                "GPT-4": {
+                    "model": "gpt-4",
+                    "api_base": "https://api.openai.com/v1/",
+                    "api_key": ""  # Will be filled by user input
+                },
+                "Custom Configuration": {
+                    "model": "",
+                    "api_base": "",
+                    "api_key": ""
+                }
+            }
+            
+            selected_model = st.selectbox(
+                "Select Model",
+                options=list(model_configs.keys()),
+                index=0
+            )
+            
+            if selected_model == "Custom Configuration":
+                openai_api_key = st.text_input("API Key", value=general_settings.value.get('openai_api_key', ''), type="password")
+                openai_api_base = st.text_input("API Base URL", value=general_settings.value.get('openai_api_base', ''))
+                openai_model = st.text_input("Model Name", value=general_settings.value.get('openai_model', ''))
+            else:
+                config = model_configs[selected_model]
+                openai_api_key = st.text_input("API Key", 
+                    value=config['api_key'] or general_settings.value.get('openai_api_key', ''),
+                    type="password")
+                openai_api_base = config['api_base']
+                openai_model = config['model']
+                
+                if not config['api_key']:  # If API key is not predefined
+                    st.info(f"Please enter your API key for {selected_model}")
+            
             if st.form_submit_button("Save General Settings"):
-                general_settings.value = {'openai_api_key': openai_api_key, 'openai_api_base': openai_api_base, 'openai_model': openai_model}
+                general_settings.value = {
+                    'openai_api_key': openai_api_key,
+                    'openai_api_base': openai_api_base,
+                    'openai_model': openai_model
+                }
                 session.add(general_settings)
                 session.commit()
                 st.success("General settings saved successfully!")
@@ -488,7 +530,6 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
     
     for original_term in terms:
         try:
-            # Create a new session for each term to avoid session conflicts
             with db_session() as term_session:
                 search_term_id = add_or_get_search_term(term_session, original_term, get_active_campaign_id())
                 
@@ -527,21 +568,20 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                         # Extract all emails from the page
                         emails = extract_emails_from_html(html_content)
                         # Filter out invalid and already processed emails
-                        valid_emails = [email.lower() for email in emails if is_valid_email(email) and email.lower() not in processed_emails]
+                        valid_emails = {email.lower() for email in emails if is_valid_email(email)}  # Use set for unique emails
+                        valid_emails = valid_emails - processed_emails  # Remove already processed emails
                         
                         if not valid_emails:
                             continue
                         
-                        # Extract page info
+                        # Extract page info once for all emails from this URL
                         name, company, job_title = extract_info_from_page(soup)
                         page_title = get_page_title(html_content)
                         page_description = get_page_description(html_content)
-                        
-                        # Extract and analyze page content for tags
                         page_content = extract_visible_text(soup)
                         tags = analyze_content_for_tags(page_content)
                         
-                        # Process each valid email
+                        # Process each unique valid email
                         for email in valid_emails:
                             # Check if email already exists in database
                             existing_lead = term_session.query(Lead).filter(func.lower(Lead.email) == email).first()
@@ -560,6 +600,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                     save_lead_source(term_session, existing_lead.id, search_term_id, url, response.status_code, None, page_title, page_description, page_content, json.dumps(tags))
                                 
                                 lead = existing_lead
+                                update_log(log_container, f"Updated lead: {email}", 'success')
                             else:
                                 # Create new lead
                                 lead = save_lead(
@@ -572,6 +613,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                     search_term_id=search_term_id,
                                     created_at=datetime.utcnow()
                                 )
+                                update_log(log_container, f"Saved new lead: {email}", 'success')
                             
                             if lead:
                                 processed_emails.add(email)  # Add to processed emails set
@@ -588,8 +630,6 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                     'Job Title': job_title,
                                     'Search Term ID': search_term_id
                                 })
-                                
-                                update_log(log_container, f"{'Updated' if existing_lead else 'Saved'} lead: {email}", 'success')
                                 
                                 # Handle email sending if enabled and lead hasn't been contacted
                                 if enable_email_sending and from_email and email_template:
@@ -707,7 +747,8 @@ def fetch_search_terms_with_lead_count(session):
              .join(Lead, LeadSource.lead_id == Lead.id)
              .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
              .group_by(SearchTerm.term))
-    return pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
+    df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
+    return df
 
 def add_search_term(session, term, campaign_id):
     try:
@@ -881,15 +922,24 @@ def save_lead(session, email, first_name=None, last_name=None, company=None, job
         else:
             lead = Lead(email=email, first_name=first_name, last_name=last_name, company=company, job_title=job_title, phone=phone, created_at=created_at or datetime.utcnow())
             session.add(lead)
-        session.flush()
+        
+        session.flush()  # Flush changes immediately
+        
+        # Save lead source immediately
         lead_source = LeadSource(lead_id=lead.id, url=url, search_term_id=search_term_id)
         session.add(lead_source)
+        
+        # Save campaign lead immediately
         campaign_lead = CampaignLead(campaign_id=get_active_campaign_id(), lead_id=lead.id, status="Not Contacted", created_at=datetime.utcnow())
         session.add(campaign_lead)
+        
+        # Commit changes immediately
         session.commit()
+        logging.info(f"Successfully saved/updated lead: {email}")
         return lead
+        
     except Exception as e:
-        logging.error(f"Error saving lead: {str(e)}")
+        logging.error(f"Error saving lead {email}: {str(e)}")
         session.rollback()
         return None
 
@@ -1001,50 +1051,62 @@ def get_domain_from_url(url):
 def manual_search_page():
     st.title("Manual Search")
     with db_session() as session:
-        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
+        # Get the 10 most recent search terms and randomize them
+        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(10).all()
         recent_search_terms = [term.term for term in recent_searches]
+        random.shuffle(recent_search_terms)  # Randomize the order
+        
+        # Fetch email templates and settings
         email_templates = fetch_email_templates(session)
         email_settings = fetch_email_settings(session)
 
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        search_terms = st_tags(
-            label='Enter search terms:',
-            text='Press enter to add more',
-            value=recent_search_terms,
-            suggestions=['software engineer', 'data scientist', 'product manager'],
-            maxtags=10,
-            key='search_terms_input'
-        )
-        num_results = st.slider("Results per term", 1, 50000, 10)
-
-    with col2:
-        enable_email_sending = st.checkbox("Enable email sending", value=True)
-        ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
-        shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
-        optimize_english = st.checkbox("Optimize (English)", value=False)
-        optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
-        language = st.selectbox("Select Language", options=["ES", "EN"], index=0)
-
-    if enable_email_sending:
-        if not email_templates:
-            st.error("No email templates available. Please create a template first.")
-            return
-        if not email_settings:
-            st.error("No email settings available. Please add email settings first.")
-            return
-
-        col3, col4 = st.columns(2)
-        with col3:
-            email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip())
-        with col4:
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
-            if email_setting_option:
-                from_email = email_setting_option['email']
-                reply_to = st.text_input("Reply To", email_setting_option['email'])
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            # Support for copy-paste with multiple terms
+            search_terms_input = st_tags(
+                label='Enter search terms:',
+                text='Press enter to add more or paste multiple terms',
+                value=recent_search_terms,
+                suggestions=['software engineer', 'data scientist', 'product manager'],
+                maxtags=50,  # Increased limit
+                key='search_terms_input'
+            )
+            
+            num_results = st.slider("Results per term", 1, 50000, 10)
+            
+            # Process pasted text with multiple terms
+            if len(search_terms_input) == 1 and ' X ' in search_terms_input[0]:
+                search_terms = [term.strip() for term in search_terms_input[0].split(' X ')]
             else:
-                st.error("No email setting selected. Please select an email setting.")
+                search_terms = search_terms_input
+
+        with col2:
+            enable_email_sending = st.checkbox("Enable email sending", value=True)
+            ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
+            shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
+            optimize_english = st.checkbox("Optimize (English)", value=False)
+            optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
+            language = st.selectbox("Select Language", options=["ES", "EN"], index=0)
+
+        if enable_email_sending:
+            if not email_templates:
+                st.error("No email templates available. Please create a template first.")
                 return
+            if not email_settings:
+                st.error("No email settings available. Please add email settings first.")
+                return
+
+            col3, col4 = st.columns(2)
+            with col3:
+                email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip())
+            with col4:
+                email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
+                if email_setting_option:
+                    from_email = email_setting_option['email']
+                    reply_to = st.text_input("Reply To", email_setting_option['email'])
+                else:
+                    st.error("No email setting selected. Please select an email setting.")
+                    return
 
     if st.button("Search"):
         if not search_terms:
@@ -1217,6 +1279,7 @@ def is_valid_email(email):
         return True
     except EmailNotValidError:
         return False
+
 
 
 
