@@ -1231,22 +1231,24 @@ def manual_search_page():
                     'reply_to': reply_to,
                     'email_template': email_template
                 })
+                logs = []  # Initialize empty array for logs
+                total_leads_found = 0
+                status = 'running'
+                results = {}  # Initialize empty JSON
+            else:
+                logs = []  # Initialize empty array for logs
+                total_leads_found = 0
+                status = 'running'
+                results = {}  # Initialize empty JSON
             
             new_process = SearchProcess(
-                search_terms=search_terms,
-                settings=settings,
-                status='running',
-                results={},  # Initialize empty JSON
-                logs=[],     # Initialize empty array for logs
-                total_leads_found=0
-                status='running',
-                results={},  # Initialize empty JSON
-                logs=[],     # Initialize empty array for logs
-                total_leads_found=0
+                status=status,
+                results=results,
+                logs=logs,
+                total_leads_found=total_leads_found
             )
             session.add(new_process)
             session.commit()
-            
             # Start background thread
             import threading
             thread = threading.Thread(
