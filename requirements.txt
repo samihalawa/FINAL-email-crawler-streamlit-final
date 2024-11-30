@@ -40,4 +40,3 @@ redis>=4.5.0
 typing-extensions>=4.0.0
 black>=22.0.0
 flask>=2.0.0
-python-whois>=0.8.0
