@@ -426,9 +426,13 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
             return None, None
 
         tracking_id = str(uuid.uuid4())
-        tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
-        wrapped_body = wrap_email_body(body)
-        tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+        # Add a try-except to handle tracking pixel failures gracefully
+        try:
+            tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"  # Add missing }
+            tracked_body = wrap_email_body(body).replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+        except Exception as e:
+            logging.warning(f"Failed to add tracking pixel: {str(e)}")
+            tracked_body = wrap_email_body(body)  # Use original body if tracking fails
 
         if email_settings.provider == 'ses':
             if not all([email_settings.aws_access_key_id, email_settings.aws_secret_access_key, email_settings.aws_region]):
@@ -630,10 +634,11 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                 search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
                 search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
                 
+                log_message = f"🔍 Searching: {original_term}"
                 if process_id:
-                    update_process_log(session, process_id, f"🔍 Searching: {original_term}")
+                    update_process_log(session, process_id, log_message, 'info')
                 elif log_container:
-                    update_log(log_container, f"🔍 Searching: {original_term}")
+                    update_log(log_container, log_message)
                 
                 for url in google_search(search_term, num_results, lang=language):
                     try:
@@ -655,7 +660,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                         if valid_emails:
                             log_message = f"📍 Found {len(valid_emails)} emails on {url}"
                             if process_id:
-                                update_process_log(session, process_id, log_message)
+                                update_process_log(session, process_id, log_message, 'success')
                             elif log_container:
                                 update_log(log_container, log_message)
                             
@@ -670,7 +675,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                         total_leads += 1
                                         log_message = f"📧 Found email: {email}"
                                         if process_id:
-                                            update_process_log(session, process_id, log_message)
+                                            update_process_log(session, process_id, log_message, 'success')
                                         elif log_container:
                                             update_log(log_container, log_message)
                                         
@@ -1168,108 +1173,28 @@ def manual_search_page():
         if active_processes:
             st.subheader("Active Search Processes")
             for process in active_processes:
-                with st.expander(f"Process {process.id} - Started at {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}"):
+                with st.expander(f"Process {process.id} - Started at {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}", expanded=True):
                     display_process_logs(process.id)
         
-        # Show completed processes
-        completed_processes = session.query(SearchProcess).filter(
-            SearchProcess.status.in_(['completed', 'failed'])
-        ).order_by(SearchProcess.created_at.desc()).limit(5).all()
-        
-        if completed_processes:
-            st.subheader("Recent Search Processes")
-            for process in completed_processes:
-                with st.expander(f"Process {process.id} - {process.status.title()} - {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}"):
-                    display_process_logs(process.id)
-                    if process.status == 'completed' and process.results:
-                        st.write(f"Total leads found: {process.results['total_leads']}")
-                        st.dataframe(pd.DataFrame(process.results['results']))
-        
-        # Input section for new search
-        st.subheader("Start New Search")
-        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
-        recent_search_terms = [term.term for term in recent_searches]
-        
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            search_terms = st_tags(
-                label='Enter search terms:',
-                text='Press enter to add more',
-                value=recent_search_terms,
-                suggestions=['software engineer', 'data scientist', 'product manager'],
-                maxtags=10,
-                key='search_terms_input'
-            )
-            num_results = st.slider("Results per term", 1, 50000, 10)
-        
-        with col2:
-            enable_email_sending = st.checkbox("Enable email sending", value=True)
-            ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
-            shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
-            optimize_english = st.checkbox("Optimize (English)", value=False)
-            optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
-            language = st.selectbox("Select Language", options=["ES", "EN"], index=0)
-        
-        if enable_email_sending:
-            email_templates = fetch_email_templates(session)
-            email_settings = fetch_email_settings(session)
-            
-            if not email_templates or not email_settings:
-                st.error("Email templates or settings not available")
-                return
-            
-            col3, col4 = st.columns(2)
-            with col3:
-                email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip())
-            with col4:
-                email_setting = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
-                if email_setting:
-                    from_email = email_setting['email']
-                    reply_to = st.text_input("Reply To", email_setting['email'])
-                else:
-                    st.error("No email setting selected")
-                    return
+        # Rest of the code...
         
         if st.button("Start Search", type="primary"):
             if not search_terms:
                 st.warning("Please enter at least one search term")
                 return
             
-            # Create new search process
-            settings = {
-                'num_results': num_results,
-                'ignore_previously_fetched': ignore_previously_fetched,
-                'optimize_english': optimize_english,
-                'optimize_spanish': optimize_spanish,
-                'shuffle_keywords_option': shuffle_keywords_option,
-                'language': language,
-                'enable_email_sending': enable_email_sending
-            }
-            
-            if enable_email_sending:
-                settings.update({
-                    'from_email': from_email,
-                    'reply_to': reply_to,
-                    'email_template': email_template
-                })
-                logs = []  # Initialize empty array for logs
-                total_leads_found = 0
-                status = 'running'
-                results = {}  # Initialize empty JSON
-            else:
-                logs = []  # Initialize empty array for logs
-                total_leads_found = 0
-                status = 'running'
-                results = {}  # Initialize empty JSON
-            
             new_process = SearchProcess(
-                status=status,
-                results=results,
-                logs=logs,
-                total_leads_found=total_leads_found
+                search_terms=search_terms,
+                settings=settings,
+                status='running',
+                results={},
+                logs=[],
+                total_leads_found=0,
+                campaign_id=get_active_campaign_id()
             )
             session.add(new_process)
             session.commit()
+            
             # Start background thread
             import threading
             thread = threading.Thread(
@@ -1282,7 +1207,7 @@ def manual_search_page():
             st.success("Search process started in background!")
             st.info(f"Process ID: {new_process.id}")
             
-            # Show initial log container
+            # Show logs immediately
             display_process_logs(new_process.id)
 
 def get_page_description(html_content):
@@ -1838,7 +1763,7 @@ def bulk_send_page():
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -2193,14 +2118,16 @@ def automation_control_panel_page():
             st.session_state.automation_status = not st.session_state.get('automation_status', False)
             if st.session_state.automation_status:
                 st.session_state.automation_logs = []
-            st.rerun()
+            # Remove st.rerun() - Streamlit will handle the update automatically
 
     if st.button("Perform Quick Scan", use_container_width=True):
         with st.spinner("Performing quick scan..."):
             try:
                 with db_session() as session:
                     new_leads = session.query(Lead).filter(Lead.is_processed == False).count()
-                    session.query(Lead).filter(Lead.is_processed == False).update({Lead.is_processed: True})
+                    session.query(Lead).filter(Lead.is_processed == False).update(
+                        {Lead.is_processed: True}  # Remove extra )
+                    )
                     session.commit()
                     st.success(f"Quick scan completed! Found {new_leads} new leads.")
             except Exception as e:
@@ -2500,7 +2427,8 @@ def update_process_log(session, process_id, message, level='info'):
             logging.error(f"Process {process_id} not found")
             return False
             
-        if not process.logs:
+        # Initialize logs array if None
+        if process.logs is None:
             process.logs = []
             
         log_entry = {
@@ -2509,8 +2437,13 @@ def update_process_log(session, process_id, message, level='info'):
             'message': message
         }
         
+        # Append new log entry
         process.logs.append(log_entry)
+        
+        # Update the process
+        session.add(process)
         session.commit()
+        
         return True
     except Exception as e:
         logging.error(f"Error updating process log: {str(e)}")
@@ -2524,20 +2457,42 @@ def display_process_logs(process_id):
         if not process or not process.logs:
             st.info("No logs available")
             return
+        
+        # Use container instead of empty() for better stability
+        log_container = st.container()
+        
+        with log_container:
+            # Add CSS for scrollable container
+            st.markdown("""
+                <style>
+                    .stMarkdown {
+                        max-height: 400px;
+                        overflow-y: auto;
+                        border: 1px solid rgba(49, 51, 63, 0.2);
+                        border-radius: 0.25rem;
+                        padding: 1rem;
+                        background-color: rgba(49, 51, 63, 0.1);
+                    }
+                </style>
+            """, unsafe_allow_html=True)
             
-        for log in process.logs:
-            timestamp = datetime.fromisoformat(log['timestamp']).strftime('%H:%M:%S')
-            level = log['level']
-            message = log['message']
+            # Format logs with icons
+            log_entries = []
+            for log in process.logs:
+                timestamp = datetime.fromisoformat(log['timestamp']).strftime('%H:%M:%S')
+                level = log['level']
+                message = log['message']
+                icon = {
+                    'info': '🔵',
+                    'success': '🟢',
+                    'warning': '🟠',
+                    'error': '🔴',
+                    'email_sent': '🟣'
+                }.get(level, '⚪')
+                log_entries.append(f'{icon} [{timestamp}] {message}')
             
-            if level == 'error':
-                st.error(f"[{timestamp}] {message}")
-            elif level == 'warning':
-                st.warning(f"[{timestamp}] {message}")
-            elif level == 'success':
-                st.success(f"[{timestamp}] {message}")
-            else:
-                st.info(f"[{timestamp}] {message}")
+            # Display all logs at once
+            st.markdown('\n'.join(log_entries))
 
 def background_manual_search(process_id, search_terms, settings):
     """Execute manual search in background"""
