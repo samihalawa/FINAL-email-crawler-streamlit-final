@@ -16,6 +16,9 @@ from contextlib import contextmanager
 import plotly.express as px
 from queue import Queue
 import random
+import streamlit as st
+import json
+import openai
 
 # Database configuration
 load_dotenv()
@@ -311,7 +314,10 @@ def manual_search(session: Session, terms: List[str], num_results: int,
                  log_container = None,
                  from_email: Optional[str] = None,
                  reply_to: Optional[str] = None,
-                 email_template: Optional[str] = None) -> Dict[str, Any]:
+                 email_template_id: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Execute manual search with optional email sending
+    """
     ua = UserAgent()
     results = []
     total_leads = 0
@@ -392,11 +398,8 @@ def manual_search(session: Session, terms: List[str], num_results: int,
                                 if log_container:
                                     log_container.update(value=f"Saved lead: {email}")
 
-                                if enable_email_sending and from_email and email_template:
-                                    template = session.query(EmailTemplate).filter_by(
-                                        id=int(email_template.split(":")[0])
-                                    ).first()
-                                    
+                                if enable_email_sending and from_email and email_template_id:
+                                    template = session.query(EmailTemplate).filter_by(id=email_template_id).first()
                                     if template:
                                         wrapped_content = wrap_email_body(template.body_content)
                                         response, tracking_id = send_email_ses(
@@ -422,7 +425,7 @@ def manual_search(session: Session, terms: List[str], num_results: int,
                                             )
                             else:
                                 if log_container:
-                                    log_container.update(value=f"Template not found for ID: {email_template}")
+                                    log_container.update(value=f"Template not found for ID: {email_template_id}")
 
                     except requests.RequestException as e:
                         if log_container:
@@ -654,6 +657,39 @@ def create_theme():
         font=["Inter", "sans-serif"]
     )
 
+def openai_chat_completion(messages: List[Dict[str, str]], function_name: Optional[str] = None, temperature: float = 0.7) -> Any:
+    """Execute OpenAI chat completion"""
+    try:
+        with db_session() as session:
+            settings = session.query(Settings).filter_by(setting_type='general').first()
+            if not settings or 'openai_api_key' not in settings.value:
+                raise ValueError("OpenAI API key not configured")
+            
+            openai.api_key = settings.value['openai_api_key']
+            openai.api_base = settings.value.get('openai_api_base', 'https://api.openai.com/v1')
+            
+            response = openai.ChatCompletion.create(
+                model=settings.value.get('openai_model', 'gpt-3.5-turbo'),
+                messages=messages,
+                temperature=temperature
+            )
+            
+            # Log the request
+            log_entry = AIRequest(
+                function_name=function_name,
+                prompt=str(messages),
+                response=str(response.choices[0].message.content),
+                model_used=settings.value.get('openai_model', 'gpt-3.5-turbo')
+            )
+            session.add(log_entry)
+            session.commit()
+            
+            return response.choices[0].message.content
+            
+    except Exception as e:
+        logging.error(f"Error in openai_chat_completion: {str(e)}")
+        return None
+
 class GradioAutoclientApp:
     def __init__(self):
         self.theme = create_theme()
@@ -665,10 +701,22 @@ class GradioAutoclientApp:
         # Initialize database
         Base.metadata.create_all(bind=engine)
 
+    def fetch_template_names(self) -> List[str]:
+        """Fetch email template names"""
+        with db_session() as session:
+            templates = session.query(EmailTemplate).all()
+            return [f"{t.id}: {t.template_name}" for t in templates]
+
+    def fetch_email_settings_names(self) -> List[str]:
+        """Fetch email settings names"""
+        with db_session() as session:
+            settings = session.query(EmailSettings).all()
+            return [f"{s.id}: {s.name} ({s.email})" for s in settings]
+
     async def perform_search(self, search_terms: str, num_results: int, ignore_fetched: bool, 
                            shuffle_keywords: bool, optimize_english: bool, optimize_spanish: bool, 
-                           language: str, enable_email: bool = False, template: str = None, 
-                           email_setting: str = None, reply_to: str = None):
+                           language: str, enable_email: bool = False, template_id: Optional[int] = None, 
+                           email_setting_id: Optional[int] = None, reply_to: Optional[str] = None):
         """Perform search with progress tracking"""
         progress = gr.Progress()
         
@@ -679,8 +727,7 @@ class GradioAutoclientApp:
                 results = {"results": [], "logs": []}
                 
                 from_email = None
-                if enable_email and email_setting:
-                    email_setting_id = int(email_setting.split(':')[0])
+                if enable_email and email_setting_id:
                     email_settings = session.query(EmailSettings).get(email_setting_id)
                     from_email = email_settings.email if email_settings else None
                 
@@ -700,7 +747,7 @@ class GradioAutoclientApp:
                         enable_email_sending=enable_email,
                         from_email=from_email,
                         reply_to=reply_to,
-                        email_template=template
+                        email_template_id=template_id
                     )
                     
                     results["results"].extend(term_results.get("results", []))
@@ -793,8 +840,8 @@ class GradioAutoclientApp:
                     inputs=[
                         search_terms, num_results, ignore_fetched,
                         shuffle_keywords, optimize_english, optimize_spanish,
-                        language, enable_email, template,
-                        email_setting, reply_to
+                        language, enable_email, template_id,
+                        email_setting_id, reply_to
                     ],
                     outputs=[status, logs, results],
                     api_name="search"
@@ -3720,6 +3767,45 @@ def is_contacted_lead(lead: Lead) -> bool:
 def is_successful_lead(lead: Lead) -> bool:
     """Check if lead was successfully processed"""
     return bool(lead and lead.email and is_valid_email(lead.email))
+
+def generate_or_adjust_email_template(prompt: str, kb_info: Optional[Dict[str, Any]] = None, current_template: Optional[str] = None) -> Dict[str, str]:
+    """Generate or adjust email template using AI"""
+    messages = [
+        {"role": "system", "content": "You are an AI assistant specializing in creating and refining email templates for marketing campaigns."},
+        {"role": "user", "content": f"""{'Adjust the following email template based on the given instructions:' if current_template else 'Create an email template based on the following prompt:'} {prompt}
+
+        {'Current Template:' if current_template else 'Guidelines:'}
+        {current_template if current_template else '1. Focus on benefits to the reader\n2. Address potential customer doubts\n3. Include clear CTAs\n4. Use a natural tone\n5. Be concise'}
+
+        Knowledge Base Context:
+        {json.dumps(kb_info) if kb_info else 'No knowledge base information provided'}
+        """}
+    ]
+
+    try:
+        response = openai_chat_completion(messages, function_name="generate_or_adjust_email_template")
+        
+        if isinstance(response, dict):
+            return response
+        elif isinstance(response, str):
+            try:
+                return json.loads(response)
+            except json.JSONDecodeError:
+                return {
+                    "subject": "AI Generated Subject",
+                    "body": f"<p>{response}</p>"
+                }
+        else:
+            return {
+                "subject": "",
+                "body": "<p>Failed to generate email content.</p>"
+            }
+    except Exception as e:
+        logging.error(f"Error generating email template: {str(e)}")
+        return {
+            "subject": "",
+            "body": f"<p>Error generating template: {str(e)}</p>"
+        }
 
 if __name__ == "__main__":
     app = GradioAutoclientApp()
