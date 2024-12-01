@@ -561,6 +561,7 @@ def send_email_ses(session: Session, from_email: str, to_email: str, subject: st
 def save_email_campaign(session: Session, lead_email: str, template_id: int, 
                        status: str, sent_at: datetime, subject: str,
                        message_id: Optional[str], email_body: str) -> Optional[EmailCampaign]:
+    """Save email campaign to database"""
     try:
         lead = session.query(Lead).filter_by(email=lead_email).first()
         if not lead:
@@ -582,6 +583,10 @@ def save_email_campaign(session: Session, lead_email: str, template_id: int,
         session.commit()
         return new_campaign
         
+    except SQLAlchemyError as e:
+        logging.error(f"Database error saving email campaign: {str(e)}")
+        session.rollback()
+        return None
     except Exception as e:
         logging.error(f"Error saving email campaign: {str(e)}")
         session.rollback()
@@ -613,7 +618,6 @@ def is_valid_email(email):
     invalid_patterns = [
         r".*\.(png|jpg|jpeg|gif|css|js)$",
         r"^(nr|bootstrap|jquery|core|icon-|noreply)@.*",
-        r"^(email|info|contact|support|hello|hola|hi|salutations|greetings|inquiries|questions)@.*",
         r"^email@email\.com$",
         r".*@example\.com$",
         r".*@.*\.(png|jpg|jpeg|gif|css|js|jpga|PM|HL)$"
@@ -3881,6 +3885,38 @@ class BackgroundTaskManager:
             return self.tasks.get(task_id)
 
 task_manager = BackgroundTaskManager()
+
+def recover_failed_tasks(session):
+    """Recover failed tasks and campaigns"""
+    failed_tasks = session.query(AutomationTask).filter_by(status='failed').all()
+    for task in failed_tasks:
+        try:
+            # Recovery logic
+            task.status = 'pending'
+            task.retry_count = (task.retry_count or 0) + 1
+            session.commit()
+        except Exception as e:
+            logging.error(f"Failed to recover task {task.id}: {str(e)}")
+
+class CacheManager:
+    def __init__(self):
+        self.cache = {}
+        self._lock = threading.Lock()
+        self.max_size = 1000
+
+    def get(self, key):
+        with self._lock:
+            return self.cache.get(key)
+
+    def set(self, key, value):
+        with self._lock:
+            if len(self.cache) >= self.max_size:
+                # Remove oldest entry
+                oldest = min(self.cache.keys())
+                del self.cache[oldest]
+            self.cache[key] = value
+
+cache_manager = CacheManager()
 
 if __name__ == "__main__":
     app = GradioAutoclientApp()
