@@ -19,6 +19,7 @@ import random
 import streamlit as st
 import json
 import openai
+import threading
 
 # Database configuration
 load_dotenv()
@@ -65,6 +66,10 @@ class Campaign(Base):
     project = relationship("Project", back_populates="campaigns")
     tasks = relationship("AutomationTask", back_populates="campaign")
     email_templates = relationship("EmailTemplate", back_populates="campaign")
+    # Add progress tracking
+    progress = Column(Integer, default=0)
+    total_tasks = Column(Integer, default=0)
+    completed_tasks = Column(Integer, default=0)
 
 class SearchTerm(Base):
     __tablename__ = 'search_terms'
@@ -121,6 +126,10 @@ class EmailTemplate(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_ai_customizable = Column(Boolean, default=False)
     language = Column(Text, default='ES')
+    campaign = relationship("Campaign", back_populates="email_templates")
+    # Add version tracking
+    version = Column(Integer, default=1)
+    parent_version_id = Column(BigInteger, ForeignKey('email_templates.id'), nullable=True)
 
 class EmailCampaign(Base):
     __tablename__ = 'email_campaigns'
@@ -284,10 +293,15 @@ class AutomationError(Base):
     error_message = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-# Context manager for database sessions
+# Add thread-local storage for database sessions
+thread_local = threading.local()
+
 @contextmanager
-def db_session():
-    session = SessionLocal()
+def get_db():
+    """Thread-safe database session context manager"""
+    if not hasattr(thread_local, "session"):
+        thread_local.session = SessionLocal()
+    session = thread_local.session
     try:
         yield session
         session.commit()
@@ -295,7 +309,9 @@ def db_session():
         session.rollback()
         raise
     finally:
-        session.close()
+        if hasattr(thread_local, "session"):
+            session.close()
+            del thread_local.session
 
 # Utility functions
 def get_active_project_id() -> int:
@@ -442,9 +458,10 @@ def manual_search(session: Session, terms: List[str], num_results: int,
                 continue
 
     except Exception as e:
+        logging.error(f"Fatal error in search process: {str(e)}")
         if log_container:
-            log_container.update(value=f"Fatal error in search process: {str(e)}")
-        return {"total_leads": total_leads, "results": results}
+            log_container.update(value=f"Error: {str(e)}")
+        return {"total_leads": 0, "results": [], "error": str(e)}
     
     if log_container:
         log_container.update(value=f"Total leads found: {total_leads}")
@@ -560,7 +577,6 @@ def save_email_campaign(session: Session, lead_email: str, template_id: int,
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
-        )  # Close the parentheses here
         
         session.add(new_campaign)
         session.commit()
@@ -660,7 +676,7 @@ def create_theme():
 def openai_chat_completion(messages: List[Dict[str, str]], function_name: Optional[str] = None, temperature: float = 0.7) -> Any:
     """Execute OpenAI chat completion"""
     try:
-        with db_session() as session:
+        with get_db() as session:
             settings = session.query(Settings).filter_by(setting_type='general').first()
             if not settings or 'openai_api_key' not in settings.value:
                 raise ValueError("OpenAI API key not configured")
@@ -703,13 +719,13 @@ class GradioAutoclientApp:
 
     def fetch_template_names(self) -> List[str]:
         """Fetch email template names"""
-        with db_session() as session:
+        with get_db() as session:
             templates = session.query(EmailTemplate).all()
             return [f"{t.id}: {t.template_name}" for t in templates]
 
     def fetch_email_settings_names(self) -> List[str]:
         """Fetch email settings names"""
-        with db_session() as session:
+        with get_db() as session:
             settings = session.query(EmailSettings).all()
             return [f"{s.id}: {s.name} ({s.email})" for s in settings]
 
@@ -721,7 +737,7 @@ class GradioAutoclientApp:
         progress = gr.Progress()
         
         try:
-            with db_session() as session:
+            with get_db() as session:
                 terms = [term.strip() for term in search_terms.split('\n') if term.strip()]
                 total_terms = len(terms)
                 results = {"results": [], "logs": []}
@@ -937,7 +953,7 @@ class GradioAutoclientApp:
 
     def create_email_templates_tab(self):
         def save_template_callback(template_name, subject, body, is_ai_customizable, language):
-            with db_session() as session:
+            with get_db() as session:
                 try:
                     template_id = create_or_update_email_template(
                         session, template_name, subject, body,
@@ -966,13 +982,13 @@ class GradioAutoclientApp:
     
     def generate_or_adjust_email_template(prompt, use_kb, current_template=None):
         """Generate or adjust email template using AI"""
-        with db_session() as session:
+        with get_db() as session:
             kb_info = get_knowledge_base_info(session, self.get_active_project_id()) if use_kb else None
             result = generate_or_adjust_email_template(prompt, kb_info, current_template)
     
     def generate_or_modify_template(self, prompt, use_kb, current_template=None):
         """Generate or modify template using AI"""
-        with db_session() as session:
+        with get_db() as session:
             kb_info = get_knowledge_base_info(session, self.get_active_project_id()) if use_kb else None
             result = generate_or_adjust_email_template(prompt, kb_info, current_template)
             
@@ -1127,7 +1143,7 @@ class GradioAutoclientApp:
                           min_date=None, max_date=None, company=None, job_title=None,
                           domain=None, sources=None, exclude_contacted=True):
         """Estimate number of recipients based on selected criteria"""
-        with db_session() as session:
+        with get_db() as session:
             query = session.query(Lead)
             
             if send_option == "Specific Email":
@@ -1240,7 +1256,7 @@ class GradioAutoclientApp:
 
     def fetch_campaign_logs(self, date_range, search_term=None):
         """Fetch and process campaign logs"""
-        with db_session() as session:
+        with get_db() as session:
             query = session.query(EmailCampaign).join(Lead).join(EmailTemplate)
             
             if date_range:
@@ -1349,7 +1365,7 @@ class GradioAutoclientApp:
             return ""
         
         row = selected_rows[0]
-        with db_session() as session:
+        with get_db() as session:
             campaign = session.query(EmailCampaign).join(Lead).filter(
                 Lead.email == row['Email'],
                 EmailCampaign.sent_at == row['Date']
@@ -1484,7 +1500,7 @@ class GradioAutoclientApp:
 
     def fetch_leads_data(self, search_term=None):
         """Fetch and process leads data"""
-        with db_session() as session:
+        with get_db() as session:
             # Base query
             query = session.query(Lead)
             
@@ -1625,7 +1641,7 @@ class GradioAutoclientApp:
             return None, None
         
         row = selected_rows[0]
-        with db_session() as session:
+        with get_db() as session:
             lead = session.query(Lead).filter(Lead.email == row['Email']).first()
             
             if not lead:
@@ -1663,7 +1679,7 @@ class GradioAutoclientApp:
         if not selected_rows or len(selected_rows) == 0:
             return None, None, None
         
-        with db_session() as session:
+        with get_db() as session:
             for row in selected_rows:
                 lead = session.query(Lead).filter(Lead.email == row['Email']).first()
                 if not lead:
@@ -1855,7 +1871,7 @@ class GradioAutoclientApp:
 
     def create_search_term_group(self, group_name):
         """Create a new search term group"""
-        with db_session() as session:
+        with get_db() as session:
             group = SearchTermGroup(
                 name=group_name,
                 campaign_id=self.get_active_campaign_id()
@@ -1870,7 +1886,7 @@ class GradioAutoclientApp:
         if not group_id:
             return None, None
         
-        with db_session() as session:
+        with get_db() as session:
             group = session.query(SearchTermGroup).get(int(group_id.split(':')[0]))
             if group:
                 # Update terms to remove group association
@@ -1885,7 +1901,7 @@ class GradioAutoclientApp:
         if not group_id or not term_ids:
             return None, None, None
         
-        with db_session() as session:
+        with get_db() as session:
             group = session.query(SearchTermGroup).get(int(group_id.split(':')[0]))
             if not group:
                 return None, None, None
@@ -1970,7 +1986,7 @@ class GradioAutoclientApp:
 
     def refresh_term_analytics(self, date_range):
         """Refresh search term analytics"""
-        with db_session() as session:
+        with get_db() as session:
             query = session.query(SearchTerm)
             
             if date_range:
@@ -2296,7 +2312,7 @@ class GradioAutoclientApp:
 
     def start_automation(self):
         """Start automation process"""
-        with db_session() as session:
+        with get_db() as session:
             automation = session.query(AutomationStatus).first()
             if not automation:
                 automation = AutomationStatus(status="running")
@@ -2311,7 +2327,7 @@ class GradioAutoclientApp:
 
     def stop_automation(self):
         """Stop automation process"""
-        with db_session() as session:
+        with get_db() as session:
             automation = session.query(AutomationStatus).first()
             if automation:
                 automation.status = "stopped"
@@ -2322,7 +2338,7 @@ class GradioAutoclientApp:
 
     def pause_automation(self):
         """Pause automation process"""
-        with db_session() as session:
+        with get_db() as session:
             automation = session.query(AutomationStatus).first()
             if automation:
                 automation.status = "paused"
@@ -2341,7 +2357,7 @@ class GradioAutoclientApp:
 
     def save_schedule(self, name, task_type, frequency, start_date, end_date, time_of_day):
         """Save automation schedule"""
-        with db_session() as session:
+        with get_db() as session:
             schedule = AutomationSchedule(
                 name=name,
                 task_type=task_type,
@@ -2360,7 +2376,7 @@ class GradioAutoclientApp:
         if not selected_rows:
             return self.get_schedules()
         
-        with db_session() as session:
+        with get_db() as session:
             for row in selected_rows:
                 schedule = session.query(AutomationSchedule).filter_by(name=row['Name']).first()
                 if schedule:
@@ -2371,7 +2387,7 @@ class GradioAutoclientApp:
 
     def save_rule(self, name, rule_type, condition, threshold, action, notification_email, is_active):
         """Save automation rule"""
-        with db_session() as session:
+        with get_db() as session:
             rule = AutomationRule(
                 name=name,
                 rule_type=rule_type,
@@ -2391,7 +2407,7 @@ class GradioAutoclientApp:
         if not selected_rows:
             return self.get_rules()
         
-        with db_session() as session:
+        with get_db() as session:
             for row in selected_rows:
                 rule = session.query(AutomationRule).filter_by(name=row['Name']).first()
                 if rule:
@@ -2402,7 +2418,7 @@ class GradioAutoclientApp:
 
     def refresh_monitoring(self, date_range):
         """Refresh automation monitoring"""
-        with db_session() as session:
+        with get_db() as session:
             # Query automation tasks
             query = session.query(AutomationTask)
             
@@ -2478,7 +2494,7 @@ class GradioAutoclientApp:
 
     def get_active_tasks(self):
         """Get list of active automation tasks"""
-        with db_session() as session:
+        with get_db() as session:
             tasks = session.query(AutomationTask)\
                 .filter(AutomationTask.status.in_(['running', 'pending']))\
                 .all()
@@ -2493,7 +2509,7 @@ class GradioAutoclientApp:
 
     def get_daily_stats(self):
         """Get daily automation statistics"""
-        with db_session() as session:
+        with get_db() as session:
             today = datetime.now().date()
             week_ago = today - timedelta(days=7)
             month_ago = today - timedelta(days=30)
@@ -2525,7 +2541,7 @@ class GradioAutoclientApp:
 
     def get_error_log(self):
         """Get automation error log"""
-        with db_session() as session:
+        with get_db() as session:
             errors = session.query(AutomationError)\
                 .order_by(AutomationError.created_at.desc())\
                 .limit(100)\
@@ -2540,7 +2556,7 @@ class GradioAutoclientApp:
 
     def get_schedules(self):
         """Get list of automation schedules"""
-        with db_session() as session:
+        with get_db() as session:
             schedules = session.query(AutomationSchedule).all()
             
             return [{
@@ -2553,7 +2569,7 @@ class GradioAutoclientApp:
 
     def get_rules(self):
         """Get list of automation rules"""
-        with db_session() as session:
+        with get_db() as session:
             rules = session.query(AutomationRule).all()
             
             return [{
@@ -2799,7 +2815,7 @@ class GradioAutoclientApp:
 
     def save_project(self, name, description, project_type, status, priority):
         """Save project information"""
-        with db_session() as session:
+        with get_db() as session:
             project = session.query(Project).filter_by(name=name).first()
             if not project:
                 project = Project(name=name)
@@ -2819,7 +2835,7 @@ class GradioAutoclientApp:
         if not selected_rows:
             return self.get_projects_list()
         
-        with db_session() as session:
+        with get_db() as session:
             for row in selected_rows:
                 project = session.query(Project).filter_by(name=row['Name']).first()
                 if project:
@@ -2830,7 +2846,7 @@ class GradioAutoclientApp:
 
     def save_campaign(self, name, project_id, campaign_type, status, priority):
         """Save campaign information"""
-        with db_session() as session:
+        with get_db() as session:
             campaign = session.query(Campaign).filter_by(name=name).first()
             if not campaign:
                 campaign = Campaign(name=name)
@@ -2850,7 +2866,7 @@ class GradioAutoclientApp:
         if not selected_rows:
             return self.get_campaigns_list()
         
-        with db_session() as session:
+        with get_db() as session:
             for row in selected_rows:
                 campaign = session.query(Campaign).filter_by(name=row['Name']).first()
                 if campaign:
@@ -2864,7 +2880,7 @@ class GradioAutoclientApp:
         if not selected_rows:
             return self.get_campaigns_list()
         
-        with db_session() as session:
+        with get_db() as session:
             for row in selected_rows:
                 original = session.query(Campaign).filter_by(name=row['Name']).first()
                 if original:
@@ -2882,7 +2898,7 @@ class GradioAutoclientApp:
 
     def refresh_project_analytics(self, date_range, project_id):
         """Refresh project analytics"""
-        with db_session() as session:
+        with get_db() as session:
             # Query campaigns
             query = session.query(Campaign)
             
@@ -2956,7 +2972,7 @@ class GradioAutoclientApp:
 
     def get_projects_list(self):
         """Get list of projects"""
-        with db_session() as session:
+        with get_db() as session:
             projects = session.query(Project).all()
             
             return [{
@@ -2969,7 +2985,7 @@ class GradioAutoclientApp:
 
     def get_campaigns_list(self):
         """Get list of campaigns"""
-        with db_session() as session:
+        with get_db() as session:
             campaigns = session.query(Campaign).all()
             
             return [{
@@ -3265,7 +3281,7 @@ class GradioAutoclientApp:
 
     def refresh_campaign_overview(self, date_range, campaign_type):
         """Refresh campaign overview"""
-        with db_session() as session:
+        with get_db() as session:
             # Query sent campaigns
             query = session.query(EmailCampaign)
             
@@ -3339,7 +3355,7 @@ class GradioAutoclientApp:
 
     def filter_campaigns(self, search, status, sort_by, sort_order):
         """Filter and sort campaigns list"""
-        with db_session() as session:
+        with get_db() as session:
             query = session.query(EmailCampaign)
             
             if search:
@@ -3398,7 +3414,7 @@ class GradioAutoclientApp:
         if not selected_rows:
             return self.filter_campaigns("", "All", "Date", "Descending")
         
-        with db_session() as session:
+        with get_db() as session:
             for row in selected_rows:
                 campaign = session.query(EmailCampaign).filter_by(name=row['Campaign']).first()
                 if campaign:
@@ -3409,7 +3425,7 @@ class GradioAutoclientApp:
 
     def load_campaign_details(self, campaign_id):
         """Load detailed campaign information"""
-        with db_session() as session:
+        with get_db() as session:
             campaign = session.query(EmailCampaign).get(int(campaign_id.split(':')[0]))
             if not campaign:
                 return [], [], None
@@ -3452,7 +3468,7 @@ class GradioAutoclientApp:
 
     def refresh_campaign_analytics(self, date_range, analysis_type):
         """Refresh campaign analytics"""
-        with db_session() as session:
+        with get_db() as session:
             # Query campaigns
             query = session.query(EmailCampaign)
             
@@ -3724,7 +3740,10 @@ def shuffle_keywords(term: str) -> str:
 
 def optimize_search_term(term: str, language: str) -> str:
     """Optimize search term for given language"""
-    # Add your optimization logic here
+    if language == 'english':
+        return f'"{term}" email OR contact OR "get in touch" site:.com'
+    elif language == 'spanish':
+        return f'"{term}" correo OR contacto OR "ponte en contacto" site:.es'
     return term
 
 def get_domain_from_url(url: str) -> str:
@@ -3744,17 +3763,13 @@ def get_page_title(html_content: str) -> str:
     title = soup.find('title')
     return title.get_text() if title else "No title"
 
-def save_lead(session: Session, **kwargs) -> Optional[Lead]:
-    """Save lead to database"""
-    try:
-        lead = Lead(**kwargs)
-        session.add(lead)
-        session.commit()
-        return lead
-    except SQLAlchemyError as e:
-        session.rollback()
-        logging.error(f"Error saving lead: {str(e)}")
-        return None
+def save_lead(session, email, **kwargs):
+    # Add deduplication check
+    existing_lead = session.query(Lead).filter_by(email=email).first()
+    if existing_lead:
+        logging.info(f"Lead already exists: {email}")
+        return existing_lead
+    # Rest of the function...
 
 def is_valid_lead(lead: Lead) -> bool:
     """Check if lead is valid"""
@@ -3806,6 +3821,66 @@ def generate_or_adjust_email_template(prompt: str, kb_info: Optional[Dict[str, A
             "subject": "",
             "body": f"<p>Error generating template: {str(e)}</p>"
         }
+
+class RateLimiter:
+    def __init__(self, max_requests=100, time_window=60):
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self.requests = []
+        self._lock = threading.Lock()
+
+    def is_allowed(self):
+        now = time.time()
+        with self._lock:
+            self.requests = [req for req in self.requests if now - req < self.time_window]
+            if len(self.requests) >= self.max_requests:
+                return False
+            self.requests.append(now)
+            return True
+
+rate_limiter = RateLimiter()
+
+class EmailQueue:
+    def __init__(self):
+        self.queue = Queue()
+        self._lock = threading.Lock()
+        
+    def add_email(self, email_data):
+        with self._lock:
+            self.queue.put(email_data)
+            
+    def get_email(self):
+        with self._lock:
+            return self.queue.get() if not self.queue.empty() else None
+
+email_queue = EmailQueue()
+
+def calculate_campaign_metrics(session, campaign_id):
+    """Calculate comprehensive campaign metrics"""
+    metrics = {
+        'total_leads': 0,
+        'valid_leads': 0,
+        'emails_sent': 0,
+        'responses': 0,
+        'success_rate': 0
+    }
+    # Add calculation logic...
+    return metrics
+
+class BackgroundTaskManager:
+    def __init__(self):
+        self.tasks = {}
+        self._lock = threading.Lock()
+
+    def add_task(self, task_id, task):
+        with self._lock:
+            self.tasks[task_id] = task
+
+    def get_task(self, task_id):
+        with self._lock:
+            return self.tasks.get(task_id)
+
+task_manager = BackgroundTaskManager()
 
 if __name__ == "__main__":
     app = GradioAutoclientApp()
