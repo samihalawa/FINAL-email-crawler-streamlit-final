@@ -758,6 +758,8 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
 
                 # Process in smaller batches
                 for url_batch in batch_google_search(search_term, num_results, language):
+                    if not url_batch:
+                        continue
                     for url in url_batch:
                         try:
                             process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container)
@@ -776,7 +778,13 @@ def batch_google_search(search_term, num_results, language):
     """Generator function to yield URLs in batches"""
     batch_size = 10
     for i in range(0, num_results, batch_size):
-        yield list(google_search(search_term, batch_size, lang=language))
+        try:
+            # Convert google_search results to list immediately
+            urls = list(google_search(search_term.term, batch_size, lang=language))
+            yield urls
+        except Exception as e:
+            logger.error(f"Error in batch_google_search: {str(e)}")
+            yield []
 
 def process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container):
     domain = urlparse(url).netloc
@@ -1341,12 +1349,15 @@ def view_campaign_logs():
 def fetch_all_email_logs(session):
     """Fetch all email campaign logs"""
     try:
-        email_campaigns = (session.query(EmailCampaign)
-                         .join(Lead)
-                         .join(EmailTemplate)
-                         .options(joinedload(EmailCampaign.lead), joinedload(EmailCampaign.template))
-                         .order_by(EmailCampaign.sent_at.desc())
-                         .all())
+        email_campaigns = session.query(EmailCampaign)\
+            .join(Lead)\
+            .join(EmailTemplate)\
+            .options(
+                joinedload(EmailCampaign.lead),
+                joinedload(EmailCampaign.template)
+            )\
+            .order_by(EmailCampaign.sent_at.desc())\
+            .all()
         
         return pd.DataFrame({
             'ID': [ec.id for ec in email_campaigns],
