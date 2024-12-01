@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index
+from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index, inspect
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from botocore.exceptions import ClientError
@@ -81,6 +81,27 @@ class Campaign(Base):
     email_campaigns = relationship("EmailCampaign", back_populates="campaign")
     search_terms = relationship("SearchTerm", back_populates="campaign")
     campaign_leads = relationship("CampaignLead", back_populates="campaign")
+
+
+# Replace the existing SearchProcess class with this updated version
+class SearchProcess(Base):
+    __tablename__ = 'search_processes'
+    __table_args__ = (
+        Index('idx_search_process_status', 'status'),
+        Index('idx_search_process_created', 'created_at'),
+    )
+    id = Column(BigInteger, primary_key=True)
+    search_terms = Column(JSON)  # Store list of search terms
+    settings = Column(JSON)      # Store search settings
+    status = Column(Text)        # 'running', 'completed', 'failed'
+    results = Column(JSON)       # Store search results
+    logs = Column(JSON)          # Store process logs
+    total_leads_found = Column(BigInteger, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    campaign = relationship("Campaign")
+ 
 
 class CampaignLead(Base):
     __tablename__ = 'campaign_leads'
@@ -405,9 +426,13 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
             return None, None
 
         tracking_id = str(uuid.uuid4())
-        tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
-        wrapped_body = wrap_email_body(body)
-        tracked_body = wrapped_body.replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+        # Add a try-except to handle tracking pixel failures gracefully
+        try:
+            tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"  # Add missing }
+            tracked_body = wrap_email_body(body).replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+        except Exception as e:
+            logging.warning(f"Failed to add tracking pixel: {str(e)}")
+            tracked_body = wrap_email_body(body)  # Use original body if tracking fails
 
         if email_settings.provider == 'ses':
             if not all([email_settings.aws_access_key_id, email_settings.aws_secret_access_key, email_settings.aws_region]):
@@ -609,10 +634,11 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                 search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
                 search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
                 
+                log_message = f"🔍 Searching: {original_term}"
                 if process_id:
-                    update_process_log(session, process_id, f"🔍 Searching: {original_term}")
+                    update_process_log(session, process_id, log_message, 'info')
                 elif log_container:
-                    update_log(log_container, f"🔍 Searching: {original_term}")
+                    update_log(log_container, log_message)
                 
                 for url in google_search(search_term, num_results, lang=language):
                     try:
@@ -634,7 +660,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                         if valid_emails:
                             log_message = f"📍 Found {len(valid_emails)} emails on {url}"
                             if process_id:
-                                update_process_log(session, process_id, log_message)
+                                update_process_log(session, process_id, log_message, 'success')
                             elif log_container:
                                 update_log(log_container, log_message)
                             
@@ -649,7 +675,7 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                         total_leads += 1
                                         log_message = f"📧 Found email: {email}"
                                         if process_id:
-                                            update_process_log(session, process_id, log_message)
+                                            update_process_log(session, process_id, log_message, 'success')
                                         elif log_container:
                                             update_log(log_container, log_message)
                                         
@@ -1135,6 +1161,10 @@ def update_display(container, items, title, item_key):
 def get_domain_from_url(url):
     return urlparse(url).netloc
 
+# Initialize session state for search terms if not exists
+if 'search_terms' not in st.session_state:
+    st.session_state.search_terms = []
+
 def manual_search_page():
     st.title("Manual Search")
     
@@ -1147,122 +1177,164 @@ def manual_search_page():
         if active_processes:
             st.subheader("Active Search Processes")
             for process in active_processes:
-                with st.expander(f"Process {process.id} - Started at {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}"):
+                with st.expander(f"Process {process.id} - Started at {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}", expanded=True):
                     display_process_logs(process.id)
         
-        # Show completed processes
-        completed_processes = session.query(SearchProcess).filter(
-            SearchProcess.status.in_(['completed', 'failed'])
-        ).order_by(SearchProcess.created_at.desc()).limit(5).all()
-        
-        if completed_processes:
-            st.subheader("Recent Search Processes")
-            for process in completed_processes:
-                with st.expander(f"Process {process.id} - {process.status.title()} - {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}"):
-                    display_process_logs(process.id)
-                    if process.status == 'completed' and process.results:
-                        st.write(f"Total leads found: {process.results['total_leads']}")
-                        st.dataframe(pd.DataFrame(process.results['results']))
-        
-        # Input section for new search
-        st.subheader("Start New Search")
-        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
-        recent_search_terms = [term.term for term in recent_searches]
-        
+        # Main search interface
         col1, col2 = st.columns([2, 1])
+        
         with col1:
+            # Get recent search terms for suggestions
+            recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
+            recent_terms = [term.term for term in recent_searches]
+            
+            # Search terms input with suggestions
             search_terms = st_tags(
-                label='Enter search terms:',
-                text='Press enter to add more',
-                value=recent_search_terms,
-                suggestions=['software engineer', 'data scientist', 'product manager'],
-                maxtags=10,
+                label='Enter Search Terms',
+                text='Press enter after each term',
+                value=st.session_state.search_terms,  # Use session state value
+                suggestions=recent_terms,  # Show recent terms as suggestions
                 key='search_terms_input'
             )
-            num_results = st.slider("Results per term", 1, 50000, 10)
-        
-        with col2:
-            enable_email_sending = st.checkbox("Enable email sending", value=True)
-            ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
-            shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
-            optimize_english = st.checkbox("Optimize (English)", value=False)
-            optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
-            language = st.selectbox("Select Language", options=["ES", "EN"], index=0)
-        
-        if enable_email_sending:
-            email_templates = fetch_email_templates(session)
-            email_settings = fetch_email_settings(session)
             
-            if not email_templates or not email_settings:
-                st.error("Email templates or settings not available")
-                return
+            # Update session state when terms change
+            if search_terms != st.session_state.search_terms:
+                st.session_state.search_terms = search_terms
             
-            col3, col4 = st.columns(2)
-            with col3:
-                email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip())
-            with col4:
-                email_setting = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
-                if email_setting:
-                    from_email = email_setting['email']
-                    reply_to = st.text_input("Reply To", email_setting['email'])
-                else:
-                    st.error("No email setting selected")
-                    return
-        
-        if st.button("Start Search", type="primary"):
-            if not search_terms:
-                st.warning("Please enter at least one search term")
-                return
-            
-            # Create new search process
+            # Settings
             settings = {
-                'num_results': num_results,
-                'ignore_previously_fetched': ignore_previously_fetched,
-                'optimize_english': optimize_english,
-                'optimize_spanish': optimize_spanish,
-                'shuffle_keywords_option': shuffle_keywords_option,
-                'language': language,
-                'enable_email_sending': enable_email_sending
+                'num_results': st.number_input('Results per term', min_value=1, max_value=100, value=10),
+                'ignore_previously_fetched': st.checkbox('Ignore previously fetched domains', value=True),
+                'optimize_english': st.checkbox('Optimize for English'),
+                'optimize_spanish': st.checkbox('Optimize for Spanish'),
+                'shuffle_keywords_option': st.checkbox('Shuffle keywords'),
+                'language': st.selectbox('Language', ['ES', 'EN'], index=0),
+                'enable_email_sending': st.checkbox('Enable automatic email sending')
             }
             
-            if enable_email_sending:
-                settings.update({
-                    'from_email': from_email,
-                    'reply_to': reply_to,
-                    'email_template': email_template
-                })
-                logs = []  # Initialize empty array for logs
-                total_leads_found = 0
-                status = 'running'
-                results = {}  # Initialize empty JSON
-            else:
-                logs = []  # Initialize empty array for logs
-                total_leads_found = 0
-                status = 'running'
-                results = {}  # Initialize empty JSON
+            # Email settings if enabled
+            if settings['enable_email_sending']:
+                email_settings = fetch_email_settings(session)
+                if email_settings:
+                    email_setting = st.selectbox(
+                        "From Email",
+                        options=email_settings,
+                        format_func=lambda x: f"{x['name']} ({x['email']})"
+                    )
+                    settings['from_email'] = email_setting['email']
+                    settings['reply_to'] = st.text_input("Reply To", value=email_setting['email'])
+                    
+                    templates = fetch_email_templates(session)
+                    if templates:
+                        settings['email_template'] = st.selectbox("Email Template", options=templates)
+                    else:
+                        st.warning("No email templates found. Please create one first.")
+                        settings['enable_email_sending'] = False
+                else:
+                    st.warning("No email settings found. Please configure email settings first.")
+                    settings['enable_email_sending'] = False
+        
+        with col2:
+            st.subheader("AI Assistant")
             
-            new_process = SearchProcess(
-                status=status,
-                results=results,
-                logs=logs,
-                total_leads_found=total_leads_found
-            )
-            session.add(new_process)
-            session.commit()
-            # Start background thread
-            import threading
-            thread = threading.Thread(
-                target=background_manual_search,
-                args=(new_process.id, search_terms, settings)
-            )
-            thread.daemon = True
-            thread.start()
+            # AI Propose button
+            if st.button("PROPOSE NEW SEARCH TERMS", use_container_width=True):
+                with st.spinner("Generating new search term proposals..."):
+                    kb_info = get_knowledge_base_info(session, get_active_project_id())
+                    if kb_info:
+                        prompt = f"""Based on the following business context, propose 5 new search terms that would be effective for lead generation:
+                        Business: {kb_info.get('company_description', '')}
+                        Target Market: {kb_info.get('company_target_market', '')}
+                        Product: {kb_info.get('product_description', '')}
+                        Current Terms: {', '.join(search_terms) if search_terms else 'None'}
+                        """
+                        response = openai_chat_completion(
+                            messages=[
+                                {"role": "system", "content": "You are a lead generation expert. Propose specific, targeted search terms."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            function_name="propose_search_terms"
+                        )
+                        if isinstance(response, str):
+                            new_terms = [term.strip() for term in response.split('\n') if term.strip()]
+                            # Update session state without rerunning
+                            st.session_state.search_terms = list(set(search_terms + new_terms))
+                            # Show the new terms
+                            st.success("New terms proposed!")
+                            st.write("New terms added:")
+                            for term in new_terms:
+                                st.write(f"• {term}")
+                    else:
+                        st.warning("Please set up your Knowledge Base first to get better search term proposals.")
             
-            st.success("Search process started in background!")
-            st.info(f"Process ID: {new_process.id}")
+            st.markdown("---")
             
-            # Show initial log container
-            display_process_logs(new_process.id)
+            # AI Optimize button
+            if st.button("OPTIMIZE SEARCH TERMS", use_container_width=True):
+                with st.spinner("Optimizing search terms..."):
+                    if search_terms:
+                        prompt = f"""Optimize these search terms for better lead generation results:
+                        Terms: {', '.join(search_terms)}
+                        
+                        For each term:
+                        1. Add relevant industry-specific keywords
+                        2. Include intent-based modifiers
+                        3. Consider geographic or demographic targeting if applicable
+                        4. Format for better search engine compatibility
+                        """
+                        response = openai_chat_completion(
+                            messages=[
+                                {"role": "system", "content": "You are a search optimization expert. Improve search terms for maximum effectiveness."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            function_name="optimize_search_terms"
+                        )
+                        if isinstance(response, str):
+                            optimized_terms = [term.strip() for term in response.split('\n') if term.strip()]
+                            # Update session state without rerunning
+                            st.session_state.search_terms = optimized_terms
+                            # Show the optimized terms
+                            st.success("Terms optimized!")
+                            st.write("Optimized terms:")
+                            for term in optimized_terms:
+                                st.write(f"• {term}")
+                    else:
+                        st.warning("Please enter some search terms to optimize.")
+            
+            st.markdown("---")
+            
+            # Start Search button
+            if st.button("Start Search", type="primary", use_container_width=True):
+                if not search_terms:
+                    st.warning("Please enter at least one search term")
+                    return
+                
+                new_process = SearchProcess(
+                    search_terms=search_terms,
+                    settings=settings,
+                    status='running',
+                    results={},
+                    logs=[],
+                    total_leads_found=0,
+                    campaign_id=get_active_campaign_id()
+                )
+                session.add(new_process)
+                session.commit()
+                
+                # Start background thread
+                import threading
+                thread = threading.Thread(
+                    target=background_manual_search,
+                    args=(new_process.id, search_terms, settings)
+                )
+                thread.daemon = True
+                thread.start()
+                
+                st.success("Search process started in background!")
+                st.info(f"Process ID: {new_process.id}")
+                
+                # Show logs immediately
+                display_process_logs(new_process.id)
 
 def get_page_description(html_content):
     """Extract page description from HTML meta tags."""
@@ -1283,65 +1355,135 @@ def fetch_search_terms_with_lead_count(session):
     return df
 
 def view_campaign_logs():
-    st.header("Email Logs")
+    st.title("Email Campaign Logs")
+    
     with db_session() as session:
         logs = fetch_all_email_logs(session)
         if logs.empty:
             st.info("No email logs found.")
-        else:
-            st.write(f"Total emails sent: {len(logs)}")
-            st.write(f"Success rate: {(logs['Status'] == 'sent').mean():.2%}")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
-            with col2:
-                end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
-
-            filtered_logs = logs[(logs['Sent At'].dt.date >= start_date) & (logs['Sent At'].dt.date <= end_date)]
-
-            search_term = st.text_input("Search by email or subject")
-            if search_term:
-                filtered_logs = filtered_logs[filtered_logs['Email'].str.contains(search_term, case=False) | 
-                                              filtered_logs['Subject'].str.contains(search_term, case=False)]
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Emails Sent", len(filtered_logs))
-            with col2:
-                st.metric("Unique Recipients", filtered_logs['Email'].nunique())
-            with col3:
-                st.metric("Success Rate", f"{(filtered_logs['Status'] == 'sent').mean():.2%}")
-
-            daily_counts = filtered_logs.resample('D', on='Sent At')['Email'].count()
-            st.bar_chart(daily_counts)
-
-            st.subheader("Detailed Email Logs")
-            for _, log in filtered_logs.iterrows():
-                with st.expander(f"{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')} - {log['Email']} - {log['Status']}"):
-                    st.write(f"**Subject:** {log['Subject']}")
-                    st.write(f"**Content Preview:** {log['Content'][:100]}...")
-                    if st.button("View Full Email", key=f"view_email_{log['ID']}"):
-                        st.components.v1.html(wrap_email_body(log['Content']), height=400, scrolling=True)
-                    if log['Status'] != 'sent':
-                        st.error(f"Status: {log['Status']}")
-
-            logs_per_page = 20
-            total_pages = (len(filtered_logs) - 1) // logs_per_page + 1
-            page = st.number_input("Page", min_value=1, max_value=total_pages, value=1)
-            start_idx = (page - 1) * logs_per_page
-            end_idx = start_idx + logs_per_page
-
-            st.table(filtered_logs.iloc[start_idx:end_idx][['Sent At', 'Email', 'Subject', 'Status']])
-
-            if st.button("Export Logs to CSV"):
-                csv = filtered_logs.to_csv(index=False)
-                st.download_button(
-                    label="Download CSV",
-                    data=csv,
-                    file_name="email_logs.csv",
-                    mime="text/csv"
-                )
+            return
+        
+        # Add CSS for styling
+        st.markdown("""
+            <style>
+                .email-logs-container {
+                    max-height: 600px;
+                    overflow-y: auto;
+                    border: 1px solid rgba(49, 51, 63, 0.2);
+                    border-radius: 0.5rem;
+                    padding: 1rem;
+                    background-color: rgba(49, 51, 63, 0.1);
+                    margin-bottom: 1rem;
+                }
+                .email-log-entry {
+                    padding: 0.75rem;
+                    margin-bottom: 0.5rem;
+                    border-radius: 0.25rem;
+                    background-color: rgba(255, 255, 255, 0.05);
+                    border-left: 4px solid;
+                    animation: fadeIn 0.5s ease-in;
+                }
+                .email-log-entry.success {
+                    border-left-color: #28a745;
+                }
+                .email-log-entry.error {
+                    border-left-color: #dc3545;
+                }
+                .email-log-entry.pending {
+                    border-left-color: #ffc107;
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(-10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        # Summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Emails", len(logs))
+        with col2:
+            success_rate = (logs['Status'] == 'sent').mean() * 100
+            st.metric("Success Rate", f"{success_rate:.1f}%")
+        with col3:
+            st.metric("Unique Recipients", logs['Email'].nunique())
+        
+        # Filters
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
+        with col2:
+            end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
+        
+        search_term = st.text_input("🔍 Search by email or subject")
+        
+        # Filter logs
+        filtered_logs = logs[
+            (logs['Sent At'].dt.date >= start_date) & 
+            (logs['Sent At'].dt.date <= end_date)
+        ]
+        
+        if search_term:
+            filtered_logs = filtered_logs[
+                filtered_logs['Email'].str.contains(search_term, case=False) | 
+                filtered_logs['Subject'].str.contains(search_term, case=False)
+            ]
+        
+        # Display logs
+        st.markdown("<div class='email-logs-container'>", unsafe_allow_html=True)
+        for _, log in filtered_logs.iterrows():
+            status_class = {
+                'sent': 'success',
+                'failed': 'error'
+            }.get(log['Status'], 'pending')
+            
+            st.markdown(f"""
+                <div class='email-log-entry {status_class}'>
+                    <div style='display: flex; justify-content: space-between;'>
+                        <strong>{log['Email']}</strong>
+                        <span>{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')}</span>
+                    </div>
+                    <div style='margin-top: 0.5rem;'>
+                        <strong>Subject:</strong> {log['Subject']}<br>
+                        <strong>Status:</strong> {log['Status']}<br>
+                        <strong>Template:</strong> {log['Template']}
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Add auto-scroll JavaScript
+        st.markdown("""
+            <script>
+                function scrollToBottom() {
+                    const container = document.querySelector('.email-logs-container');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                }
+                
+                // Initial scroll
+                scrollToBottom();
+                
+                // Set up a mutation observer to watch for changes
+                const observer = new MutationObserver(scrollToBottom);
+                const container = document.querySelector('.email-logs-container');
+                if (container) {
+                    observer.observe(container, { childList: true, subtree: true });
+                }
+            </script>
+        """, unsafe_allow_html=True)
+        
+        # Export option
+        if st.button("Export Logs to CSV"):
+            csv = filtered_logs.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name="email_logs.csv",
+                mime="text/csv"
+            )
 
 def fetch_all_email_logs(session):
     try:
@@ -1817,7 +1959,7 @@ def bulk_send_page():
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -2172,14 +2314,16 @@ def automation_control_panel_page():
             st.session_state.automation_status = not st.session_state.get('automation_status', False)
             if st.session_state.automation_status:
                 st.session_state.automation_logs = []
-            st.rerun()
+            # Remove st.rerun() - Streamlit will handle the update automatically
 
     if st.button("Perform Quick Scan", use_container_width=True):
         with st.spinner("Performing quick scan..."):
             try:
                 with db_session() as session:
                     new_leads = session.query(Lead).filter(Lead.is_processed == False).count()
-                    session.query(Lead).filter(Lead.is_processed == False).update({Lead.is_processed: True})
+                    session.query(Lead).filter(Lead.is_processed == False).update(
+                        {Lead.is_processed: True}  # Remove extra )
+                    )
                     session.commit()
                     st.success(f"Quick scan completed! Found {new_leads} new leads.")
             except Exception as e:
@@ -2479,7 +2623,8 @@ def update_process_log(session, process_id, message, level='info'):
             logging.error(f"Process {process_id} not found")
             return False
             
-        if not process.logs:
+        # Initialize logs array if None
+        if process.logs is None:
             process.logs = []
             
         log_entry = {
@@ -2488,8 +2633,13 @@ def update_process_log(session, process_id, message, level='info'):
             'message': message
         }
         
+        # Append new log entry
         process.logs.append(log_entry)
+        
+        # Update the process
+        session.add(process)
         session.commit()
+        
         return True
     except Exception as e:
         logging.error(f"Error updating process log: {str(e)}")
@@ -2500,23 +2650,84 @@ def display_process_logs(process_id):
     """Display logs for a search process"""
     with db_session() as session:
         process = session.query(SearchProcess).get(process_id)
-        if not process or not process.logs:
-            st.info("No logs available")
+        if not process:
+            st.info("Process not found")
             return
             
-        for log in process.logs:
-            timestamp = datetime.fromisoformat(log['timestamp']).strftime('%H:%M:%S')
-            level = log['level']
-            message = log['message']
+        if not process.logs:
+            st.info("No logs available yet. Logs will appear here as the process runs.")
+            return
+        
+        # Use container for better stability
+        log_container = st.container()
+        
+        with log_container:
+            # Add CSS for scrollable container with unique class
+            st.markdown("""
+                <style>
+                    .process-logs-container {
+                        max-height: 400px;
+                        overflow-y: auto;
+                        border: 1px solid rgba(49, 51, 63, 0.2);
+                        border-radius: 0.25rem;
+                        padding: 1rem;
+                        background-color: rgba(49, 51, 63, 0.1);
+                        margin-bottom: 1rem;
+                        font-family: monospace;
+                    }
+                    .process-log-entry {
+                        padding: 0.25rem 0;
+                        border-bottom: 1px solid rgba(49, 51, 63, 0.1);
+                        animation: fadeIn 0.5s ease-in;
+                        white-space: pre-wrap;
+                        word-wrap: break-word;
+                    }
+                    @keyframes fadeIn {
+                        from { opacity: 0; transform: translateY(-10px); }
+                        to { opacity: 1; transform: translateY(0); }
+                    }
+                </style>
+            """, unsafe_allow_html=True)
             
-            if level == 'error':
-                st.error(f"[{timestamp}] {message}")
-            elif level == 'warning':
-                st.warning(f"[{timestamp}] {message}")
-            elif level == 'success':
-                st.success(f"[{timestamp}] {message}")
-            else:
-                st.info(f"[{timestamp}] {message}")
+            # Format logs with icons
+            log_entries = []
+            for log in process.logs:
+                timestamp = datetime.fromisoformat(log['timestamp']).strftime('%H:%M:%S')
+                level = log['level']
+                message = log['message']
+                icon = {
+                    'info': '🔵',
+                    'success': '🟢',
+                    'warning': '🟠',
+                    'error': '🔴',
+                    'email_sent': '🟣'
+                }.get(level, '⚪')
+                log_entries.append(f'<div class="process-log-entry">{icon} [{timestamp}] {message}</div>')
+            
+            # Display all logs at once in the container
+            st.markdown(f'<div class="process-logs-container">{"".join(log_entries)}</div>', unsafe_allow_html=True)
+            
+            # Add auto-scroll JavaScript
+            st.markdown("""
+                <script>
+                    function scrollToBottom() {
+                        const containers = document.getElementsByClassName('process-logs-container');
+                        for (let container of containers) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    }
+                    
+                    // Initial scroll
+                    scrollToBottom();
+                    
+                    // Set up a mutation observer to watch for changes
+                    const observer = new MutationObserver(scrollToBottom);
+                    const containers = document.getElementsByClassName('process-logs-container');
+                    for (let container of containers) {
+                        observer.observe(container, { childList: true, subtree: true });
+                    }
+                </script>
+            """, unsafe_allow_html=True)
 
 def background_manual_search(process_id, search_terms, settings):
     """Execute manual search in background"""
@@ -2529,6 +2740,9 @@ def background_manual_search(process_id, search_terms, settings):
                 
             process.status = 'running'
             session.commit()
+            
+            # Log start
+            update_process_log(session, process_id, f"Starting search process with {len(search_terms)} terms", 'info')
             
             results = manual_search(
                 session=session,
@@ -2546,6 +2760,9 @@ def background_manual_search(process_id, search_terms, settings):
                 process_id=process_id
             )
             
+            # Log completion
+            update_process_log(session, process_id, f"Search completed. Found {results.get('total_leads', 0)} leads", 'success')
+            
             process.status = 'completed'
             process.results = results
             session.commit()
@@ -2557,42 +2774,136 @@ def background_manual_search(process_id, search_terms, settings):
             process.status = 'failed'
             session.commit()
 
-# Replace the existing SearchProcess class with this updated version
-class SearchProcess(Base):
-    __tablename__ = 'search_processes'
-    __table_args__ = (
-        Index('idx_search_process_status', 'status'),
-        Index('idx_search_process_created', 'created_at'),
-    )
-    id = Column(BigInteger, primary_key=True)
-    search_terms = Column(JSON)  # Store list of search terms
-    settings = Column(JSON)      # Store search settings
-    status = Column(Text)        # 'running', 'completed', 'failed'
-    results = Column(JSON)       # Store search results
-    logs = Column(JSON)          # Store process logs
-    total_leads_found = Column(BigInteger, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    campaign = relationship("Campaign")
-
-# After the model definition, add this code to handle table creation/updates
-def create_search_process_table():
-    # Drop the existing table if it exists
-    try:
-        SearchProcess.__table__.drop(bind=engine)
-    except:
-        pass
+def view_campaign_logs():
+    st.title("Email Campaign Logs")
     
-    # Create the table with the new schema
-    try:
-        SearchProcess.__table__.create(bind=engine)
-    except Exception as e:
-        logging.error(f"Error creating SearchProcess table: {e}")
-        raise
-
-# Add this line after Base.metadata.create_all(bind=engine)
-create_search_process_table()
+    with db_session() as session:
+        logs = fetch_all_email_logs(session)
+        if logs.empty:
+            st.info("No email logs found.")
+            return
+        
+        # Add CSS for styling
+        st.markdown("""
+            <style>
+                .email-logs-container {
+                    max-height: 600px;
+                    overflow-y: auto;
+                    border: 1px solid rgba(49, 51, 63, 0.2);
+                    border-radius: 0.5rem;
+                    padding: 1rem;
+                    background-color: rgba(49, 51, 63, 0.1);
+                    margin-bottom: 1rem;
+                }
+                .email-log-entry {
+                    padding: 0.75rem;
+                    margin-bottom: 0.5rem;
+                    border-radius: 0.25rem;
+                    background-color: rgba(255, 255, 255, 0.05);
+                    border-left: 4px solid;
+                    animation: fadeIn 0.5s ease-in;
+                }
+                .email-log-entry.success {
+                    border-left-color: #28a745;
+                }
+                .email-log-entry.error {
+                    border-left-color: #dc3545;
+                }
+                .email-log-entry.pending {
+                    border-left-color: #ffc107;
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(-10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        # Summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Emails", len(logs))
+        with col2:
+            success_rate = (logs['Status'] == 'sent').mean() * 100
+            st.metric("Success Rate", f"{success_rate:.1f}%")
+        with col3:
+            st.metric("Unique Recipients", logs['Email'].nunique())
+        
+        # Filters
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
+        with col2:
+            end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
+        
+        search_term = st.text_input("🔍 Search by email or subject")
+        
+        # Filter logs
+        filtered_logs = logs[
+            (logs['Sent At'].dt.date >= start_date) & 
+            (logs['Sent At'].dt.date <= end_date)
+        ]
+        
+        if search_term:
+            filtered_logs = filtered_logs[
+                filtered_logs['Email'].str.contains(search_term, case=False) | 
+                filtered_logs['Subject'].str.contains(search_term, case=False)
+            ]
+        
+        # Display logs
+        st.markdown("<div class='email-logs-container'>", unsafe_allow_html=True)
+        for _, log in filtered_logs.iterrows():
+            status_class = {
+                'sent': 'success',
+                'failed': 'error'
+            }.get(log['Status'], 'pending')
+            
+            st.markdown(f"""
+                <div class='email-log-entry {status_class}'>
+                    <div style='display: flex; justify-content: space-between;'>
+                        <strong>{log['Email']}</strong>
+                        <span>{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')}</span>
+                    </div>
+                    <div style='margin-top: 0.5rem;'>
+                        <strong>Subject:</strong> {log['Subject']}<br>
+                        <strong>Status:</strong> {log['Status']}<br>
+                        <strong>Template:</strong> {log['Template']}
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Add auto-scroll JavaScript
+        st.markdown("""
+            <script>
+                function scrollToBottom() {
+                    const container = document.querySelector('.email-logs-container');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                }
+                
+                // Initial scroll
+                scrollToBottom();
+                
+                // Set up a mutation observer to watch for changes
+                const observer = new MutationObserver(scrollToBottom);
+                const container = document.querySelector('.email-logs-container');
+                if (container) {
+                    observer.observe(container, { childList: true, subtree: true });
+                }
+            </script>
+        """, unsafe_allow_html=True)
+        
+        # Export option
+        if st.button("Export Logs to CSV"):
+            csv = filtered_logs.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name="email_logs.csv",
+                mime="text/csv"
+            )
 
 
 if __name__ == "__main__":
