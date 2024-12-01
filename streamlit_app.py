@@ -85,7 +85,7 @@ DEFAULT_SEARCH_SETTINGS = {
 }
 
 # Initialize logging
-logging.config.dictConfig(LOGGING_CONFIG)
+
 
 #database info
 DB_HOST = os.getenv("SUPABASE_DB_HOST", "aws-0-eu-central-1.pooler.supabase.com")
