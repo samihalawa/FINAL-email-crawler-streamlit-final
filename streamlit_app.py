@@ -548,11 +548,11 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
     if not email_settings:
         logging.error(f"No email settings found for {from_email}")
         return None, None
-
+    
     if not all([to_email, subject, body]):
         logging.error("Missing required email parameters")
         return None, None
-
+    
     tracking_id = str(uuid.uuid4())
     try:
         tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
@@ -560,13 +560,13 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
     except Exception as e:
         logging.warning(f"Failed to add tracking pixel: {str(e)}")
         tracked_body = wrap_email_body(body)
-
+    
     try:
         if email_settings.provider == 'ses':
             if not all([email_settings.aws_access_key_id, email_settings.aws_secret_access_key, email_settings.aws_region]):
                 logging.error("Missing AWS credentials")
                 return None, None
-
+            
             if ses_client is None:
                 aws_session = boto3.Session(
                     aws_access_key_id=email_settings.aws_access_key_id,
@@ -585,12 +585,12 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
                 ReplyToAddresses=[reply_to] if reply_to else []
             )
             return response, tracking_id
-
+        
         elif email_settings.provider == 'smtp':
             if not all([email_settings.smtp_server, email_settings.smtp_port, email_settings.smtp_username, email_settings.smtp_password]):
                 logging.error("Missing SMTP credentials")
                 return None, None
-
+            
             msg = MIMEMultipart()
             msg['From'] = from_email
             msg['To'] = to_email
@@ -598,17 +598,17 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
             if reply_to:
                 msg['Reply-To'] = reply_to
             msg.attach(MIMEText(tracked_body, 'html'))
-
+            
             with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
                 server.starttls()
                 server.login(email_settings.smtp_username, email_settings.smtp_password)
                 server.send_message(msg)
             return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
-
+        
         else:
             logging.error(f"Unknown email provider: {email_settings.provider}")
             return None, None
-
+    
     except Exception as e:
         logging.error(f"Error sending email: {str(e)}")
         raise  # Let the retry decorator handle the retry
@@ -921,57 +921,28 @@ def log_ai_request(session, function_name, prompt, response, lead_id=None, email
     ))
     session.commit()
 
-def save_lead(session, email, first_name=None, last_name=None, company=None, job_title=None, phone=None, url=None, search_term_id=None, created_at=None):
+def save_lead(session, email, **kwargs):
     try:
-        # Check if lead already exists
-        existing_lead = session.query(Lead).filter_by(email=email).first()
-        if existing_lead:
-            # Update existing lead with new information if provided
-            for attr in ['first_name', 'last_name', 'company', 'job_title', 'phone', 'created_at']:
-                if locals()[attr]:
-                    setattr(existing_lead, attr, locals()[attr])
-            lead = existing_lead
-        else:
+        with session.begin_nested():
+            existing_lead = (session.query(Lead)
+                           .filter(func.lower(Lead.email) == func.lower(email))
+                           .with_for_update()
+                           .first())
+            if existing_lead:
+                # Update existing lead
+                for attr, value in kwargs.items():
+                    if value is not None:
+                        setattr(existing_lead, attr, value)
+                return existing_lead
+                
             # Create new lead
-            lead = Lead(
-                email=email,
-                first_name=first_name,
-                last_name=last_name,
-                company=company,
-                job_title=job_title,
-                phone=phone,
-                created_at=created_at or datetime.utcnow()
-            )
-            session.add(lead)
-        
-        session.flush()  # Flush changes to get lead ID
-        
-        # Save lead source if URL is provided
-        if url and search_term_id:
-            lead_source = LeadSource(
-                lead_id=lead.id,
-                url=url,
-                search_term_id=search_term_id
-            )
-            session.add(lead_source)
-        
-        # Create campaign lead association
-        campaign_lead = CampaignLead(
-            campaign_id=get_active_campaign_id(),
-            lead_id=lead.id,
-            status="Not Contacted",
-            created_at=datetime.utcnow()
-        )
-        session.add(campaign_lead)
-        
-        # Commit all changes
-        session.commit()
-        logging.info(f"Successfully saved/updated lead: {email}")
-        return lead
-        
+            new_lead = Lead(email=email, **kwargs)
+            session.add(new_lead)
+            return new_lead
+            
     except Exception as e:
-        logging.error(f"Error saving lead {email}: {str(e)}")
         session.rollback()
+        logger.error(f"Error saving lead {email}: {str(e)}")
         return None
 
 def save_lead_source(session, lead_id, search_term_id, url, http_status, scrape_duration, page_title=None, meta_description=None, content=None, tags=None, phone_numbers=None):
@@ -1673,23 +1644,29 @@ def search_terms_page():
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
-        current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
-        existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
-        
-        for term in existing_terms:
-            if term.id not in current_term_ids:
-                term.group_id = None
-        
-        for term_str in updated_terms:
-            term_id = int(term_str.split(":")[0])
-            term = session.query(SearchTerm).get(term_id)
-            if term:
-                term.group_id = group_id
+        with session.begin_nested():  # Use nested transaction
+            current_term_ids = {int(term.split(":")[0]) for term in updated_terms if ":" in term}
+            existing_terms = session.query(SearchTerm).filter_by(group_id=group_id).all()
+            
+            for term in existing_terms:
+                if term.id not in current_term_ids:
+                    term.group_id = None
+            
+            session.flush()
+            
+            for term_str in updated_terms:
+                if ":" in term_str:
+                    term_id = int(term_str.split(":")[0])
+                    term = session.query(SearchTerm).get(term_id)
+                    if term:
+                        term.group_id = group_id
         
         session.commit()
+        return True
     except Exception as e:
         session.rollback()
-        logging.error(f"Error in update_search_term_group: {str(e)}")
+        logger.error(f"Error in update_search_term_group: {str(e)}")
+        return False
 
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
@@ -1852,11 +1829,17 @@ def email_templates_page():
             st.info("No email templates found. Create a new template to get started.")
 
 def get_email_preview(session, template_id, from_email, reply_to):
-    template = session.query(EmailTemplate).filter_by(id=template_id).first()
-    if template:
-        wrapped_content = wrap_email_body(template.body_content)
-        return wrapped_content
-    return "<p>Template not found</p>"
+    try:
+        template = session.query(EmailTemplate).get(template_id)
+        if template:
+            # Sanitize content
+            body_content = html.escape(template.body_content)
+            wrapped_content = wrap_email_body(body_content)
+            return wrapped_content
+        return "<p>Template not found</p>"
+    except Exception as e:
+        logger.error(f"Error generating preview: {str(e)}")
+        return "<p>Error generating preview</p>"
 
 def fetch_all_search_terms(session):
     return session.query(SearchTerm).all()
@@ -2469,34 +2452,30 @@ st.sidebar.markdown("---")
 st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
 def update_process_log(session, process_id, message, level='info'):
-    """Update the logs for a search process"""
     try:
-        process = session.query(SearchProcess).get(process_id)
-        if not process:
-            logging.error(f"Process {process_id} not found")
-            return False
+        with session.begin_nested():
+            process = (session.query(SearchProcess)
+                      .filter_by(id=process_id)
+                      .with_for_update()
+                      .first())
+            if not process:
+                return False
+                
+            if process.logs is None:
+                process.logs = []
+                
+            log_entry = {
+                'timestamp': datetime.utcnow().isoformat(),
+                'level': level,
+                'message': message
+            }
             
-        # Initialize logs array if None
-        if process.logs is None:
-            process.logs = []
+            process.logs.append(log_entry)
+            return True
             
-        log_entry = {
-            'timestamp': datetime.utcnow().isoformat(),
-            'level': level,
-            'message': message
-        }
-        
-        # Append new log entry
-        process.logs.append(log_entry)
-        
-        # Update the process
-        session.add(process)
-        session.commit()
-        
-        return True
     except Exception as e:
-        logging.error(f"Error updating process log: {str(e)}")
         session.rollback()
+        logger.error(f"Error updating process log: {str(e)}")
         return False
 
 def display_process_logs(process_id):
@@ -3067,7 +3046,6 @@ def landing_pages_page():
                                 st.error(f"Error deleting page: {str(e)}")
 
 def generate_landing_page_content(prompt):
-    """Generate landing page content using AI"""
     try:
         messages = [
             {
@@ -3075,8 +3053,8 @@ def generate_landing_page_content(prompt):
                 "content": "You are an expert web developer and designer specializing in landing pages."
             },
             {
-                "role": "user",
-                "content": f"Create a landing page based on this description:\n{prompt}\n\nRespond with JSON containing HTML, CSS, and JS content."
+                "role": "user", 
+                "content": f"Create a landing page based on this description:\n{prompt}"
             }
         ]
         
@@ -3086,24 +3064,27 @@ def generate_landing_page_content(prompt):
             function_name="generate_landing_page"
         )
         
+        # Ensure response has required fields
+        default_content = {
+            "html": "<h1>Error generating content</h1>",
+            "css": "body { font-family: sans-serif; }",
+            "js": ""
+        }
+        
         if isinstance(response, str):
             try:
                 response = json.loads(response)
             except json.JSONDecodeError:
-                return {
-                    "html": "<h1>Error generating content</h1>",
-                    "css": "",
-                    "js": ""
-                }
-        
+                return default_content
+                
+        if not all(k in response for k in ['html', 'css', 'js']):
+            return default_content
+            
         return response
+        
     except Exception as e:
-        logger.error(f"Error generating landing page content: {str(e)}")
-        return {
-            "html": "<h1>Error generating content</h1>",
-            "css": "",
-            "js": ""
-        }
+        logger.error(f"Error generating landing page: {str(e)}")
+        return default_content
 
 def wrap_landing_page(html_content, css_content, js_content):
     """Wrap landing page content in a complete HTML document"""
