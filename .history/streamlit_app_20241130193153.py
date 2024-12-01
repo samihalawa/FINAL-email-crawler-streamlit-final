@@ -101,37 +101,23 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 thread_local = local()
 
 def get_db_session():
-    """Get or create a database session for the current thread."""
     if not hasattr(thread_local, "session"):
-        with db_session() as session:
-            thread_local.session = session
+        thread_local.session = SessionLocal()
     return thread_local.session
 
 @contextmanager
-def db_session():
-    """Provide a transactional scope around a series of operations."""
-    session = None
+def get_db():
+    session = get_db_session()
     try:
-        # Try to get existing session from thread local storage
-        if hasattr(thread_local, "session"):
-            session = thread_local.session
-        else:
-            # Create new session if none exists
-            session = SessionLocal()
-            thread_local.session = session
-        
         yield session
         session.commit()
     except Exception as e:
-        if session:
-            session.rollback()
-        logging.error(f"Database session error: {str(e)}")
+        session.rollback()
         raise
     finally:
-        if session:
-            session.close()
-            if hasattr(thread_local, "session"):
-                del thread_local.session
+        session.close()
+        if hasattr(thread_local, "session"):
+            del thread_local.session
 
 # Update the database configuration with more conservative settings
 engine = create_engine(
@@ -445,6 +431,27 @@ class EmailSettings(Base):
     aws_region = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+@contextmanager
+def db_session():
+    """Provide a transactional scope around a series of operations."""
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logging.error(f"Database session error: {str(e)}")
+        raise
+    finally:
+        session.close()
+
+def get_db():
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 def settings_page():
     st.title("Settings")

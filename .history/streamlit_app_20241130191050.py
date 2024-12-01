@@ -88,11 +88,11 @@ DEFAULT_SEARCH_SETTINGS = {
 logging.config.dictConfig(LOGGING_CONFIG)
 
 #database info
-DB_HOST = os.getenv("SUPABASE_DB_HOST", "aws-0-eu-central-1.pooler.supabase.com")
-DB_NAME = os.getenv("SUPABASE_DB_NAME", "postgres")
-DB_USER = os.getenv("SUPABASE_DB_USER", "postgres.whwiyccyyfltobvqxiib")
-DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD", "SamiHalawa1996")
-DB_PORT = os.getenv("SUPABASE_DB_PORT", "6543")  # Using transaction mode pooler port
+DB_HOST = "aws-0-eu-central-1.pooler.supabase.com"
+DB_NAME = "postgres"
+DB_USER = "postgres.whwiyccyyfltobvqxiib"
+DB_PASSWORD = "SamiHalawa1996"
+DB_PORT = "6543"  # Using transaction mode pooler port
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -101,50 +101,36 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 thread_local = local()
 
 def get_db_session():
-    """Get or create a database session for the current thread."""
     if not hasattr(thread_local, "session"):
-        with db_session() as session:
-            thread_local.session = session
+        thread_local.session = SessionLocal()
     return thread_local.session
 
 @contextmanager
-def db_session():
-    """Provide a transactional scope around a series of operations."""
-    session = None
+def get_db():
+    session = get_db_session()
     try:
-        # Try to get existing session from thread local storage
-        if hasattr(thread_local, "session"):
-            session = thread_local.session
-        else:
-            # Create new session if none exists
-            session = SessionLocal()
-            thread_local.session = session
-        
         yield session
         session.commit()
     except Exception as e:
-        if session:
-            session.rollback()
-        logging.error(f"Database session error: {str(e)}")
+        session.rollback()
         raise
     finally:
-        if session:
-            session.close()
-            if hasattr(thread_local, "session"):
-                del thread_local.session
+        session.close()
+        if hasattr(thread_local, "session"):
+            del thread_local.session
 
-# Update the database configuration with more conservative settings
+# Database configuration with optimized settings
 engine = create_engine(
     DATABASE_URL,
-    pool_size=5,  # Reduced from 20 to prevent connection overload
-    max_overflow=2,  # Reduced from 10 to limit total connections
-    pool_timeout=30,
-    pool_recycle=1800,
-    pool_pre_ping=True,
+    pool_size=20,  # Increased for better concurrent handling
+    max_overflow=10,  # Allow some overflow connections
+    pool_timeout=30,  # Increased timeout for busy periods
+    pool_recycle=1800,  # Recycle connections every 30 minutes
+    pool_pre_ping=True,  # Enable connection health checks
     connect_args={
         'connect_timeout': 10,
-        'application_name': 'autoclient_app',
-        'options': '-c statement_timeout=30000'
+        'application_name': 'autoclient_app',  # Helps identify connections
+        'options': '-c statement_timeout=30000'  # 30 second query timeout
     }
 )
 
@@ -163,12 +149,11 @@ if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
 try:
-    # Test connection with timeout
-    with db_session() as session:
-        session.execute(text("SELECT 1"))
+    # Test the connection
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
 except Exception as e:
     st.error(f"Failed to connect to database: {str(e)}")
-    logging.error(f"Database connection error: {str(e)}")
     raise
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
@@ -445,6 +430,18 @@ class EmailSettings(Base):
     aws_region = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+@contextmanager
+def db_session():
+    with get_db() as session:
+        yield session
+
+def get_db():
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 def settings_page():
     st.title("Settings")
@@ -3017,28 +3014,6 @@ def log_error(message, process_id=None, log_container=None):
     elif log_container:
         update_log(log_container, message, 'error')
     logger.error(message)
-
-# Add connection pooling helper
-def get_db_connection():
-    """Get a database connection from the pool"""
-    try:
-        connection = engine.connect()
-        return connection
-    except Exception as e:
-        logging.error(f"Error getting database connection: {str(e)}")
-        raise
-
-# Add connection cleanup on app shutdown
-def cleanup_connections():
-    """Clean up database connections when the app shuts down"""
-    try:
-        engine.dispose()
-    except Exception as e:
-        logging.error(f"Error disposing engine connections: {str(e)}")
-
-# Register cleanup handler
-import atexit
-atexit.register(cleanup_connections)
 
 if __name__ == "__main__":
     main()
