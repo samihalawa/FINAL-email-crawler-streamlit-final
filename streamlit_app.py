@@ -189,6 +189,7 @@ class Campaign(Base):
     email_campaigns = relationship("EmailCampaign", back_populates="campaign", cascade="all, delete-orphan")
     search_terms = relationship("SearchTerm", back_populates="campaign", cascade="all, delete-orphan")
     campaign_leads = relationship("CampaignLead", back_populates="campaign", cascade="all, delete-orphan")
+    landing_pages = relationship("LandingPage", back_populates="campaign", cascade="all, delete-orphan")
 
 
 # Replace the existing SearchProcess class with this updated version
@@ -429,35 +430,20 @@ class EmailSettings(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL not set")
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base.metadata.create_all(bind=engine)
-
 @contextmanager
 def db_session():
     """Thread-safe database session context manager"""
-    if not hasattr(thread_local, "session"):
-        thread_local.session = SessionLocal()
-    session = thread_local.session
-    try:
+    with get_db() as session:
         yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-        if hasattr(thread_local, "session"):
-            del thread_local.session
 
 def settings_page():
     st.title("Settings")
     with db_session() as session:
-        general_settings = session.query(Settings).filter_by(setting_type='general').first() or Settings(name='General Settings', setting_type='general', value={})
+        general_settings = session.query(Settings).filter_by(setting_type='general').first() or Settings(
+            name='General Settings', 
+            setting_type='general', 
+            value={}
+        )
         st.header("General Settings")
         
         with st.form("general_settings_form"):
@@ -2442,10 +2428,18 @@ def wrap_email_body(body_content):
     </body>
     </html>
     """
-
 def fetch_sent_email_campaigns(session):
     try:
-        email_campaigns = session.query(EmailCampaign).join(Lead).join(EmailTemplate).options(joinedload(EmailCampaign.lead), joinedload(EmailCampaign.template)).order_by(EmailCampaign.sent_at.desc()).all()
+        email_campaigns = session.query(EmailCampaign)\
+            .join(Lead)\
+            .join(EmailTemplate)\
+            .options(
+                joinedload(EmailCampaign.lead),
+                joinedload(EmailCampaign.template)
+            )\
+            .order_by(EmailCampaign.sent_at.desc())\
+            .all()
+            
         return pd.DataFrame({
             'ID': [ec.id for ec in email_campaigns],
             'Sent At': [ec.sent_at.strftime("%Y-%m-%d %H:%M:%S") if ec.sent_at else "" for ec in email_campaigns],
@@ -2458,113 +2452,21 @@ def fetch_sent_email_campaigns(session):
             'Campaign ID': [ec.campaign_id for ec in email_campaigns],
             'Lead Name': [f"{ec.lead.first_name or ''} {ec.lead.last_name or ''}".strip() or "Unknown" for ec in email_campaigns],
             'Lead Company': [ec.lead.company or "Unknown" for ec in email_campaigns]
-        })
-    except SQLAlchemyError as e:
-        logging.error(f"Database error in fetch_sent_email_campaigns: {str(e)}")
+        }, index=range(len(email_campaigns)))
+    except Exception as e:
+        logging.error(f"Error fetching email campaigns: {str(e)}")
         return pd.DataFrame()
 
-def display_logs(log_container, logs):
-    if not logs:
-        log_container.info("No logs to display yet.")
-        return
+try:
+    with db_session() as session:
+        pages[selected]()
+except Exception as e:
+    st.error(f"An error occurred: {str(e)}")
+    logging.exception("An error occurred in the main function")
+    st.write("Please try refreshing the page or contact support if the issue persists.")
 
-    log_container.markdown(
-        """
-        <style>
-        .log-container {
-            max-height: 300px;
-            overflow-y: auto;
-            border: 1px solid rgba(49, 51, 63, 0.2);
-            border-radius: 0.25rem;
-            padding: 1rem;
-        }
-        .log-entry {
-            margin-bottom: 0.5rem;
-            padding: 0.5rem;
-            border-radius: 0.25rem;
-            background-color: rgba(28, 131, 225, 0.1);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-    log_entries = "".join(f'<div class="log-entry">{log}</div>' for log in logs[-20:])
-    log_container.markdown(f'<div class="log-container">{log_entries}</div>', unsafe_allow_html=True)
-
-def view_sent_email_campaigns():
-    st.header("Sent Email Campaigns")
-    try:
-        with db_session() as session:
-            email_campaigns = fetch_sent_email_campaigns(session)
-        if not email_campaigns.empty:
-            st.dataframe(email_campaigns)
-            st.subheader("Detailed Content")
-            selected_campaign = st.selectbox("Select a campaign to view details", email_campaigns['ID'].tolist())
-            if selected_campaign:
-                campaign_content = email_campaigns[email_campaigns['ID'] == selected_campaign]['Content'].iloc[0]
-                st.text_area("Content", campaign_content if campaign_content else "No content available", height=300)
-        else:
-            st.info("No sent email campaigns found.")
-    except Exception as e:
-        st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
-        logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
-
-def main():
-    # Initialize session state
-    if 'automation_status' not in st.session_state:
-        st.session_state.automation_status = False
-    if 'automation_logs' not in st.session_state:
-        st.session_state.automation_logs = []
-    if 'search_terms' not in st.session_state:
-        st.session_state.search_terms = []
-    if 'optimized_terms' not in st.session_state:
-        st.session_state.optimized_terms = []
-
-    st.set_page_config(
-        page_title="Autoclient.ai | Lead Generation AI App",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        page_icon=""
-    )
-
-    st.sidebar.title("AutoclientAI")
-    st.sidebar.markdown("Select a page to navigate through the application.")
-
-    pages = {
-        "🔍 Manual Search": manual_search_page,
-        "📦 Bulk Send": bulk_send_page,
-        "👥 View Leads": view_leads_page,
-        "🔑 Search Terms": search_terms_page,
-        "✉️ Email Templates": email_templates_page,
-        "🚀 Projects & Campaigns": projects_campaigns_page,
-        "📚 Knowledge Base": knowledge_base_page,
-        "🤖 AutoclientAI": autoclient_ai_page,
-        "⚙️ Automation Control": automation_control_panel_page,
-        "📨 Email Logs": view_campaign_logs,
-        "🔄 Settings": settings_page,
-        "📨 Sent Campaigns": view_sent_email_campaigns
-    }
-
-    with st.sidebar:
-        selected = option_menu(
-            menu_title="Navigation",
-            options=list(pages.keys()),
-            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
-            menu_icon="cast",
-            default_index=0
-        )
-
-    try:
-        with db_session() as session:
-            pages[selected]()
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        logging.exception("An error occurred in the main function")
-        st.write("Please try refreshing the page or contact support if the issue persists.")
-
-    st.sidebar.markdown("---")
-    st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+st.sidebar.markdown("---")
+st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
 def update_process_log(session, process_id, message, level='info'):
     """Update the logs for a search process"""
@@ -2596,6 +2498,7 @@ def update_process_log(session, process_id, message, level='info'):
         logging.error(f"Error updating process log: {str(e)}")
         session.rollback()
         return False
+
 def display_process_logs(process_id):
     """Display logs for a search process"""
     with db_session() as session:
@@ -3020,6 +2923,201 @@ def log_error(message, process_id=None, log_container=None):
     elif log_container:
         update_log(log_container, message, 'error')
     logger.error(message)
+
+class LandingPage(Base):
+    __tablename__ = 'landing_pages'
+    __table_args__ = (
+        Index('idx_landing_page_created', 'created_at'),
+    )
+    id = Column(BigInteger, primary_key=True)
+    name = Column(Text, nullable=False)
+    template_type = Column(Text, default='custom')  # custom, lead_capture, product
+    html_content = Column(Text)
+    css_content = Column(Text)
+    js_content = Column(Text)
+    meta_tags = Column(JSON)
+    settings = Column(JSON)
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    is_published = Column(Boolean, default=False)
+    analytics = Column(JSON)
+    campaign = relationship("Campaign", back_populates="landing_pages")
+
+def landing_pages_page():
+    st.title("Landing Page Builder")
+    
+    with db_session() as session:
+        # Create new landing page section
+        with st.expander("Create New Landing Page", expanded=False):
+            with st.form("new_landing_page"):
+                name = st.text_input("Page Name")
+                template_type = st.selectbox(
+                    "Template Type",
+                    ["custom", "lead_capture", "product"]
+                )
+                
+                use_ai = st.checkbox("Use AI to generate content")
+                if use_ai:
+                    ai_prompt = st.text_area(
+                        "Describe your landing page",
+                        help="Describe the purpose, target audience, and key features you want to highlight"
+                    )
+                else:
+                    html_content = st.text_area("HTML Content")
+                    css_content = st.text_area("CSS Content")
+                    js_content = st.text_area("JavaScript Content")
+                
+                if st.form_submit_button("Create Landing Page"):
+                    try:
+                        if use_ai:
+                            generated_content = generate_landing_page_content(ai_prompt)
+                            html_content = generated_content.get('html', '')
+                            css_content = generated_content.get('css', '')
+                            js_content = generated_content.get('js', '')
+                            
+                        new_page = LandingPage(
+                            name=name,
+                            template_type=template_type,
+                            html_content=html_content,
+                            css_content=css_content,
+                            js_content=js_content,
+                            campaign_id=get_active_campaign_id()
+                        )
+                        session.add(new_page)
+                        session.commit()
+                        st.success("Landing page created successfully!")
+                        
+                    except Exception as e:
+                        st.error(f"Error creating landing page: {str(e)}")
+        
+        # List existing landing pages
+        pages = session.query(LandingPage).filter_by(
+            campaign_id=get_active_campaign_id()
+        ).all()
+        
+        if pages:
+            st.subheader("Existing Landing Pages")
+            for page in pages:
+                with st.expander(f" {page.name}", expanded=False):
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        edited_name = st.text_input(
+                            "Page Name",
+                            value=page.name,
+                            key=f"name_{page.id}"
+                        )
+                        edited_html = st.text_area(
+                            "HTML Content",
+                            value=page.html_content,
+                            height=300,
+                            key=f"html_{page.id}"
+                        )
+                        edited_css = st.text_area(
+                            "CSS Content",
+                            value=page.css_content,
+                            height=200,
+                            key=f"css_{page.id}"
+                        )
+                        edited_js = st.text_area(
+                            "JavaScript Content",
+                            value=page.js_content,
+                            height=200,
+                            key=f"js_{page.id}"
+                        )
+                    
+                    with col2:
+                        if st.button("Preview", key=f"preview_{page.id}"):
+                            st.components.v1.html(
+                                wrap_landing_page(
+                                    edited_html,
+                                    edited_css,
+                                    edited_js
+                                ),
+                                height=600,
+                                scrolling=True
+                            )
+                        
+                        if st.button("Save Changes", key=f"save_{page.id}"):
+                            try:
+                                page.name = edited_name
+                                page.html_content = edited_html
+                                page.css_content = edited_css
+                                page.js_content = edited_js
+                                session.commit()
+                                st.success("Changes saved successfully!")
+                            except Exception as e:
+                                st.error(f"Error saving changes: {str(e)}")
+                        
+                        if st.button("Delete", key=f"delete_{page.id}"):
+                            try:
+                                session.delete(page)
+                                session.commit()
+                                st.success("Landing page deleted!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error deleting page: {str(e)}")
+
+def generate_landing_page_content(prompt):
+    """Generate landing page content using AI"""
+    try:
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert web developer and designer specializing in landing pages."
+            },
+            {
+                "role": "user",
+                "content": f"Create a landing page based on this description:\n{prompt}\n\nRespond with JSON containing HTML, CSS, and JS content."
+            }
+        ]
+        
+        response = openai_chat_completion(
+            messages,
+            temperature=0.7,
+            function_name="generate_landing_page"
+        )
+        
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except json.JSONDecodeError:
+                return {
+                    "html": "<h1>Error generating content</h1>",
+                    "css": "",
+                    "js": ""
+                }
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error generating landing page content: {str(e)}")
+        return {
+            "html": "<h1>Error generating content</h1>",
+            "css": "",
+            "js": ""
+        }
+
+def wrap_landing_page(html_content, css_content, js_content):
+    """Wrap landing page content in a complete HTML document"""
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            {css_content}
+        </style>
+    </head>
+    <body>
+        {html_content}
+        <script>
+            {js_content}
+        </script>
+    </body>
+    </html>
+    """
 
 if __name__ == "__main__":
     main()
