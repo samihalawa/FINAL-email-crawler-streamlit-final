@@ -4,11 +4,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-<<<<<<< HEAD
-from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index, inspect
-=======
 from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index, inspect, Float
->>>>>>> a85b2e0f66135d0dac343e1e88949284eb31c1ea
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from botocore.exceptions import ClientError
@@ -27,8 +23,6 @@ from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager, wraps
 from threading import local, Lock
 import threading
-from urllib3.util import Retry
-import logging as logger
 
 # Logging Configuration
 LOGGING_CONFIG = {
@@ -88,7 +82,7 @@ DEFAULT_SEARCH_SETTINGS = {
 }
 
 # Initialize logging
-
+logging.config.dictConfig(LOGGING_CONFIG)
 
 #database info
 DB_HOST = os.getenv("SUPABASE_DB_HOST", "localhost")
@@ -193,27 +187,6 @@ class Campaign(Base):
     email_campaigns = relationship("EmailCampaign", back_populates="campaign", cascade="all, delete-orphan")
     search_terms = relationship("SearchTerm", back_populates="campaign", cascade="all, delete-orphan")
     campaign_leads = relationship("CampaignLead", back_populates="campaign", cascade="all, delete-orphan")
-
-
-# Replace the existing SearchProcess class with this updated version
-class SearchProcess(Base):
-    __tablename__ = 'search_processes'
-    __table_args__ = (
-        Index('idx_search_process_status', 'status'),
-        Index('idx_search_process_created', 'created_at'),
-    )
-    id = Column(BigInteger, primary_key=True)
-    search_terms = Column(JSON)  # Store list of search terms
-    settings = Column(JSON)      # Store search settings
-    status = Column(Text)        # 'running', 'completed', 'failed'
-    results = Column(JSON)       # Store search results
-    logs = Column(JSON)          # Store process logs
-    total_leads_found = Column(BigInteger, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    campaign = relationship("Campaign")
- 
 
 
 # Replace the existing SearchProcess class with this updated version
@@ -786,101 +759,6 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
     try:
         ua = UserAgent()
         for original_term in terms:
-<<<<<<< HEAD
-            try:
-                search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
-                search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
-                search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
-                
-                log_message = f"🔍 Searching: {original_term}"
-                if process_id:
-                    update_process_log(session, process_id, log_message, 'info')
-                elif log_container:
-                    update_log(log_container, log_message)
-                
-                for url in google_search(search_term, num_results, lang=language):
-                    try:
-                        domain = get_domain_from_url(url)
-                        if ignore_previously_fetched and domain in domains_processed:
-                            continue
-                        
-                        if not url.startswith(('http://', 'https://')):
-                            url = 'http://' + url
-                        
-                        response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
-                        response.raise_for_status()
-                        
-                        html_content = response.text
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        emails = extract_emails_from_html(html_content)
-                        valid_emails = [email.lower() for email in emails if is_valid_email(email)]
-                        
-                        if valid_emails:
-                            log_message = f"📍 Found {len(valid_emails)} emails on {url}"
-                            if process_id:
-                                update_process_log(session, process_id, log_message, 'success')
-                            elif log_container:
-                                update_log(log_container, log_message)
-                            
-                            name, company, job_title = extract_info_from_page(soup)
-                            page_title = get_page_title(html_content)
-                            page_description = get_page_description(html_content)
-                            
-                            for email in valid_emails:
-                                try:
-                                    lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
-                                    if lead:
-                                        total_leads += 1
-                                        log_message = f"📧 Found email: {email}"
-                                        if process_id:
-                                            update_process_log(session, process_id, log_message, 'success')
-                                        elif log_container:
-                                            update_log(log_container, log_message)
-                                        
-                                        results.append({
-                                            'Email': email,
-                                            'URL': url,
-                                            'Lead Source': original_term,
-                                            'Title': page_title,
-                                            'Description': page_description,
-                                            'Tags': [],
-                                            'Name': name,
-                                            'Company': company,
-                                            'Job Title': job_title,
-                                            'Search Term ID': search_term_id
-                                        })
-
-                                        if enable_email_sending and from_email and email_template:
-                                            template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                                            if template:
-                                                wrapped_content = wrap_email_body(template.body_content)
-                                                response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
-                                                
-                                                if response:
-                                                    log_message = f"✉️ Email sent to: {email}"
-                                                    if process_id:
-                                                        update_process_log(session, process_id, log_message, 'email_sent')
-                                                    elif log_container:
-                                                        update_log(log_container, log_message, 'email_sent')
-                                                    save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
-                                                else:
-                                                    log_message = f"❌ Failed to send email to: {email}"
-                                                    if process_id:
-                                                        update_process_log(session, process_id, log_message, 'error')
-                                                    elif log_container:
-                                                        update_log(log_container, log_message, 'error')
-                                                    save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
-                                except Exception as e:
-                                    error_message = f"Error processing email {email}: {str(e)}"
-                                    if process_id:
-                                        update_process_log(session, process_id, error_message, 'error')
-                                    elif log_container:
-                                        update_log(log_container, error_message, 'error')
-                                    continue
-                        
-                        domains_processed.add(domain)
-                        
-=======
             # Use thread-local session
             with get_db() as local_session:
                 search_term = local_session.query(SearchTerm).filter_by(term=original_term, campaign_id=get_active_campaign_id()).first()
@@ -895,7 +773,6 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                 for url in url_batch:
                     try:
                         process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container)
->>>>>>> a85b2e0f66135d0dac343e1e88949284eb31c1ea
                     except Exception as e:
                         log_error(f"Error processing URL {url}: {str(e)}", process_id, log_container)
                         continue
@@ -1230,170 +1107,13 @@ def manual_search_page():
         if active_processes:
             st.subheader("Active Search Processes")
             for process in active_processes:
-<<<<<<< HEAD
-                with st.expander(f"Process {process.id} - Started at {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}", expanded=True):
-=======
                 with st.expander(f"Process {process.id} - {process.status.title()} - Started at {process.created_at.strftime('%Y-%m-%d %H:%M:%S')}", expanded=True):
->>>>>>> a85b2e0f66135d0dac343e1e88949284eb31c1ea
                     display_process_logs(process.id)
         
         # Main search interface
         col1, col2 = st.columns([2, 1])
         
         with col1:
-<<<<<<< HEAD
-            # Get recent search terms for suggestions
-            recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
-            recent_terms = [term.term for term in recent_searches]
-            
-            # Search terms input with suggestions
-            search_terms = st_tags(
-                label='Enter Search Terms',
-                text='Press enter after each term',
-                value=st.session_state.search_terms,  # Use session state value
-                suggestions=recent_terms,  # Show recent terms as suggestions
-                key='search_terms_input'
-            )
-            
-            # Update session state when terms change
-            if search_terms != st.session_state.search_terms:
-                st.session_state.search_terms = search_terms
-            
-            # Settings
-            settings = {
-                'num_results': st.number_input('Results per term', min_value=1, max_value=100, value=10),
-                'ignore_previously_fetched': st.checkbox('Ignore previously fetched domains', value=True),
-                'optimize_english': st.checkbox('Optimize for English'),
-                'optimize_spanish': st.checkbox('Optimize for Spanish'),
-                'shuffle_keywords_option': st.checkbox('Shuffle keywords'),
-                'language': st.selectbox('Language', ['ES', 'EN'], index=0),
-                'enable_email_sending': st.checkbox('Enable automatic email sending')
-            }
-            
-            # Email settings if enabled
-            if settings['enable_email_sending']:
-                email_settings = fetch_email_settings(session)
-                if email_settings:
-                    email_setting = st.selectbox(
-                        "From Email",
-                        options=email_settings,
-                        format_func=lambda x: f"{x['name']} ({x['email']})"
-                    )
-                    settings['from_email'] = email_setting['email']
-                    settings['reply_to'] = st.text_input("Reply To", value=email_setting['email'])
-                    
-                    templates = fetch_email_templates(session)
-                    if templates:
-                        settings['email_template'] = st.selectbox("Email Template", options=templates)
-                    else:
-                        st.warning("No email templates found. Please create one first.")
-                        settings['enable_email_sending'] = False
-                else:
-                    st.warning("No email settings found. Please configure email settings first.")
-                    settings['enable_email_sending'] = False
-        
-        with col2:
-            st.subheader("AI Assistant")
-            
-            # AI Propose button
-            if st.button("PROPOSE NEW SEARCH TERMS", use_container_width=True):
-                with st.spinner("Generating new search term proposals..."):
-                    kb_info = get_knowledge_base_info(session, get_active_project_id())
-                    if kb_info:
-                        prompt = f"""Based on the following business context, propose 5 new search terms that would be effective for lead generation:
-                        Business: {kb_info.get('company_description', '')}
-                        Target Market: {kb_info.get('company_target_market', '')}
-                        Product: {kb_info.get('product_description', '')}
-                        Current Terms: {', '.join(search_terms) if search_terms else 'None'}
-                        """
-                        response = openai_chat_completion(
-                            messages=[
-                                {"role": "system", "content": "You are a lead generation expert. Propose specific, targeted search terms."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            function_name="propose_search_terms"
-                        )
-                        if isinstance(response, str):
-                            new_terms = [term.strip() for term in response.split('\n') if term.strip()]
-                            # Update session state without rerunning
-                            st.session_state.search_terms = list(set(search_terms + new_terms))
-                            # Show the new terms
-                            st.success("New terms proposed!")
-                            st.write("New terms added:")
-                            for term in new_terms:
-                                st.write(f"• {term}")
-                    else:
-                        st.warning("Please set up your Knowledge Base first to get better search term proposals.")
-            
-            st.markdown("---")
-            
-            # AI Optimize button
-            if st.button("OPTIMIZE SEARCH TERMS", use_container_width=True):
-                with st.spinner("Optimizing search terms..."):
-                    if search_terms:
-                        prompt = f"""Optimize these search terms for better lead generation results:
-                        Terms: {', '.join(search_terms)}
-                        
-                        For each term:
-                        1. Add relevant industry-specific keywords
-                        2. Include intent-based modifiers
-                        3. Consider geographic or demographic targeting if applicable
-                        4. Format for better search engine compatibility
-                        """
-                        response = openai_chat_completion(
-                            messages=[
-                                {"role": "system", "content": "You are a search optimization expert. Improve search terms for maximum effectiveness."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            function_name="optimize_search_terms"
-                        )
-                        if isinstance(response, str):
-                            optimized_terms = [term.strip() for term in response.split('\n') if term.strip()]
-                            # Update session state without rerunning
-                            st.session_state.search_terms = optimized_terms
-                            # Show the optimized terms
-                            st.success("Terms optimized!")
-                            st.write("Optimized terms:")
-                            for term in optimized_terms:
-                                st.write(f"• {term}")
-                    else:
-                        st.warning("Please enter some search terms to optimize.")
-            
-            st.markdown("---")
-            
-            # Start Search button
-            if st.button("Start Search", type="primary", use_container_width=True):
-                if not search_terms:
-                    st.warning("Please enter at least one search term")
-                    return
-                
-                new_process = SearchProcess(
-                    search_terms=search_terms,
-                    settings=settings,
-                    status='running',
-                    results={},
-                    logs=[],
-                    total_leads_found=0,
-                    campaign_id=get_active_campaign_id()
-                )
-                session.add(new_process)
-                session.commit()
-                
-                # Start background thread
-                import threading
-                thread = threading.Thread(
-                    target=background_manual_search,
-                    args=(new_process.id, search_terms, settings)
-                )
-                thread.daemon = True
-                thread.start()
-                
-                st.success("Search process started in background!")
-                st.info(f"Process ID: {new_process.id}")
-                
-                # Show logs immediately
-                display_process_logs(new_process.id)
-=======
             recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
             recent_terms = [term.term for term in recent_searches]
             
@@ -1509,7 +1229,6 @@ def manual_search_page():
             
             # Show logs immediately
             display_process_logs(search_process.id)
->>>>>>> a85b2e0f66135d0dac343e1e88949284eb31c1ea
 
 def get_page_description(html_content):
     """Extract page description from HTML meta tags."""
@@ -2935,31 +2654,6 @@ def display_process_logs(process_id):
                 log_entries.append(f'<div class="process-log-entry">{icon} [{timestamp}] {message}</div>')
             
             # Display all logs at once in the container
-<<<<<<< HEAD
-            st.markdown(f'<div class="process-logs-container">{"".join(log_entries)}</div>', unsafe_allow_html=True)
-            
-            # Add auto-scroll JavaScript
-            st.markdown("""
-                <script>
-                    function scrollToBottom() {
-                        const containers = document.getElementsByClassName('process-logs-container');
-                        for (let container of containers) {
-                            container.scrollTop = container.scrollHeight;
-                        }
-                    }
-                    
-                    // Initial scroll
-                    scrollToBottom();
-                    
-                    // Set up a mutation observer to watch for changes
-                    const observer = new MutationObserver(scrollToBottom);
-                    const containers = document.getElementsByClassName('process-logs-container');
-                    for (let container of containers) {
-                        observer.observe(container, { childList: true, subtree: true });
-                    }
-                </script>
-            """, unsafe_allow_html=True)
-=======
             st.markdown(
                 f"""
                 <div class="process-logs-container" id="process-logs-{process_id}">
@@ -2986,7 +2680,6 @@ def display_process_logs(process_id):
                 """,
                 unsafe_allow_html=True
             )
->>>>>>> a85b2e0f66135d0dac343e1e88949284eb31c1ea
 
 def update_process_state(session, process_id, status, error=None):
     try:
@@ -3070,9 +2763,6 @@ def background_manual_search(process_id, search_terms, settings):
             process.started_at = datetime.utcnow()
             session.commit()
             
-            # Log start
-            update_process_log(session, process_id, f"Starting search process with {len(search_terms)} terms", 'info')
-            
             results = manual_search(
                 session,
                 search_terms,
@@ -3090,13 +2780,6 @@ def background_manual_search(process_id, search_terms, settings):
                 process_id
             )
             
-<<<<<<< HEAD
-            # Log completion
-            update_process_log(session, process_id, f"Search completed. Found {results.get('total_leads', 0)} leads", 'success')
-            
-            process.status = 'completed'
-=======
->>>>>>> a85b2e0f66135d0dac343e1e88949284eb31c1ea
             process.results = results
             process.status = 'completed'
             process.completed_at = datetime.utcnow()
@@ -3112,138 +2795,6 @@ def background_manual_search(process_id, search_terms, settings):
     finally:
         process_manager.cleanup_finished()
 
-<<<<<<< HEAD
-def view_campaign_logs():
-    st.title("Email Campaign Logs")
-    
-    with db_session() as session:
-        logs = fetch_all_email_logs(session)
-        if logs.empty:
-            st.info("No email logs found.")
-            return
-        
-        # Add CSS for styling
-        st.markdown("""
-            <style>
-                .email-logs-container {
-                    max-height: 600px;
-                    overflow-y: auto;
-                    border: 1px solid rgba(49, 51, 63, 0.2);
-                    border-radius: 0.5rem;
-                    padding: 1rem;
-                    background-color: rgba(49, 51, 63, 0.1);
-                    margin-bottom: 1rem;
-                }
-                .email-log-entry {
-                    padding: 0.75rem;
-                    margin-bottom: 0.5rem;
-                    border-radius: 0.25rem;
-                    background-color: rgba(255, 255, 255, 0.05);
-                    border-left: 4px solid;
-                    animation: fadeIn 0.5s ease-in;
-                }
-                .email-log-entry.success {
-                    border-left-color: #28a745;
-                }
-                .email-log-entry.error {
-                    border-left-color: #dc3545;
-                }
-                .email-log-entry.pending {
-                    border-left-color: #ffc107;
-                }
-                @keyframes fadeIn {
-                    from { opacity: 0; transform: translateY(-10px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-            </style>
-        """, unsafe_allow_html=True)
-        
-        # Summary metrics
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Emails", len(logs))
-        with col2:
-            success_rate = (logs['Status'] == 'sent').mean() * 100
-            st.metric("Success Rate", f"{success_rate:.1f}%")
-        with col3:
-            st.metric("Unique Recipients", logs['Email'].nunique())
-        
-        # Filters
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input("Start Date", value=logs['Sent At'].min().date())
-        with col2:
-            end_date = st.date_input("End Date", value=logs['Sent At'].max().date())
-        
-        search_term = st.text_input("🔍 Search by email or subject")
-        
-        # Filter logs
-        filtered_logs = logs[
-            (logs['Sent At'].dt.date >= start_date) & 
-            (logs['Sent At'].dt.date <= end_date)
-        ]
-        
-        if search_term:
-            filtered_logs = filtered_logs[
-                filtered_logs['Email'].str.contains(search_term, case=False) | 
-                filtered_logs['Subject'].str.contains(search_term, case=False)
-            ]
-        
-        # Display logs
-        st.markdown("<div class='email-logs-container'>", unsafe_allow_html=True)
-        for _, log in filtered_logs.iterrows():
-            status_class = {
-                'sent': 'success',
-                'failed': 'error'
-            }.get(log['Status'], 'pending')
-            
-            st.markdown(f"""
-                <div class='email-log-entry {status_class}'>
-                    <div style='display: flex; justify-content: space-between;'>
-                        <strong>{log['Email']}</strong>
-                        <span>{log['Sent At'].strftime('%Y-%m-%d %H:%M:%S')}</span>
-                    </div>
-                    <div style='margin-top: 0.5rem;'>
-                        <strong>Subject:</strong> {log['Subject']}<br>
-                        <strong>Status:</strong> {log['Status']}<br>
-                        <strong>Template:</strong> {log['Template']}
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Add auto-scroll JavaScript
-        st.markdown("""
-            <script>
-                function scrollToBottom() {
-                    const container = document.querySelector('.email-logs-container');
-                    if (container) {
-                        container.scrollTop = container.scrollHeight;
-                    }
-                }
-                
-                // Initial scroll
-                scrollToBottom();
-                
-                // Set up a mutation observer to watch for changes
-                const observer = new MutationObserver(scrollToBottom);
-                const container = document.querySelector('.email-logs-container');
-                if (container) {
-                    observer.observe(container, { childList: true, subtree: true });
-                }
-            </script>
-        """, unsafe_allow_html=True)
-        
-        # Export option
-        if st.button("Export Logs to CSV"):
-            csv = filtered_logs.to_csv(index=False)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name="email_logs.csv",
-                mime="text/csv"
-            )
-=======
 # Update email template handling
 def save_email_template(session, template_id, updates):
     return template_manager.update_template(session, template_id, updates)
@@ -3355,119 +2906,7 @@ def optimize_search_terms_page():
                     
                 except Exception as e:
                     st.error(f"Error generating content: {str(e)}")
->>>>>>> a85b2e0f66135d0dac343e1e88949284eb31c1ea
 
-def generate_or_adjust_email_template(prompt, kb_info=None, current_template=None):
-    try:
-        context = {
-            "prompt": prompt,
-            "knowledge_base": kb_info,
-            "current_template": current_template
-        }
-        messages = [
-            {"role": "system", "content": "You are an expert email copywriter specializing in B2B communication."},
-            {"role": "user", "content": f"Based on this context:\n{json.dumps(context, indent=2)}\n\nGenerate a professional email template with:\n1. Subject line\n2. Body content\n\nRespond with JSON:\n{{\n    \"subject\": \"email subject\",\n    \"body\": \"email body\"\n}}"}
-        ]
-        response = openai_chat_completion(messages, temperature=0.7)
-        if isinstance(response, str):
-            try:
-                response = json.loads(response)
-            except json.JSONDecodeError:
-                return {"subject": "AI Generated Subject", "body": response}
-        return response
-    except Exception as e:
-        logger.error(f"Error generating email template: {str(e)}")
-        return {"subject": "Default Subject", "body": "Default body content"}
-
-def generate_search_term_groups_and_templates(session, kb_info, industry_focus=None, target_market=None):
-    try:
-        context = {
-            "company_info": {
-                "description": kb_info.get('company_description', ''),
-                "mission": kb_info.get('company_mission', ''),
-                "target_market": kb_info.get('company_target_market', ''),
-                "product": kb_info.get('product_description', '')
-            },
-            "industry_focus": industry_focus,
-            "target_market": target_market
-        }
-        prompt = f"Based on this business context:\n{json.dumps(context, indent=2)}\n\nGenerate:\n1. Search term groups with relevant terms for lead generation\n2. Email template variations for each group"
-        response = openai_chat_completion(
-            messages=[
-                {"role": "system", "content": "You are an expert in B2B lead generation and email marketing."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
-        if not response:
-            raise ValueError("Failed to generate search terms and templates")
-        content = response if isinstance(response, dict) else json.loads(response)
-        results = {"groups": [], "templates": []}
-        for group_data in content.get("groups", []):
-            group = SearchTermGroup(
-                name=group_data["name"],
-                description=group_data["description"],
-                created_at=datetime.utcnow()
-            )
-            session.add(group)
-            session.flush()
-            for term in group_data["search_terms"]:
-                search_term = SearchTerm(
-                    term=term,
-                    group_id=group.id,
-                    campaign_id=get_active_campaign_id(),
-                    created_at=datetime.utcnow()
-                )
-                session.add(search_term)
-            template_data = group_data["email_template"]
-            template = EmailTemplate(
-                template_name=template_data["name"],
-                subject=template_data["subject"],
-                body_content=template_data["body"],
-                campaign_id=get_active_campaign_id(),
-                is_ai_customizable=True,
-                created_at=datetime.utcnow()
-            )
-            session.add(template)
-            results["groups"].append({
-                "id": group.id,
-                "name": group.name,
-                "terms": group_data["search_terms"]
-            })
-            results["templates"].append({
-                "name": template_data["name"],
-                "subject": template_data["subject"]
-            })
-        session.commit()
-        return results
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Error generating search terms and templates: {str(e)}")
-        raise
-
-def fetch_leads_for_search_term_groups(session, groups):
-    try:
-        logger.info(f"Fetching leads for groups: {groups}")
-        query = (
-            session.query(Lead)
-            .join(CampaignLead)
-            .join(SearchTerm)
-            .join(SearchTermGroup)
-            .filter(SearchTermGroup.id.in_(groups))
-            .distinct()
-        )
-        return query.all()
-    except Exception as e:
-        logger.error(f"Error fetching leads for groups: {str(e)}")
-        return []
-
-def log_error(message, process_id=None, log_container=None):
-    if process_id:
-        with get_db() as session:
-            update_process_log(session, process_id, message, 'error')
-    elif log_container:
-        update_log(log_container, message, 'error')
-    logger.error(message)
 
 if __name__ == "__main__":
     main()
