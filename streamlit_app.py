@@ -741,14 +741,12 @@ def extract_info_from_page(soup):
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None, process_id=None):
     try:
-        with get_db() as local_session:  # Use context manager
+        with get_db() as local_session:
             domains_processed = set()
             results = []
             total_leads = 0
             
-            ua = UserAgent()
             for original_term in terms:
-                # Use thread-local session
                 search_term = local_session.query(SearchTerm).filter_by(term=original_term, campaign_id=get_active_campaign_id()).first()
                 if not search_term:
                     search_term = SearchTerm(term=original_term, campaign_id=get_active_campaign_id(), created_at=datetime.utcnow())
@@ -756,16 +754,13 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                     local_session.commit()
                 search_term_id = search_term.id
 
-                # Process in smaller batches
-                for url_batch in batch_google_search(search_term, num_results, language):
-                    if not url_batch:
+                urls = batch_google_search(search_term, num_results, language)
+                for url in urls:
+                    try:
+                        process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container)
+                    except Exception as e:
+                        log_error(f"Error processing URL {url}: {str(e)}", process_id, log_container)
                         continue
-                    for url in url_batch:
-                        try:
-                            process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container)
-                        except Exception as e:
-                            log_error(f"Error processing URL {url}: {str(e)}", process_id, log_container)
-                            continue
 
     except Exception as e:
         log_error(f"Error in manual_search: {str(e)}", process_id, log_container)
@@ -775,26 +770,105 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
     return {"total_leads": total_leads, "results": results}
 
 def batch_google_search(search_term, num_results, language):
-    """Generator function to yield URLs in batches"""
-    batch_size = 10
-    for i in range(0, num_results, batch_size):
-        try:
-            # Convert google_search results to list immediately
-            urls = list(google_search(search_term.term, batch_size, lang=language))
-            yield urls
-        except Exception as e:
-            logger.error(f"Error in batch_google_search: {str(e)}")
-            yield []
+    """Perform Google search and return results as a list"""
+    try:
+        # Let the google_search function handle batching internally
+        return list(google_search(search_term.term, num_results, lang=language))
+    except Exception as e:
+        logger.error(f"Error in google search: {str(e)}")
+        return []
 
 def process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container):
+    """Process a URL to extract lead information"""
     domain = urlparse(url).netloc
     if domain in domains_processed:
         return
     
-    with get_db() as local_session:
-        # Process URL and save results
-        # ... existing URL processing code ...
-        pass
+    try:
+        # Add domain to processed set
+        domains_processed.add(domain)
+        
+        # Make request to URL
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            return
+            
+        # Parse HTML content
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Extract emails from page
+        emails = extract_emails_from_html(response.text)
+        
+        # Extract additional info
+        name, company, job_title = extract_info_from_page(soup)
+        
+        # Process each email found
+        for email in emails:
+            if not is_valid_email(email):
+                continue
+                
+            # Save lead to database
+            lead = save_lead(
+                session,
+                email,
+                first_name=name,
+                company=company,
+                job_title=job_title,
+                source=url
+            )
+            
+            if lead:
+                total_leads += 1
+                
+                # Save lead source
+                save_lead_source(
+                    session,
+                    lead.id,
+                    search_term_id,
+                    url,
+                    response.status_code,
+                    str(response.elapsed.total_seconds()),
+                    soup.title.string if soup.title else None,
+                    meta_description=soup.find('meta', {'name': 'description'}).get('content') if soup.find('meta', {'name': 'description'}) else None
+                )
+                
+                # Add to results
+                results.append({
+                    'Email': email,
+                    'URL': url,
+                    'Title': soup.title.string if soup.title else 'No title',
+                    'Description': soup.find('meta', {'name': 'description'}).get('content') if soup.find('meta', {'name': 'description'}) else 'No description',
+                    'Tags': [],
+                    'Lead Source': 'Web Scraping'
+                })
+                
+                # Send email if enabled
+                if enable_email_sending and all([from_email, reply_to, email_template]):
+                    template_id = int(email_template.split(':')[0])
+                    response, tracking_id = send_email_ses(
+                        session,
+                        from_email,
+                        email,
+                        template.subject,
+                        template.body_content,
+                        reply_to=reply_to
+                    )
+                    
+                    if response:
+                        save_email_campaign(
+                            session,
+                            email,
+                            template_id,
+                            'sent',
+                            datetime.utcnow(),
+                            template.subject,
+                            response.get('MessageId'),
+                            template.body_content
+                        )
+                        
+    except Exception as e:
+        log_error(f"Error processing {url}: {str(e)}", process_id, log_container)
+        return
 
 def cleanup_resources():
     """Clean up any remaining resources"""
@@ -2358,7 +2432,7 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
             else:
                 status = 'failed'
                 message_id = f"failed-{uuid.uuid4()}"
-                log_message = f"�� Failed to send email to: {lead['Email']}"
+                log_message = f" Failed to send email to: {lead['Email']}"
             
             save_email_campaign(session, lead['Email'], template_id, status, datetime.utcnow(), email_subject, message_id, email_content)
             logs.append(log_message)
@@ -2701,6 +2775,7 @@ def save_email_template(session, template_id, updates):
     return template_manager.update_template(session, template_id, updates)
 
 def get_email_template(session, template_id):
+    """Get email template with thread-safe locking"""
     lock = template_manager.get_template_lock(template_id)
     with lock:
         return session.query(EmailTemplate).get(template_id)
