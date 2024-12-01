@@ -740,15 +740,15 @@ def extract_info_from_page(soup):
     return name, company, job_title
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None, process_id=None):
-    domains_processed = set()
-    results = []
-    total_leads = 0
-    
     try:
-        ua = UserAgent()
-        for original_term in terms:
-            # Use thread-local session
-            with get_db() as local_session:
+        with get_db() as local_session:  # Use context manager
+            domains_processed = set()
+            results = []
+            total_leads = 0
+            
+            ua = UserAgent()
+            for original_term in terms:
+                # Use thread-local session
                 search_term = local_session.query(SearchTerm).filter_by(term=original_term, campaign_id=get_active_campaign_id()).first()
                 if not search_term:
                     search_term = SearchTerm(term=original_term, campaign_id=get_active_campaign_id(), created_at=datetime.utcnow())
@@ -756,14 +756,14 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                     local_session.commit()
                 search_term_id = search_term.id
 
-            # Process in smaller batches
-            for url_batch in batch_google_search(search_term, num_results, language):
-                for url in url_batch:
-                    try:
-                        process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container)
-                    except Exception as e:
-                        log_error(f"Error processing URL {url}: {str(e)}", process_id, log_container)
-                        continue
+                # Process in smaller batches
+                for url_batch in batch_google_search(search_term, num_results, language):
+                    for url in url_batch:
+                        try:
+                            process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container)
+                        except Exception as e:
+                            log_error(f"Error processing URL {url}: {str(e)}", process_id, log_container)
+                            continue
 
     except Exception as e:
         log_error(f"Error in manual_search: {str(e)}", process_id, log_container)
@@ -2613,14 +2613,17 @@ class TemplateManager:
             
     def update_template(self, session, template_id, updates):
         lock = self.get_template_lock(template_id)
-        with lock:
-            template = session.query(EmailTemplate).filter_by(id=template_id).with_for_update().first()
-            if template:
-                for key, value in updates.items():
-                    setattr(template, key, value)
-                session.commit()
-                return True
-        return False
+        try:
+            with lock, session.begin_nested():  # Use nested transaction
+                template = session.query(EmailTemplate).filter_by(id=template_id).with_for_update().first()
+                if template:
+                    for key, value in updates.items():
+                        setattr(template, key, value)
+                    return True
+            return False
+        except Exception:
+            session.rollback()
+            return False
 
 template_manager = TemplateManager()
 
@@ -2649,9 +2652,13 @@ class ProcessManager:
         
     def cleanup_finished(self):
         with self._lock:
-            finished = [pid for pid, p in self._processes.items() if not p.is_alive()]
-            for pid in finished:
-                del self._processes[pid]
+            try:
+                finished = [pid for pid, p in list(self._processes.items()) if not p.is_alive()]
+                for pid in finished:
+                    self._processes[pid].join(timeout=1)  # Wait for thread to finish
+                    del self._processes[pid]
+            except RuntimeError:
+                pass  # Handle case where dict changes during iteration
 
 process_manager = ProcessManager()
 
@@ -3118,6 +3125,23 @@ def wrap_landing_page(html_content, css_content, js_content):
     </body>
     </html>
     """
+
+# Add at the top of the file after imports
+pages = {
+    "Manual Search": manual_search_page,
+    "Search Terms": search_terms_page,
+    "Email Templates": email_templates_page,
+    "Bulk Send": bulk_send_page,
+    "View Leads": view_leads_page,
+    "Campaign Logs": view_campaign_logs,
+    "Projects & Campaigns": projects_campaigns_page,
+    "Knowledge Base": knowledge_base_page,
+    "AutoclientAI": autoclient_ai_page,
+    "Settings": settings_page,
+    "Landing Pages": landing_pages_page
+}
+
+selected = st.sidebar.selectbox("Navigation", list(pages.keys()))
 
 if __name__ == "__main__":
     main()
