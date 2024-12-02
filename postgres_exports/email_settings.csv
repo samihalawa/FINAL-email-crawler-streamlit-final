@@ -1,2 +1,0 @@
-id,name,email,provider,smtp_server,smtp_port,smtp_username,smtp_password,aws_access_key_id,aws_secret_access_key,aws_region,created_at
-1,Sami Halawa,samihalawaster@gmail.com,ses,,,,,AKIASO2XOMEGLQO3QW7T,/4MuGXUWswxA2w15zhxSh3A/v6P54rj37E1nVeCf,us-east-1,2024-11-07 18:11:05.274153+00:00
