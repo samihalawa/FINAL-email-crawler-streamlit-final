@@ -1,0 +1,3 @@
+[submodule "flask-version-repo"]
+	path = flask-version-repo
+	url = https://github.com/samihalawa/FINAL-email-crawler-flask
