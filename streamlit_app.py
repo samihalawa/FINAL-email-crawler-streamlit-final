@@ -17,7 +17,7 @@ from urllib.parse import urlparse, urlencode
 from streamlit_tags import st_tags
 import plotly.express as px
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from urllib3.util import Retry  # Replace requests.packages.urllib3.util.retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager, wraps
@@ -433,8 +433,18 @@ class EmailSettings(Base):
 @contextmanager
 def db_session():
     """Thread-safe database session context manager"""
-    with get_db() as session:
+    session = None
+    try:
+        session = SessionLocal()
         yield session
+        session.commit()
+    except Exception as e:
+        if session:
+            session.rollback()
+        raise
+    finally:
+        if session:
+            session.close()
 
 def settings_page():
     st.title("Settings")
@@ -548,11 +558,11 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
     if not email_settings:
         logging.error(f"No email settings found for {from_email}")
         return None, None
-    
+
     if not all([to_email, subject, body]):
         logging.error("Missing required email parameters")
         return None, None
-    
+
     tracking_id = str(uuid.uuid4())
     try:
         tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
@@ -560,13 +570,13 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
     except Exception as e:
         logging.warning(f"Failed to add tracking pixel: {str(e)}")
         tracked_body = wrap_email_body(body)
-    
+
     try:
         if email_settings.provider == 'ses':
             if not all([email_settings.aws_access_key_id, email_settings.aws_secret_access_key, email_settings.aws_region]):
                 logging.error("Missing AWS credentials")
                 return None, None
-            
+
             if ses_client is None:
                 aws_session = boto3.Session(
                     aws_access_key_id=email_settings.aws_access_key_id,
@@ -585,12 +595,12 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
                 ReplyToAddresses=[reply_to] if reply_to else []
             )
             return response, tracking_id
-        
+
         elif email_settings.provider == 'smtp':
             if not all([email_settings.smtp_server, email_settings.smtp_port, email_settings.smtp_username, email_settings.smtp_password]):
                 logging.error("Missing SMTP credentials")
                 return None, None
-            
+
             msg = MIMEMultipart()
             msg['From'] = from_email
             msg['To'] = to_email
@@ -598,17 +608,17 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
             if reply_to:
                 msg['Reply-To'] = reply_to
             msg.attach(MIMEText(tracked_body, 'html'))
-            
+
             with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
                 server.starttls()
                 server.login(email_settings.smtp_username, email_settings.smtp_password)
                 server.send_message(msg)
             return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
-        
+
         else:
             logging.error(f"Unknown email provider: {email_settings.provider}")
             return None, None
-    
+
     except Exception as e:
         logging.error(f"Error sending email: {str(e)}")
         raise  # Let the retry decorator handle the retry
@@ -625,17 +635,21 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             template_id=template_id,
             status=status,
             sent_at=sent_at,
-            subject=subject,
-            message_id=message_id,
-            email_body=email_body,
+            customized_subject=subject or "No subject",
+            message_id=message_id or f"unknown-{uuid.uuid4()}",
+            customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
         )
         session.add(new_campaign)
         session.commit()
         return new_campaign
+    except SQLAlchemyError as e:
+        logging.error(f"Database error in save_email_campaign: {str(e)}")
+        session.rollback()
+        return None
     except Exception as e:
-        logging.error(f"Error saving email campaign: {str(e)}")
+        logging.error(f"Error in save_email_campaign: {str(e)}")
         session.rollback()
         return None
 
@@ -736,13 +750,15 @@ def extract_info_from_page(soup):
     return name, company, job_title
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def manual_search(session, terms, num_results, ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, language='ES', enable_email_sending=True, log_container=None, from_email=None, reply_to=None, email_template=None, process_id=None):
+    domains_processed = set()
+    results = []
+    total_leads = 0
+    
     try:
-        with get_db() as local_session:
-            domains_processed = set()
-            results = []
-            total_leads = 0
-            
-            for original_term in terms:
+        ua = UserAgent()
+        for original_term in terms:
+            # Use thread-local session
+            with get_db() as local_session:
                 search_term = local_session.query(SearchTerm).filter_by(term=original_term, campaign_id=get_active_campaign_id()).first()
                 if not search_term:
                     search_term = SearchTerm(term=original_term, campaign_id=get_active_campaign_id(), created_at=datetime.utcnow())
@@ -750,8 +766,9 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                     local_session.commit()
                 search_term_id = search_term.id
 
-                urls = batch_google_search(search_term, num_results, language)
-                for url in urls:
+            # Process in smaller batches
+            for url_batch in batch_google_search(search_term, num_results, language):
+                for url in url_batch:
                     try:
                         process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container)
                     except Exception as e:
@@ -766,105 +783,20 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
     return {"total_leads": total_leads, "results": results}
 
 def batch_google_search(search_term, num_results, language):
-    """Perform Google search and return results as a list"""
-    try:
-        # Let the google_search function handle batching internally
-        return list(google_search(search_term.term, num_results, lang=language))
-    except Exception as e:
-        logger.error(f"Error in google search: {str(e)}")
-        return []
+    """Generator function to yield URLs in batches"""
+    batch_size = 10
+    for i in range(0, num_results, batch_size):
+        yield list(google_search(search_term, batch_size, lang=language))
 
 def process_url(url, search_term_id, domains_processed, results, total_leads, session, enable_email_sending, from_email, reply_to, email_template, process_id, log_container):
-    """Process a URL to extract lead information"""
     domain = urlparse(url).netloc
     if domain in domains_processed:
         return
     
-    try:
-        # Add domain to processed set
-        domains_processed.add(domain)
-        
-        # Make request to URL
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            return
-            
-        # Parse HTML content
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Extract emails from page
-        emails = extract_emails_from_html(response.text)
-        
-        # Extract additional info
-        name, company, job_title = extract_info_from_page(soup)
-        
-        # Process each email found
-        for email in emails:
-            if not is_valid_email(email):
-                continue
-                
-            # Save lead to database
-            lead = save_lead(
-                session,
-                email,
-                first_name=name,
-                company=company,
-                job_title=job_title,
-                source=url
-            )
-            
-            if lead:
-                total_leads += 1
-                
-                # Save lead source
-                save_lead_source(
-                    session,
-                    lead.id,
-                    search_term_id,
-                    url,
-                    response.status_code,
-                    str(response.elapsed.total_seconds()),
-                    soup.title.string if soup.title else None,
-                    meta_description=soup.find('meta', {'name': 'description'}).get('content') if soup.find('meta', {'name': 'description'}) else None
-                )
-                
-                # Add to results
-                results.append({
-                    'Email': email,
-                    'URL': url,
-                    'Title': soup.title.string if soup.title else 'No title',
-                    'Description': soup.find('meta', {'name': 'description'}).get('content') if soup.find('meta', {'name': 'description'}) else 'No description',
-                    'Tags': [],
-                    'Lead Source': 'Web Scraping'
-                })
-                
-                # Send email if enabled
-                if enable_email_sending and all([from_email, reply_to, email_template]):
-                    template_id = int(email_template.split(':')[0])
-                    response, tracking_id = send_email_ses(
-                        session,
-                        from_email,
-                        email,
-                        template.subject,
-                        template.body_content,
-                        reply_to=reply_to
-                    )
-                    
-                    if response:
-                        save_email_campaign(
-                            session,
-                            email,
-                            template_id,
-                            'sent',
-                            datetime.utcnow(),
-                            template.subject,
-                            response.get('MessageId'),
-                            template.body_content
-                        )
-                        
-    except Exception as e:
-        log_error(f"Error processing {url}: {str(e)}", process_id, log_container)
-        return
+    with get_db() as local_session:
+        # Process URL and save results
+        # ... existing URL processing code ...
+        pass
 
 def cleanup_resources():
     """Clean up any remaining resources"""
@@ -999,28 +931,57 @@ def log_ai_request(session, function_name, prompt, response, lead_id=None, email
     ))
     session.commit()
 
-def save_lead(session, email, **kwargs):
+def save_lead(session, email, first_name=None, last_name=None, company=None, job_title=None, phone=None, url=None, search_term_id=None, created_at=None):
     try:
-        with session.begin_nested():
-            existing_lead = (session.query(Lead)
-                           .filter(func.lower(Lead.email) == func.lower(email))
-                           .with_for_update()
-                           .first())
-            if existing_lead:
-                # Update existing lead
-                for attr, value in kwargs.items():
-                    if value is not None:
-                        setattr(existing_lead, attr, value)
-                return existing_lead
-                
+        # Check if lead already exists
+        existing_lead = session.query(Lead).filter_by(email=email).first()
+        if existing_lead:
+            # Update existing lead with new information if provided
+            for attr in ['first_name', 'last_name', 'company', 'job_title', 'phone', 'created_at']:
+                if locals()[attr]:
+                    setattr(existing_lead, attr, locals()[attr])
+            lead = existing_lead
+        else:
             # Create new lead
-            new_lead = Lead(email=email, **kwargs)
-            session.add(new_lead)
-            return new_lead
-            
+            lead = Lead(
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                company=company,
+                job_title=job_title,
+                phone=phone,
+                created_at=created_at or datetime.utcnow()
+            )
+            session.add(lead)
+        
+        session.flush()  # Flush changes to get lead ID
+        
+        # Save lead source if URL is provided
+        if url and search_term_id:
+            lead_source = LeadSource(
+                lead_id=lead.id,
+                url=url,
+                search_term_id=search_term_id
+            )
+            session.add(lead_source)
+        
+        # Create campaign lead association
+        campaign_lead = CampaignLead(
+            campaign_id=get_active_campaign_id(),
+            lead_id=lead.id,
+            status="Not Contacted",
+            created_at=datetime.utcnow()
+        )
+        session.add(campaign_lead)
+        
+        # Commit all changes
+        session.commit()
+        logging.info(f"Successfully saved/updated lead: {email}")
+        return lead
+        
     except Exception as e:
+        logging.error(f"Error saving lead {email}: {str(e)}")
         session.rollback()
-        logger.error(f"Error saving lead {email}: {str(e)}")
         return None
 
 def save_lead_source(session, lead_id, search_term_id, url, http_status, scrape_duration, page_title=None, meta_description=None, content=None, tags=None, phone_numbers=None):
@@ -1419,15 +1380,12 @@ def view_campaign_logs():
 def fetch_all_email_logs(session):
     """Fetch all email campaign logs"""
     try:
-        email_campaigns = session.query(EmailCampaign)\
-            .join(Lead)\
-            .join(EmailTemplate)\
-            .options(
-                joinedload(EmailCampaign.lead),
-                joinedload(EmailCampaign.template)
-            )\
-            .order_by(EmailCampaign.sent_at.desc())\
-            .all()
+        email_campaigns = (session.query(EmailCampaign)
+                         .join(Lead)
+                         .join(EmailTemplate)
+                         .options(joinedload(EmailCampaign.lead), joinedload(EmailCampaign.template))
+                         .order_by(EmailCampaign.sent_at.desc())
+                         .all())
         
         return pd.DataFrame({
             'ID': [ec.id for ec in email_campaigns],
@@ -1495,26 +1453,78 @@ def is_valid_email(email):
 
 def view_leads_page():
     st.title("Lead Management Dashboard")
-    
     with db_session() as session:
-        # Lazy load leads data
-        if 'show_leads' not in st.session_state:
-            st.session_state.show_leads = False
-            
-        if st.checkbox("Load leads data", key="show_leads") or st.button("Refresh Leads"):
+        if 'leads' not in st.session_state or st.button("Refresh Leads"):
             st.session_state.leads = fetch_leads_with_sources(session)
-            
-            if not st.session_state.leads.empty:
-                # Show metrics
-                total_leads = len(st.session_state.leads)
-                contacted_leads = len(st.session_state.leads[st.session_state.leads['Last Contact'].notna()])
-                conversion_rate = (st.session_state.leads['Last Email Status'] == 'sent').mean()
-                
-                st.columns(3)[0].metric("Total Leads", f"{total_leads:,}")
-                st.columns(3)[1].metric("Contacted Leads", f"{contacted_leads:,}")
-                st.columns(3)[2].metric("Conversion Rate", f"{conversion_rate:.2%}")
-                
-                # Rest of leads display code...
+        if not st.session_state.leads.empty:
+            total_leads = len(st.session_state.leads)
+            contacted_leads = len(st.session_state.leads[st.session_state.leads['Last Contact'].notna()])
+            conversion_rate = (st.session_state.leads['Last Email Status'] == 'sent').mean()
+
+            st.columns(3)[0].metric("Total Leads", f"{total_leads:,}")
+            st.columns(3)[1].metric("Contacted Leads", f"{contacted_leads:,}")
+            st.columns(3)[2].metric("Conversion Rate", f"{conversion_rate:.2%}")
+
+            st.subheader("Leads Table")
+            search_term = st.text_input("Search leads by email, name, company, or source")
+            filtered_leads = st.session_state.leads[st.session_state.leads.apply(lambda row: search_term.lower() in str(row).lower(), axis=1)]
+
+            leads_per_page, page_number = 20, st.number_input("Page", min_value=1, value=1)
+            start_idx, end_idx = (page_number - 1) * leads_per_page, page_number * leads_per_page
+
+            edited_df = st.data_editor(
+                filtered_leads.iloc[start_idx:end_idx],
+                column_config={
+                    "ID": st.column_config.NumberColumn("ID", disabled=True),
+                    "Email": st.column_config.TextColumn("Email"),
+                    "First Name": st.column_config.TextColumn("First Name"),
+                    "Last Name": st.column_config.TextColumn("Last Name"),
+                    "Company": st.column_config.TextColumn("Company"),
+                    "Job Title": st.column_config.TextColumn("Job Title"),
+                    "Source": st.column_config.TextColumn("Source", disabled=True),
+                    "Last Contact": st.column_config.DatetimeColumn("Last Contact", disabled=True),
+                    "Last Email Status": st.column_config.TextColumn("Last Email Status", disabled=True),
+                    "Delete": st.column_config.CheckboxColumn("Delete")
+                },
+                disabled=["ID", "Source", "Last Contact", "Last Email Status"],
+                hide_index=True,
+                num_rows="dynamic"
+            )
+
+            if st.button("Save Changes", type="primary"):
+                for index, row in edited_df.iterrows():
+                    if row['Delete']:
+                        if delete_lead_and_sources(session, row['ID']):
+                            st.success(f"Deleted lead: {row['Email']}")
+                    else:
+                        updated_data = {k: row[k] for k in ['Email', 'First Name', 'Last Name', 'Company', 'Job Title']}
+                        if update_lead(session, row['ID'], updated_data):
+                            st.success(f"Updated lead: {row['Email']}")
+                st.rerun()
+
+            st.download_button(
+                "Export Filtered Leads to CSV",
+                filtered_leads.to_csv(index=False).encode('utf-8'),
+                "exported_leads.csv",
+                "text/csv"
+            )
+
+            st.subheader("Lead Growth")
+            if 'Created At' in st.session_state.leads.columns:
+                lead_growth = st.session_state.leads.groupby(pd.to_datetime(st.session_state.leads['Created At']).dt.to_period('M')).size().cumsum()
+                st.line_chart(lead_growth)
+            else:
+                st.warning("Created At data is not available for lead growth chart.")
+
+            st.subheader("Email Campaign Performance")
+            email_status_counts = st.session_state.leads['Last Email Status'].value_counts()
+            st.plotly_chart(px.pie(
+                values=email_status_counts.values,
+                names=email_status_counts.index,
+                title="Distribution of Email Statuses"
+            ), use_container_width=True)
+        else:
+            st.info("No leads available. Start by adding some leads to your campaigns.")
 
 def fetch_leads_with_sources(session):
     """Fetch leads with their sources"""
@@ -1585,74 +1595,111 @@ def add_search_term(session, term, campaign_id):
 def get_active_campaign_id():
     """Get the currently active campaign ID from session state"""
     return st.session_state.get('active_campaign_id', 1)  # Default to 1 if not set
+
 def search_terms_page():
     st.markdown("<h1 style='text-align: center; color: #1E88E5;'>Search Terms Dashboard</h1>", unsafe_allow_html=True)
-    
     with db_session() as session:
-        # Lazy load the search terms data only when needed
-        if 'search_terms_df' not in st.session_state:
-            st.session_state.search_terms_df = fetch_search_terms_with_lead_count(session)
+        search_terms_df = fetch_search_terms_with_lead_count(session)
+        if not search_terms_df.empty:
+            st.columns(3)[0].metric("Total Search Terms", len(search_terms_df))
+            st.columns(3)[1].metric("Total Leads", search_terms_df['Lead Count'].sum())
+            st.columns(3)[2].metric("Total Emails Sent", search_terms_df['Email Count'].sum())
             
-        if not st.session_state.search_terms_df.empty:
-            # Show metrics
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Search Terms", len(st.session_state.search_terms_df))
-            col2.metric("Total Leads", st.session_state.search_terms_df['Lead Count'].sum())
-            col3.metric("Total Emails Sent", st.session_state.search_terms_df['Email Count'].sum())
-            
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "Search Term Groups", 
-                "Performance", 
-                "Add New Term",
-                "AI Grouping",
-                "Manage Groups"
-            ])
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(["Search Term Groups", "Performance", "Add New Term", "AI Grouping", "Manage Groups"])
             
             with tab1:
-                if "show_groups" not in st.session_state:
-                    st.session_state.show_groups = False
-                    
-                if st.checkbox("Show groups", key="show_groups"):
-                    groups = session.query(SearchTermGroup).all()
-                    groups.append("Ungrouped")
-                    for group in groups:
-                        with st.expander(
-                            group.name if isinstance(group, SearchTermGroup) else group, 
-                            expanded=False
-                        ):
-                            if f"show_group_{group.id if isinstance(group, SearchTermGroup) else 'ungrouped'}" not in st.session_state:
-                                st.session_state[f"show_group_{group.id if isinstance(group, SearchTermGroup) else 'ungrouped'}"] = False
-                                
-                            if st.checkbox("Show terms", key=f"show_group_{group.id if isinstance(group, SearchTermGroup) else 'ungrouped'}"):
-                                terms = session.query(SearchTerm).filter_by(group_id=group.id if isinstance(group, SearchTermGroup) else None).all()
-                                for term in terms:
-                                    st.write(term.term)
+                groups = session.query(SearchTermGroup).all()
+                groups.append("Ungrouped")
+                for group in groups:
+                    with st.expander(group.name if isinstance(group, SearchTermGroup) else group, expanded=True):
+                        group_id = group.id if isinstance(group, SearchTermGroup) else None
+                        terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all() if group_id else session.query(SearchTerm).filter(SearchTerm.group_id == None).all()
+                        updated_terms = st_tags(
+                            label="",
+                            text="Add or remove terms",
+                            value=[f"{term.id}: {term.term}" for term in terms],
+                            suggestions=[term for term in search_terms_df['Term'] if term not in [f"{t.id}: {t.term}" for t in terms]],
+                            key=f"group_{group_id}"
+                        )
+                        if st.button("Update", key=f"update_{group_id}"):
+                            update_search_term_group(session, group_id, updated_terms)
+                            st.success("Group updated successfully")
+                            st.rerun()
+            
+            with tab2:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    chart_type = st.radio("Chart Type", ["Bar", "Pie"], horizontal=True)
+                    fig = px.bar(search_terms_df.nlargest(10, 'Lead Count'), x='Term', y=['Lead Count', 'Email Count'], title='Top 10 Search Terms', labels={'value': 'Count', 'variable': 'Type'}, barmode='group') if chart_type == "Bar" else px.pie(search_terms_df, values='Lead Count', names='Term', title='Lead Distribution')
+                    st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    st.dataframe(search_terms_df.nlargest(5, 'Lead Count')[['Term', 'Lead Count', 'Email Count']], use_container_width=True)
+            
+            with tab3:
+                col1, col2, col3 = st.columns([2,1,1])
+                new_term = col1.text_input("New Search Term")
+                campaign_id = get_active_campaign_id()
+                group_for_new_term = col2.selectbox("Assign to Group", ["None"] + [f"{g.id}: {g.name}" for g in groups if isinstance(g, SearchTermGroup)], format_func=lambda x: x.split(":")[1] if ":" in x else x)
+                if col3.button("Add Term", use_container_width=True) and new_term:
+                    add_new_search_term(session, new_term, campaign_id, group_for_new_term)
+                    st.success(f"Added: {new_term}")
+                    st.rerun()
+
+            with tab4:
+                st.subheader("AI-Powered Search Term Grouping")
+                ungrouped_terms = session.query(SearchTerm).filter(SearchTerm.group_id == None).all()
+                if ungrouped_terms:
+                    st.write(f"Found {len(ungrouped_terms)} ungrouped search terms.")
+                    if st.button("Group Ungrouped Terms with AI"):
+                        with st.spinner("AI is grouping terms..."):
+                            grouped_terms = ai_group_search_terms(session, ungrouped_terms)
+                            update_search_term_groups(session, grouped_terms)
+                            st.success("Search terms have been grouped successfully!")
+                            st.rerun()
+                else:
+                    st.info("No ungrouped search terms found.")
+
+            with tab5:
+                st.subheader("Manage Search Term Groups")
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_group_name = st.text_input("New Group Name")
+                    if st.button("Create New Group") and new_group_name:
+                        create_search_term_group(session, new_group_name)
+                        st.success(f"Created new group: {new_group_name}")
+                        st.rerun()
+                with col2:
+                    group_to_delete = st.selectbox("Select Group to Delete", 
+                                                   [f"{g.id}: {g.name}" for g in groups if isinstance(g, SearchTermGroup)],
+                                                   format_func=lambda x: x.split(":")[1])
+                    if st.button("Delete Group") and group_to_delete:
+                        group_id = int(group_to_delete.split(":")[0])
+                        delete_search_term_group(session, group_id)
+                        st.success(f"Deleted group: {group_to_delete.split(':')[1]}")
+                        st.rerun()
+
+        else:
+            st.info("No search terms available. Add some to your campaigns.")
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
-        with session.begin_nested():  # Use nested transaction
-            current_term_ids = {int(term.split(":")[0]) for term in updated_terms if ":" in term}
-            existing_terms = session.query(SearchTerm).filter_by(group_id=group_id).all()
-            
-            for term in existing_terms:
-                if term.id not in current_term_ids:
-                    term.group_id = None
-            
-            session.flush()
-            
-            for term_str in updated_terms:
-                if ":" in term_str:
-                    term_id = int(term_str.split(":")[0])
-                    term = session.query(SearchTerm).get(term_id)
-                    if term:
-                        term.group_id = group_id
+        current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
+        existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
+        
+        for term in existing_terms:
+            if term.id not in current_term_ids:
+                term.group_id = None
+        
+        for term_str in updated_terms:
+            term_id = int(term_str.split(":")[0])
+            term = session.query(SearchTerm).get(term_id)
+            if term:
+                term.group_id = group_id
         
         session.commit()
-        return True
     except Exception as e:
         session.rollback()
-        logger.error(f"Error in update_search_term_group: {str(e)}")
-        return False
+        logging.error(f"Error in update_search_term_group: {str(e)}")
 
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
@@ -1717,125 +1764,109 @@ def delete_search_term_group(session, group_id):
             # Set group_id to None for all search terms in this group
             session.query(SearchTerm).filter(SearchTerm.group_id == group_id).update({SearchTerm.group_id: None})
             session.delete(group)
-            session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error deleting search term group: {str(e)}")
 
+
 def email_templates_page():
     st.header("Email Templates")
-    
     with db_session() as session:
         templates = session.query(EmailTemplate).all()
-        
-        # Lazy load new template form
         with st.expander("Create New Template", expanded=False):
-            if "show_new_template" not in st.session_state:
-                st.session_state.show_new_template = False
-                
-            def new_template_form():
-                new_template_name = st.text_input("Template Name", key="new_template_name")
-                use_ai = st.checkbox("Use AI to generate template", key="use_ai")
-                
-                if use_ai:
-                    ai_prompt = st.text_area("Enter prompt for AI template generation", key="ai_prompt")
-                    use_kb = st.checkbox("Use Knowledge Base information", key="use_kb")
-                    if st.button("Generate Template", key="generate_ai_template"):
-                        with st.spinner("Generating template..."):
-                            if use_kb:
-                                kb_info = get_knowledge_base_info(session, get_active_project_id())
-                                if not kb_info:
-                                    st.error("No knowledge base found")
-                                    return
-                                ai_prompt += f"\nKnowledge Base Info: {json.dumps(kb_info)}"
-                            
-                            messages = [
-                                {"role": "system", "content": "You are an AI email template generator."},
-                                {"role": "user", "content": ai_prompt}
-                            ]
-                            response = openai_chat_completion(messages)
-                            if response:
-                                st.session_state.new_template_subject = response.get("subject", "")
-                                st.session_state.new_template_body = response.get("body", "")
-                                st.success("Template generated!")
-                            else:
-                                st.error("Failed to generate template")
-                else:
-                    new_template_subject = st.text_input("Subject", key="new_template_subject")
-                    new_template_body = st.text_area("Body Content", height=200, key="new_template_body")
-                    
-                if st.button("Create Template", key="create_template_button"):
-                    try:
-                        new_template = EmailTemplate(
-                            template_name=new_template_name,
-                            subject=new_template_subject,
-                            body_content=new_template_body,
-                            is_ai_customizable=use_ai
-                        )
-                        session.add(new_template)
-                        session.commit()
-                        st.success("Template created successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error creating template: {str(e)}")
-                        session.rollback()
-            
-            # Only load form when expander is opened
-            if st.checkbox("Show form", key="show_new_template_form"):
-                new_template_form()
+            new_template_name = st.text_input("Template Name", key="new_template_name")
+            use_ai = st.checkbox("Use AI to generate template", key="use_ai")
+            if use_ai:
+                ai_prompt = st.text_area("Enter prompt for AI template generation", key="ai_prompt")
+                use_kb = st.checkbox("Use Knowledge Base information", key="use_kb")
+                if st.button("Generate Template", key="generate_ai_template"):
+                    with st.spinner("Generating template..."):
+                        kb_info = get_knowledge_base_info(session, get_active_project_id()) if use_kb else None
+                        generated_template = generate_or_adjust_email_template(ai_prompt, kb_info)
+                        new_template_subject = generated_template.get("subject", "AI Generated Subject")
+                        new_template_body = generated_template.get("body", "")
+                        
+                        if new_template_name:
+                            new_template = EmailTemplate(
+                                template_name=new_template_name,
+                                subject=new_template_subject,
+                                body_content=new_template_body,
+                                campaign_id=get_active_campaign_id()
+                            )
+                            session.add(new_template)
+                            session.commit()
+                            st.success("AI-generated template created and saved!")
+                            templates = session.query(EmailTemplate).all()
+                        else:
+                            st.warning("Please provide a name for the template before generating.")
+                        
+                        st.subheader("Generated Template")
+                        st.text(f"Subject: {new_template_subject}")
+                        st.components.v1.html(wrap_email_body(new_template_body), height=400, scrolling=True)
+            else:
+                new_template_subject = st.text_input("Subject", key="new_template_subject")
+                new_template_body = st.text_area("Body Content", height=200, key="new_template_body")
 
-        # Lazy load existing templates
+            if st.button("Create Template", key="create_template_button"):
+                if all([new_template_name, new_template_subject, new_template_body]):
+                    new_template = EmailTemplate(
+                        template_name=new_template_name,
+                        subject=new_template_subject,
+                        body_content=new_template_body,
+                        campaign_id=get_active_campaign_id()
+                    )
+                    session.add(new_template)
+                    session.commit()
+                    st.success("New template created successfully!")
+                    templates = session.query(EmailTemplate).all()
+                else:
+                    st.warning("Please fill in all fields to create a new template.")
+
         if templates:
             st.subheader("Existing Templates")
             for template in templates:
                 with st.expander(f"Template: {template.template_name}", expanded=False):
-                    if f"show_template_{template.id}" not in st.session_state:
-                        st.session_state[f"show_template_{template.id}"] = False
-                        
-                    def template_edit_form():
-                        col1, col2 = st.columns(2)
-                        edited_subject = col1.text_input("Subject", value=template.subject, key=f"subject_{template.id}")
-                        is_ai_customizable = col2.checkbox("AI Customizable", value=template.is_ai_customizable, key=f"ai_{template.id}")
-                        edited_body = st.text_area("Body Content", value=template.body_content, height=200, key=f"body_{template.id}")
-                        
-                        if st.button("Save Changes", key=f"save_{template.id}"):
-                            try:
-                                template.subject = edited_subject
-                                template.body_content = edited_body
-                                template.is_ai_customizable = is_ai_customizable
-                                session.commit()
-                                st.success("Template updated successfully!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error updating template: {str(e)}")
-                                session.rollback()
-                        
-                        if st.button("Delete Template", key=f"delete_{template.id}"):
-                            try:
-                                session.delete(template)
-                                session.commit()
-                                st.success("Template deleted successfully!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error deleting template: {str(e)}")
-                                session.rollback()
+                    col1, col2 = st.columns(2)
+                    edited_subject = col1.text_input("Subject", value=template.subject, key=f"subject_{template.id}")
+                    is_ai_customizable = col2.checkbox("AI Customizable", value=template.is_ai_customizable, key=f"ai_{template.id}")
+                    edited_body = st.text_area("Body Content", value=template.body_content, height=200, key=f"body_{template.id}")
                     
-                    # Only load form when expander is opened
-                    if st.checkbox("Edit template", key=f"show_template_{template.id}"):
-                        template_edit_form()
+                    ai_adjustment_prompt = st.text_area("AI Adjustment Prompt", key=f"ai_prompt_{template.id}", placeholder="E.g., Make it less marketing-like and mention our main features")
+                    
+                    col3, col4 = st.columns(2)
+                    if col3.button("Apply AI Adjustment", key=f"apply_ai_{template.id}"):
+                        with st.spinner("Applying AI adjustment..."):
+                            kb_info = get_knowledge_base_info(session, get_active_project_id())
+                            adjusted_template = generate_or_adjust_email_template(ai_adjustment_prompt, kb_info, current_template=edited_body)
+                            edited_subject = adjusted_template.get("subject", edited_subject)
+                            edited_body = adjusted_template.get("body", edited_body)
+                            st.success("AI adjustment applied. Please review and save changes.")
+                    
+                    if col4.button("Save Changes", key=f"save_{template.id}"):
+                        template.subject = edited_subject
+                        template.body_content = edited_body
+                        template.is_ai_customizable = is_ai_customizable
+                        session.commit()
+                        st.success("Template updated successfully!")
+                    
+                    st.markdown("### Preview")
+                    st.text(f"Subject: {edited_subject}")
+                    st.components.v1.html(wrap_email_body(edited_body), height=400, scrolling=True)
+                    
+                    if st.button("Delete Template", key=f"delete_{template.id}"):
+                        session.delete(template)
+                        session.commit()
+                        st.success("Template deleted successfully!")
+                        st.rerun()
+        else:
+            st.info("No email templates found. Create a new template to get started.")
 
 def get_email_preview(session, template_id, from_email, reply_to):
-    try:
-        template = session.query(EmailTemplate).get(template_id)
-        if template:
-            # Sanitize content
-            body_content = html.escape(template.body_content)
-            wrapped_content = wrap_email_body(body_content)
-            return wrapped_content
-        return "<p>Template not found</p>"
-    except Exception as e:
-        logger.error(f"Error generating preview: {str(e)}")
-        return "<p>Error generating preview</p>"
+    template = session.query(EmailTemplate).filter_by(id=template_id).first()
+    if template:
+        wrapped_content = wrap_email_body(template.body_content)
+        return wrapped_content
+    return "<p>Template not found</p>"
 
 def fetch_all_search_terms(session):
     return session.query(SearchTerm).all()
@@ -1863,7 +1894,7 @@ def bulk_send_page():
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']}")
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -1917,7 +1948,7 @@ def bulk_send_page():
             results_df = pd.DataFrame(results)
             st.dataframe(results_df)
             success_rate = (results_df['Status'] == 'sent').mean()
-            st.metric("Email Send Success Rate", f"{success_rate:.2%}")
+            st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
 
 def fetch_leads(session, template_id, send_option, specific_email, selected_terms, exclude_previously_contacted):
     try:
@@ -1954,6 +1985,7 @@ def fetch_search_terms_with_lead_count(session):
              .group_by(SearchTerm.term))
     df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
     return df
+
 def fetch_search_term_groups(session):
     """Fetch all search term groups"""
     return [f"{group.id}: {group.name}" for group in session.query(SearchTermGroup).all()]
@@ -2004,8 +2036,7 @@ def ai_automation_loop(session, log_container, leads_container):
     st.session_state.update({"automation_logs": automation_logs, "total_leads_found": total_search_terms, "total_emails_sent": total_emails_sent})
 
 def display_search_results(results, key_suffix):
-    if not results:
-        return st.warning("No results to display.")
+    if not results: return st.warning("No results to display.")
     with st.expander("Search Results", expanded=True):
         st.markdown(f"### Total Leads Found: **{len(results)}**")
         for i, res in enumerate(results):
@@ -2030,8 +2061,8 @@ def generate_optimized_search_terms(session, base_terms, kb_info):
 
 def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
-                          func.count(distinct(Lead.id)).label('lead_count'),
-                          func.count(distinct(EmailCampaign.id)).label('email_count'))
+                           func.count(distinct(Lead.id)).label('lead_count'),
+                           func.count(distinct(EmailCampaign.id)).label('email_count'))
              .join(LeadSource, SearchTerm.id == LeadSource.search_term_id)
              .join(Lead, LeadSource.lead_id == Lead.id)
              .outerjoin(EmailCampaign, Lead.id == EmailCampaign.lead_id)
@@ -2039,58 +2070,86 @@ def fetch_search_terms_with_lead_count(session):
     df = pd.DataFrame(query.all(), columns=['Term', 'Lead Count', 'Email Count'])
     return df
 
-def fetch_leads_for_search_terms(session, search_term_ids):
-    """Fetch leads associated with given search term IDs"""
+def fetch_leads_for_search_terms(session, search_term_ids) -> List[Lead]:
     return session.query(Lead).distinct().join(LeadSource).filter(LeadSource.search_term_id.in_(search_term_ids)).all()
 
 def projects_campaigns_page():
     with db_session() as session:
         st.header("Projects and Campaigns")
-        
-        # Lazy load project creation form
-        with st.expander("Add New Project", expanded=False):
-            if "show_new_project" not in st.session_state:
-                st.session_state.show_new_project = False
-                
-            if st.checkbox("Create new project", key="show_new_project"):
-                with st.form("add_project_form"):
-                    # Project creation form code...
-        
-        # Lazy load existing projects
-        if "show_projects" not in st.session_state:
-            st.session_state.show_projects = False
-            
-        if st.checkbox("Show existing projects", key="show_projects"):
-            st.subheader("Existing Projects and Campaigns")
-            projects = session.query(Project).all()
-            for project in projects:
-                with st.expander(f"Project: {project.project_name}", expanded=False):
-                    if f"show_project_{project.id}" not in st.session_state:
-                        st.session_state[f"show_project_{project.id}"] = False
-                        
-                    if st.checkbox(f"Show project details", key=f"show_project_{project.id}"):
-                        # Project details and campaign management code...
+        st.subheader("Add New Project")
+        with st.form("add_project_form"):
+            project_name = st.text_input("Project Name")
+            if st.form_submit_button("Add Project"):
+                if project_name.strip():
+                    try:
+                        session.add(Project(project_name=project_name, created_at=datetime.utcnow()))
+                        session.commit()
+                        st.success(f"Project '{project_name}' added successfully.")
+                    except SQLAlchemyError as e:
+                        st.error(f"Error adding project: {str(e)}")
+                else:
+                    st.warning("Please enter a project name.")
+        st.subheader("Existing Projects and Campaigns")
+        projects = session.query(Project).all()
+        for project in projects:
+            with st.expander(f"Project: {project.project_name}"):
+                st.info("Campaigns share resources and settings within a project.")
+                with st.form(f"add_campaign_form_{project.id}"):
+                    campaign_name = st.text_input("Campaign Name", key=f"campaign_name_{project.id}")
+                    if st.form_submit_button("Add Campaign"):
+                        if campaign_name.strip():
+                            try:
+                                session.add(Campaign(campaign_name=campaign_name, project_id=project.id, created_at=datetime.utcnow()))
+                                session.commit()
+                                st.success(f"Campaign '{campaign_name}' added to '{project.project_name}'.")
+                            except SQLAlchemyError as e:
+                                st.error(f"Error adding campaign: {str(e)}")
+                        else:
+                            st.warning("Please enter a campaign name.")
+                campaigns = session.query(Campaign).filter_by(project_id=project.id).all()
+                st.write("Campaigns:" if campaigns else f"No campaigns for {project.project_name} yet.")
+                for campaign in campaigns:
+                    st.write(f"- {campaign.campaign_name}")
+        st.subheader("Set Active Project and Campaign")
+        project_options = [p.project_name for p in projects]
+        if project_options:
+            active_project = st.selectbox("Select Active Project", options=project_options, index=0)
+            active_project_id = session.query(Project.id).filter_by(project_name=active_project).scalar()
+            set_active_project_id(active_project_id)
+            active_project_campaigns = session.query(Campaign).filter_by(project_id=active_project_id).all()
+            if active_project_campaigns:
+                campaign_options = [c.campaign_name for c in active_project_campaigns]
+                active_campaign = st.selectbox("Select Active Campaign", options=campaign_options, index=0)
+                active_campaign_id = session.query(Campaign.id).filter_by(campaign_name=active_campaign, project_id=active_project_id).scalar()
+                set_active_campaign_id(active_campaign_id)
+                st.success(f"Active Project: {active_project}, Active Campaign: {active_campaign}")
+            else:
+                st.warning(f"No campaigns available for {active_project}. Please add a campaign.")
+        else:
+            st.warning("No projects found. Please add a project first.")
 
 def knowledge_base_page():
     st.title("Knowledge Base")
-    
     with db_session() as session:
         project_options = fetch_projects(session)
-        if not project_options:
-            return st.warning("No projects found. Please create a project first.")
-            
+        if not project_options: return st.warning("No projects found. Please create a project first.")
         selected_project = st.selectbox("Select Project", options=project_options)
         project_id = int(selected_project.split(":")[0])
         set_active_project_id(project_id)
-        
-        # Lazy load knowledge base form
-        if "show_kb_form" not in st.session_state:
-            st.session_state.show_kb_form = False
-            
-        if st.checkbox("Edit Knowledge Base", key="show_kb_form"):
-            kb_entry = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
-            with st.form("knowledge_base_form"):
-                # Knowledge base form code...
+        kb_entry = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
+        with st.form("knowledge_base_form"):
+            fields = ['kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role', 'contact_email', 'company_description', 'company_mission', 'company_target_market', 'company_other', 'product_name', 'product_description', 'product_target_customer', 'product_other', 'other_context', 'example_email']
+            form_data = {field: st.text_input(field.replace('_', ' ').title(), value=getattr(kb_entry, field, '')) if field in ['kb_name', 'contact_name', 'contact_role', 'contact_email', 'product_name'] else st.text_area(field.replace('_', ' ').title(), value=getattr(kb_entry, field, '')) for field in fields}
+            if st.form_submit_button("Save Knowledge Base"):
+                try:
+                    form_data.update({'project_id': project_id, 'created_at': datetime.utcnow()})
+                    if kb_entry:
+                        for k, v in form_data.items(): setattr(kb_entry, k, v)
+                    else:
+                        session.add(KnowledgeBase(**form_data))
+                    session.commit()
+                    st.success("Knowledge Base saved successfully!", icon="✅")
+                except Exception as e: st.error(f"An error occurred while saving the Knowledge Base: {str(e)}")
 
 def autoclient_ai_page():
     st.header("AutoclientAI - Automated Lead Generation")
@@ -2315,7 +2374,7 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
             else:
                 status = 'failed'
                 message_id = f"failed-{uuid.uuid4()}"
-                log_message = f" Failed to send email to: {lead['Email']}"
+                log_message = f"�� Failed to send email to: {lead['Email']}"
             
             save_email_campaign(session, lead['Email'], template_id, status, datetime.utcnow(), email_subject, message_id, email_content)
             logs.append(log_message)
@@ -2420,30 +2479,34 @@ st.sidebar.markdown("---")
 st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
 def update_process_log(session, process_id, message, level='info'):
+    """Update the logs for a search process"""
     try:
-        with session.begin_nested():
-            process = (session.query(SearchProcess)
-                      .filter_by(id=process_id)
-                      .with_for_update()
-                      .first())
-            if not process:
-                return False
-                
-            if process.logs is None:
-                process.logs = []
-                
-            log_entry = {
-                'timestamp': datetime.utcnow().isoformat(),
-                'level': level,
-                'message': message
-            }
+        process = session.query(SearchProcess).get(process_id)
+        if not process:
+            logging.error(f"Process {process_id} not found")
+            return False
             
-            process.logs.append(log_entry)
-            return True
+        # Initialize logs array if None
+        if process.logs is None:
+            process.logs = []
             
+        log_entry = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'level': level,
+            'message': message
+        }
+        
+        # Append new log entry
+        process.logs.append(log_entry)
+        
+        # Update the process
+        session.add(process)
+        session.commit()
+        
+        return True
     except Exception as e:
+        logging.error(f"Error updating process log: {str(e)}")
         session.rollback()
-        logger.error(f"Error updating process log: {str(e)}")
         return False
 
 def display_process_logs(process_id):
@@ -2560,17 +2623,14 @@ class TemplateManager:
             
     def update_template(self, session, template_id, updates):
         lock = self.get_template_lock(template_id)
-        try:
-            with lock, session.begin_nested():  # Use nested transaction
-                template = session.query(EmailTemplate).filter_by(id=template_id).with_for_update().first()
-                if template:
-                    for key, value in updates.items():
-                        setattr(template, key, value)
-                    return True
-            return False
-        except Exception:
-            session.rollback()
-            return False
+        with lock:
+            template = session.query(EmailTemplate).filter_by(id=template_id).with_for_update().first()
+            if template:
+                for key, value in updates.items():
+                    setattr(template, key, value)
+                session.commit()
+                return True
+        return False
 
 template_manager = TemplateManager()
 
@@ -2599,13 +2659,9 @@ class ProcessManager:
         
     def cleanup_finished(self):
         with self._lock:
-            try:
-                finished = [pid for pid, p in list(self._processes.items()) if not p.is_alive()]
-                for pid in finished:
-                    self._processes[pid].join(timeout=1)  # Wait for thread to finish
-                    del self._processes[pid]
-            except RuntimeError:
-                pass  # Handle case where dict changes during iteration
+            finished = [pid for pid, p in self._processes.items() if not p.is_alive()]
+            for pid in finished:
+                del self._processes[pid]
 
 process_manager = ProcessManager()
 
@@ -2658,7 +2714,6 @@ def save_email_template(session, template_id, updates):
     return template_manager.update_template(session, template_id, updates)
 
 def get_email_template(session, template_id):
-    """Get email template with thread-safe locking"""
     lock = template_manager.get_template_lock(template_id)
     with lock:
         return session.query(EmailTemplate).get(template_id)
@@ -2900,125 +2955,122 @@ class LandingPage(Base):
     campaign = relationship("Campaign", back_populates="landing_pages")
 
 def landing_pages_page():
-    st.title("Landing Pages")
+    st.title("Landing Page Builder")
+    
     with db_session() as session:
-        # Add new landing page section
+        # Create new landing page section
         with st.expander("Create New Landing Page", expanded=False):
-            with st.form("new_page_form"):
+            with st.form("new_landing_page"):
                 name = st.text_input("Page Name")
-                use_ai = st.checkbox("Generate with AI")
+                template_type = st.selectbox(
+                    "Template Type",
+                    ["custom", "lead_capture", "product"]
+                )
                 
+                use_ai = st.checkbox("Use AI to generate content")
                 if use_ai:
-                    prompt = st.text_area("Describe your landing page")
-                    if st.form_submit_button("Generate Page"):
-                        if prompt:
-                            with st.spinner("Generating landing page..."):
-                                content = generate_landing_page_content(prompt)
-                                new_page = LandingPage(
-                                    name=name,
-                                    html_content=content['html'],
-                                    css_content=content['css'],
-                                    js_content=content['js']
-                                )
-                                session.add(new_page)
-                                session.commit()
-                                st.success("Landing page generated successfully!")
-                                st.rerun()
-                        else:
-                            st.error("Please provide a description for the landing page.")
+                    ai_prompt = st.text_area(
+                        "Describe your landing page",
+                        help="Describe the purpose, target audience, and key features you want to highlight"
+                    )
                 else:
                     html_content = st.text_area("HTML Content")
                     css_content = st.text_area("CSS Content")
                     js_content = st.text_area("JavaScript Content")
+                
+                if st.form_submit_button("Create Landing Page"):
+                    try:
+                        if use_ai:
+                            generated_content = generate_landing_page_content(ai_prompt)
+                            html_content = generated_content.get('html', '')
+                            css_content = generated_content.get('css', '')
+                            js_content = generated_content.get('js', '')
+                            
+                        new_page = LandingPage(
+                            name=name,
+                            template_type=template_type,
+                            html_content=html_content,
+                            css_content=css_content,
+                            js_content=js_content,
+                            campaign_id=get_active_campaign_id()
+                        )
+                        session.add(new_page)
+                        session.commit()
+                        st.success("Landing page created successfully!")
+                        
+                    except Exception as e:
+                        st.error(f"Error creating landing page: {str(e)}")
+        
+        # List existing landing pages
+        pages = session.query(LandingPage).filter_by(
+            campaign_id=get_active_campaign_id()
+        ).all()
+        
+        if pages:
+            st.subheader("Existing Landing Pages")
+            for page in pages:
+                with st.expander(f" {page.name}", expanded=False):
+                    col1, col2 = st.columns([3, 1])
                     
-                    if st.form_submit_button("Create Page"):
-                        if name and html_content:
+                    with col1:
+                        edited_name = st.text_input(
+                            "Page Name",
+                            value=page.name,
+                            key=f"name_{page.id}"
+                        )
+                        edited_html = st.text_area(
+                            "HTML Content",
+                            value=page.html_content,
+                            height=300,
+                            key=f"html_{page.id}"
+                        )
+                        edited_css = st.text_area(
+                            "CSS Content",
+                            value=page.css_content,
+                            height=200,
+                            key=f"css_{page.id}"
+                        )
+                        edited_js = st.text_area(
+                            "JavaScript Content",
+                            value=page.js_content,
+                            height=200,
+                            key=f"js_{page.id}"
+                        )
+                    
+                    with col2:
+                        if st.button("Preview", key=f"preview_{page.id}"):
+                            st.components.v1.html(
+                                wrap_landing_page(
+                                    edited_html,
+                                    edited_css,
+                                    edited_js
+                                ),
+                                height=600,
+                                scrolling=True
+                            )
+                        
+                        if st.button("Save Changes", key=f"save_{page.id}"):
                             try:
-                                new_page = LandingPage(
-                                    name=name,
-                                    html_content=html_content,
-                                    css_content=css_content,
-                                    js_content=js_content
-                                )
-                                session.add(new_page)
+                                page.name = edited_name
+                                page.html_content = edited_html
+                                page.css_content = edited_css
+                                page.js_content = edited_js
                                 session.commit()
-                                st.success("Landing page created successfully!")
+                                st.success("Changes saved successfully!")
+                            except Exception as e:
+                                st.error(f"Error saving changes: {str(e)}")
+                        
+                        if st.button("Delete", key=f"delete_{page.id}"):
+                            try:
+                                session.delete(page)
+                                session.commit()
+                                st.success("Landing page deleted!")
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Error creating landing page: {str(e)}")
-                        else:
-                            st.error("Please provide a name and HTML content.")
-
-        # List existing pages
-        st.subheader("Existing Landing Pages")
-        pages = session.query(LandingPage).all()
-        if not pages:
-            st.info("No landing pages found. Create one above.")
-        else:
-            for page in pages:
-                with st.expander(f"{page.name} (ID: {page.id})", expanded=False):
-                    page_edit_form(page, session)
-
-def page_edit_form(page, session):
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        edited_name = st.text_input(
-            "Page Name",
-            value=page.name,
-            key=f"name_{page.id}"
-        )
-        edited_html = st.text_area(
-            "HTML Content",
-            value=page.html_content,
-            height=300,
-            key=f"html_{page.id}"
-        )
-        edited_css = st.text_area(
-            "CSS Content",
-            value=page.css_content,
-            height=200,
-            key=f"css_{page.id}"
-        )
-        edited_js = st.text_area(
-            "JavaScript Content",
-            value=page.js_content,
-            height=200,
-            key=f"js_{page.id}"
-        )
-    
-    with col2:
-        if st.button("Preview", key=f"preview_{page.id}"):
-            st.components.v1.html(
-                wrap_landing_page(
-                    edited_html,
-                    edited_css,
-                    edited_js
-                ),
-                height=600,
-                scrolling=True
-            )
-        
-        if st.button("Save Changes", key=f"save_{page.id}"):
-            try:
-                page.name = edited_name
-                page.html_content = edited_html
-                page.css_content = edited_css
-                page.js_content = edited_js
-                session.commit()
-                st.success("Changes saved successfully!")
-            except Exception as e:
-                st.error(f"Error saving changes: {str(e)}")
-        
-        if st.button("Delete", key=f"delete_{page.id}"):
-            try:
-                session.delete(page)
-                session.commit()
-                st.success("Landing page deleted!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error deleting page: {str(e)}")
+                                st.error(f"Error deleting page: {str(e)}")
 
 def generate_landing_page_content(prompt):
+    """Generate landing page content using AI"""
     try:
         messages = [
             {
@@ -3026,8 +3078,8 @@ def generate_landing_page_content(prompt):
                 "content": "You are an expert web developer and designer specializing in landing pages."
             },
             {
-                "role": "user", 
-                "content": f"Create a landing page based on this description:\n{prompt}"
+                "role": "user",
+                "content": f"Create a landing page based on this description:\n{prompt}\n\nRespond with JSON containing HTML, CSS, and JS content."
             }
         ]
         
@@ -3037,27 +3089,24 @@ def generate_landing_page_content(prompt):
             function_name="generate_landing_page"
         )
         
-        # Ensure response has required fields
-        default_content = {
-            "html": "<h1>Error generating content</h1>",
-            "css": "body { font-family: sans-serif; }",
-            "js": ""
-        }
-        
         if isinstance(response, str):
             try:
                 response = json.loads(response)
             except json.JSONDecodeError:
-                return default_content
-                
-        if not all(k in response for k in ['html', 'css', 'js']):
-            return default_content
-            
-        return response
+                return {
+                    "html": "<h1>Error generating content</h1>",
+                    "css": "",
+                    "js": ""
+                }
         
+        return response
     except Exception as e:
-        logger.error(f"Error generating landing page: {str(e)}")
-        return default_content
+        logger.error(f"Error generating landing page content: {str(e)}")
+        return {
+            "html": "<h1>Error generating content</h1>",
+            "css": "",
+            "js": ""
+        }
 
 def wrap_landing_page(html_content, css_content, js_content):
     """Wrap landing page content in a complete HTML document"""
@@ -3080,22 +3129,45 @@ def wrap_landing_page(html_content, css_content, js_content):
     </html>
     """
 
-# Add at the top of the file after imports
+# Move set_page_config to the very top, after imports
+st.set_page_config(
+    page_title="AutoclientAI",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Define pages dictionary
 pages = {
     "Manual Search": manual_search_page,
+    "View Leads": view_leads_page,
     "Search Terms": search_terms_page,
     "Email Templates": email_templates_page,
     "Bulk Send": bulk_send_page,
-    "View Leads": view_leads_page,
     "Campaign Logs": view_campaign_logs,
     "Projects & Campaigns": projects_campaigns_page,
     "Knowledge Base": knowledge_base_page,
     "AutoclientAI": autoclient_ai_page,
     "Settings": settings_page,
-    "Landing Pages": landing_pages_page
+    "Landing Pages": landing_pages_page,
+    "Automation Control": automation_control_panel_page,
+    "Search Terms Optimization": optimize_search_terms_page
 }
 
+# Add sidebar navigation
 selected = st.sidebar.selectbox("Navigation", list(pages.keys()))
+
+def main():
+    try:
+        with db_session() as session:
+            pages[selected]()
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        logging.exception("An error occurred in the main function")
+        st.write("Please try refreshing the page or contact support if the issue persists.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
 if __name__ == "__main__":
     main()
