@@ -25,6 +25,7 @@ from threading import local, Lock
 import threading
 from urllib3.util import Retry
 import logging as logger
+import logging.config  # Add this import
 
 # Logging Configuration
 LOGGING_CONFIG = {
@@ -87,57 +88,72 @@ DEFAULT_SEARCH_SETTINGS = {
 
 
 #database info
-DB_HOST = os.getenv("SUPABASE_DB_HOST", "localhost")
+DB_HOST = os.getenv("SUPABASE_DB_HOST", "aws-0-eu-central-1.pooler.supabase.com")
 DB_NAME = os.getenv("SUPABASE_DB_NAME", "postgres")
-DB_USER = os.getenv("SUPABASE_DB_USER", "postgres")
-DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD", "")
-DB_PORT = os.getenv("SUPABASE_DB_PORT", "5432")
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DB_USER = os.getenv("SUPABASE_DB_USER", "postgres.whwiyccyyfltobvqxiib")
+DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD", "SamiHalawa1996")
+DB_PORT = os.getenv("SUPABASE_DB_PORT", "6543")  # Using transaction mode pooler port
+DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-load_dotenv()
-DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # Add thread-local storage for database sessions
 thread_local = local()
 
 def get_db_session():
+    """Get or create a database session for the current thread."""
     if not hasattr(thread_local, "session"):
-        thread_local.session = SessionLocal()
+        with db_session() as session:
+            thread_local.session = session
     return thread_local.session
 
 @contextmanager
-def get_db():
-    session = get_db_session()
+def db_session():
+    """Provide a transactional scope around a series of operations."""
+    session = None
     try:
+        # Try to get existing session from thread local storage
+        if hasattr(thread_local, "session"):
+            session = thread_local.session
+        else:
+            # Create new session if none exists
+            session = SessionLocal()
+            thread_local.session = session
+        
         yield session
         session.commit()
     except Exception as e:
-        session.rollback()
+        if session:
+            session.rollback()
+        logging.error(f"Database session error: {str(e)}")
         raise
     finally:
-        session.close()
-        if hasattr(thread_local, "session"):
-            del thread_local.session
+        if session:
+            session.close()
+            if hasattr(thread_local, "session"):
+                del thread_local.session
 
-# Database configuration with optimized settings
+# Update the database configuration with more conservative settings
 engine = create_engine(
     DATABASE_URL,
-    pool_size=20,
-    max_overflow=10,
+    pool_size=5,  # Reduced from 20 to prevent connection overload
+    max_overflow=2,  # Reduced from 10 to limit total connections
     pool_timeout=30,
     pool_recycle=1800,
     pool_pre_ping=True,
-    echo=False
+    connect_args={
+        'connect_timeout': 10,
+        'application_name': 'autoclient_app',
+        'options': '-c statement_timeout=30000'
+    }
 )
 
 SessionLocal = sessionmaker(
     bind=engine,
     autocommit=False,
     autoflush=False,
-    expire_on_commit=False
+    expire_on_commit=False,
+    class_=Session
 )
 
 Base = declarative_base()
@@ -147,11 +163,12 @@ if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
 try:
-    # Test the connection
-    with engine.connect() as connection:
-        connection.execute(text("SELECT 1"))
+    # Test connection with timeout
+    with db_session() as session:
+        session.execute(text("SELECT 1"))
 except Exception as e:
     st.error(f"Failed to connect to database: {str(e)}")
+    logging.error(f"Database connection error: {str(e)}")
     raise
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
@@ -430,21 +447,25 @@ class EmailSettings(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL not set")
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base.metadata.create_all(bind=engine)
+
 @contextmanager
 def db_session():
-    """Thread-safe database session context manager"""
-    session = None
-    try:
-        session = SessionLocal()
+    with get_db() as session:
         yield session
-        session.commit()
-    except Exception as e:
-        if session:
-            session.rollback()
-        raise
+
+def get_db():
+    session = SessionLocal()
+    try:
+        yield session
     finally:
-        if session:
-            session.close()
+        session.close()
 
 def settings_page():
     st.title("Settings")
@@ -563,13 +584,14 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
         logging.error("Missing required email parameters")
         return None, None
 
-    tracking_id = str(uuid.uuid4())
-    try:
-        tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
-        tracked_body = wrap_email_body(body).replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
-    except Exception as e:
-        logging.warning(f"Failed to add tracking pixel: {str(e)}")
-        tracked_body = wrap_email_body(body)
+        tracking_id = str(uuid.uuid4())
+        # Add a try-except to handle tracking pixel failures gracefully
+        try:
+            tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"  # Add missing }
+            tracked_body = wrap_email_body(body).replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
+        except Exception as e:
+            logging.warning(f"Failed to add tracking pixel: {str(e)}")
+            tracked_body = wrap_email_body(body)  # Use original body if tracking fails
 
     try:
         if email_settings.provider == 'ses':
@@ -757,6 +779,10 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
     try:
         ua = UserAgent()
         for original_term in terms:
+            # Log the current term being processed
+            if process_id:
+                update_process_log(session, process_id, f"Processing term: {original_term}", 'info')
+            
             # Use thread-local session
             with get_db() as local_session:
                 search_term = local_session.query(SearchTerm).filter_by(term=original_term, campaign_id=get_active_campaign_id()).first()
@@ -776,7 +802,8 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                         continue
 
     except Exception as e:
-        log_error(f"Error in manual_search: {str(e)}", process_id, log_container)
+        error_msg = f"Error in manual_search: {str(e)}"
+        log_error(error_msg, process_id, log_container)
     finally:
         cleanup_resources()
     
@@ -881,19 +908,16 @@ def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_i
         with db_session() as session:
             general_settings = session.query(Settings).filter_by(setting_type='general').first()
             if not general_settings or 'openai_api_key' not in general_settings.value:
-                st.error("OpenAI API key not set. Please configure it in the settings.")
-                return None
+                raise ValueError("OpenAI API key not set. Please configure it in the settings.")
 
-            # Initialize OpenAI client with Hugging Face endpoint
             client = OpenAI(
                 base_url=general_settings.value.get('openai_api_base', 'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-72B-Instruct/v1/'),
                 api_key=general_settings.value.get('openai_api_key', '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')
             )
 
             try:
-                # Make request to Hugging Face endpoint
                 response = client.chat.completions.create(
-                    model="Qwen/Qwen2.5-72B-Instruct",  # Model name is required but may be ignored
+                    model="Qwen/Qwen2.5-72B-Instruct",
                     messages=messages,
                     temperature=temperature,
                     max_tokens=500
@@ -913,12 +937,11 @@ def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_i
                 return result
                 
             except Exception as e:
-                st.error(f"Error in API call: {str(e)}")
-                log_ai_request(session, function_name, messages, str(e), lead_id, email_campaign_id, "Qwen/Qwen2.5-72B-Instruct")
-                return None
+                error_msg = f"Error in API call: {str(e)}"
+                log_ai_request(session, function_name, messages, error_msg, lead_id, email_campaign_id, "Qwen/Qwen2.5-72B-Instruct")
+                raise ValueError(error_msg)
     except Exception as e:
-        st.error(f"Error in database operation: {str(e)}")
-        return None
+        raise ValueError(f"Error in openai_chat_completion: {str(e)}")
 
 def log_ai_request(session, function_name, prompt, response, lead_id=None, email_campaign_id=None, model_used=None):
     session.add(AIRequestLog(
@@ -2933,241 +2956,6 @@ def log_error(message, process_id=None, log_container=None):
     elif log_container:
         update_log(log_container, message, 'error')
     logger.error(message)
-
-class LandingPage(Base):
-    __tablename__ = 'landing_pages'
-    __table_args__ = (
-        Index('idx_landing_page_created', 'created_at'),
-    )
-    id = Column(BigInteger, primary_key=True)
-    name = Column(Text, nullable=False)
-    template_type = Column(Text, default='custom')  # custom, lead_capture, product
-    html_content = Column(Text)
-    css_content = Column(Text)
-    js_content = Column(Text)
-    meta_tags = Column(JSON)
-    settings = Column(JSON)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    is_published = Column(Boolean, default=False)
-    analytics = Column(JSON)
-    campaign = relationship("Campaign", back_populates="landing_pages")
-
-def landing_pages_page():
-    st.title("Landing Page Builder")
-    
-    with db_session() as session:
-        # Create new landing page section
-        with st.expander("Create New Landing Page", expanded=False):
-            with st.form("new_landing_page"):
-                name = st.text_input("Page Name")
-                template_type = st.selectbox(
-                    "Template Type",
-                    ["custom", "lead_capture", "product"]
-                )
-                
-                use_ai = st.checkbox("Use AI to generate content")
-                if use_ai:
-                    ai_prompt = st.text_area(
-                        "Describe your landing page",
-                        help="Describe the purpose, target audience, and key features you want to highlight"
-                    )
-                else:
-                    html_content = st.text_area("HTML Content")
-                    css_content = st.text_area("CSS Content")
-                    js_content = st.text_area("JavaScript Content")
-                
-                if st.form_submit_button("Create Landing Page"):
-                    try:
-                        if use_ai:
-                            generated_content = generate_landing_page_content(ai_prompt)
-                            html_content = generated_content.get('html', '')
-                            css_content = generated_content.get('css', '')
-                            js_content = generated_content.get('js', '')
-                            
-                        new_page = LandingPage(
-                            name=name,
-                            template_type=template_type,
-                            html_content=html_content,
-                            css_content=css_content,
-                            js_content=js_content,
-                            campaign_id=get_active_campaign_id()
-                        )
-                        session.add(new_page)
-                        session.commit()
-                        st.success("Landing page created successfully!")
-                        
-                    except Exception as e:
-                        st.error(f"Error creating landing page: {str(e)}")
-        
-        # List existing landing pages
-        pages = session.query(LandingPage).filter_by(
-            campaign_id=get_active_campaign_id()
-        ).all()
-        
-        if pages:
-            st.subheader("Existing Landing Pages")
-            for page in pages:
-                with st.expander(f" {page.name}", expanded=False):
-                    col1, col2 = st.columns([3, 1])
-                    
-                    with col1:
-                        edited_name = st.text_input(
-                            "Page Name",
-                            value=page.name,
-                            key=f"name_{page.id}"
-                        )
-                        edited_html = st.text_area(
-                            "HTML Content",
-                            value=page.html_content,
-                            height=300,
-                            key=f"html_{page.id}"
-                        )
-                        edited_css = st.text_area(
-                            "CSS Content",
-                            value=page.css_content,
-                            height=200,
-                            key=f"css_{page.id}"
-                        )
-                        edited_js = st.text_area(
-                            "JavaScript Content",
-                            value=page.js_content,
-                            height=200,
-                            key=f"js_{page.id}"
-                        )
-                    
-                    with col2:
-                        if st.button("Preview", key=f"preview_{page.id}"):
-                            st.components.v1.html(
-                                wrap_landing_page(
-                                    edited_html,
-                                    edited_css,
-                                    edited_js
-                                ),
-                                height=600,
-                                scrolling=True
-                            )
-                        
-                        if st.button("Save Changes", key=f"save_{page.id}"):
-                            try:
-                                page.name = edited_name
-                                page.html_content = edited_html
-                                page.css_content = edited_css
-                                page.js_content = edited_js
-                                session.commit()
-                                st.success("Changes saved successfully!")
-                            except Exception as e:
-                                st.error(f"Error saving changes: {str(e)}")
-                        
-                        if st.button("Delete", key=f"delete_{page.id}"):
-                            try:
-                                session.delete(page)
-                                session.commit()
-                                st.success("Landing page deleted!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error deleting page: {str(e)}")
-
-def generate_landing_page_content(prompt):
-    """Generate landing page content using AI"""
-    try:
-        messages = [
-            {
-                "role": "system",
-                "content": "You are an expert web developer and designer specializing in landing pages."
-            },
-            {
-                "role": "user",
-                "content": f"Create a landing page based on this description:\n{prompt}\n\nRespond with JSON containing HTML, CSS, and JS content."
-            }
-        ]
-        
-        response = openai_chat_completion(
-            messages,
-            temperature=0.7,
-            function_name="generate_landing_page"
-        )
-        
-        if isinstance(response, str):
-            try:
-                response = json.loads(response)
-            except json.JSONDecodeError:
-                return {
-                    "html": "<h1>Error generating content</h1>",
-                    "css": "",
-                    "js": ""
-                }
-        
-        return response
-    except Exception as e:
-        logger.error(f"Error generating landing page content: {str(e)}")
-        return {
-            "html": "<h1>Error generating content</h1>",
-            "css": "",
-            "js": ""
-        }
-
-def wrap_landing_page(html_content, css_content, js_content):
-    """Wrap landing page content in a complete HTML document"""
-    return f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            {css_content}
-        </style>
-    </head>
-    <body>
-        {html_content}
-        <script>
-            {js_content}
-        </script>
-    </body>
-    </html>
-    """
-
-# Move set_page_config to the very top, after imports
-st.set_page_config(
-    page_title="AutoclientAI",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Define pages dictionary
-pages = {
-    "Manual Search": manual_search_page,
-    "View Leads": view_leads_page,
-    "Search Terms": search_terms_page,
-    "Email Templates": email_templates_page,
-    "Bulk Send": bulk_send_page,
-    "Campaign Logs": view_campaign_logs,
-    "Projects & Campaigns": projects_campaigns_page,
-    "Knowledge Base": knowledge_base_page,
-    "AutoclientAI": autoclient_ai_page,
-    "Settings": settings_page,
-    "Landing Pages": landing_pages_page,
-    "Automation Control": automation_control_panel_page,
-    "Search Terms Optimization": optimize_search_terms_page
-}
-
-# Add sidebar navigation
-selected = st.sidebar.selectbox("Navigation", list(pages.keys()))
-
-def main():
-    try:
-        with db_session() as session:
-            pages[selected]()
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        logging.exception("An error occurred in the main function")
-        st.write("Please try refreshing the page or contact support if the issue persists.")
-
-    st.sidebar.markdown("---")
-    st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
 
 if __name__ == "__main__":
     main()
