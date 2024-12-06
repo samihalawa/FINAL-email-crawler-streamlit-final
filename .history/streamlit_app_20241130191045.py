@@ -17,7 +17,7 @@ from urllib.parse import urlparse, urlencode
 from streamlit_tags import st_tags
 import plotly.express as px
 from requests.adapters import HTTPAdapter
-from urllib3.util import Retry  # Replace requests.packages.urllib3.util.retry
+from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager, wraps
@@ -85,14 +85,14 @@ DEFAULT_SEARCH_SETTINGS = {
 }
 
 # Initialize logging
-
+logging.config.dictConfig(LOGGING_CONFIG)
 
 #database info
-DB_HOST = os.getenv("SUPABASE_DB_HOST", "aws-0-eu-central-1.pooler.supabase.com")
-DB_NAME = os.getenv("SUPABASE_DB_NAME", "postgres")
-DB_USER = os.getenv("SUPABASE_DB_USER", "postgres.whwiyccyyfltobvqxiib")
-DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD", "SamiHalawa1996")
-DB_PORT = os.getenv("SUPABASE_DB_PORT", "6543")  # Using transaction mode pooler port
+DB_HOST = "aws-0-eu-central-1.pooler.supabase.com"
+DB_NAME = "postgres"
+DB_USER = "postgres.whwiyccyyfltobvqxiib"
+DB_PASSWORD = "SamiHalawa1996"
+DB_PORT = "6543"  # Using transaction mode pooler port
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -101,50 +101,36 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 thread_local = local()
 
 def get_db_session():
-    """Get or create a database session for the current thread."""
     if not hasattr(thread_local, "session"):
-        with db_session() as session:
-            thread_local.session = session
+        thread_local.session = SessionLocal()
     return thread_local.session
 
 @contextmanager
-def db_session():
-    """Provide a transactional scope around a series of operations."""
-    session = None
+def get_db():
+    session = get_db_session()
     try:
-        # Try to get existing session from thread local storage
-        if hasattr(thread_local, "session"):
-            session = thread_local.session
-        else:
-            # Create new session if none exists
-            session = SessionLocal()
-            thread_local.session = session
-        
         yield session
         session.commit()
     except Exception as e:
-        if session:
-            session.rollback()
-        logging.error(f"Database session error: {str(e)}")
+        session.rollback()
         raise
     finally:
-        if session:
-            session.close()
-            if hasattr(thread_local, "session"):
-                del thread_local.session
+        session.close()
+        if hasattr(thread_local, "session"):
+            del thread_local.session
 
-# Update the database configuration with more conservative settings
+# Database configuration with optimized settings
 engine = create_engine(
     DATABASE_URL,
-    pool_size=5,  # Reduced from 20 to prevent connection overload
-    max_overflow=2,  # Reduced from 10 to limit total connections
-    pool_timeout=30,
-    pool_recycle=1800,
-    pool_pre_ping=True,
+    pool_size=20,  # Increased for better concurrent handling
+    max_overflow=10,  # Allow some overflow connections
+    pool_timeout=30,  # Increased timeout for busy periods
+    pool_recycle=1800,  # Recycle connections every 30 minutes
+    pool_pre_ping=True,  # Enable connection health checks
     connect_args={
         'connect_timeout': 10,
-        'application_name': 'autoclient_app',
-        'options': '-c statement_timeout=30000'
+        'application_name': 'autoclient_app',  # Helps identify connections
+        'options': '-c statement_timeout=30000'  # 30 second query timeout
     }
 )
 
@@ -163,12 +149,11 @@ if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
 try:
-    # Test connection with timeout
-    with db_session() as session:
-        session.execute(text("SELECT 1"))
+    # Test the connection
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
 except Exception as e:
     st.error(f"Failed to connect to database: {str(e)}")
-    logging.error(f"Database connection error: {str(e)}")
     raise
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
@@ -206,7 +191,6 @@ class Campaign(Base):
     email_campaigns = relationship("EmailCampaign", back_populates="campaign", cascade="all, delete-orphan")
     search_terms = relationship("SearchTerm", back_populates="campaign", cascade="all, delete-orphan")
     campaign_leads = relationship("CampaignLead", back_populates="campaign", cascade="all, delete-orphan")
-    landing_pages = relationship("LandingPage", back_populates="campaign", cascade="all, delete-orphan")
 
 
 # Replace the existing SearchProcess class with this updated version
@@ -447,14 +431,6 @@ class EmailSettings(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL not set")
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base.metadata.create_all(bind=engine)
-
 @contextmanager
 def db_session():
     with get_db() as session:
@@ -470,11 +446,7 @@ def get_db():
 def settings_page():
     st.title("Settings")
     with db_session() as session:
-        general_settings = session.query(Settings).filter_by(setting_type='general').first() or Settings(
-            name='General Settings', 
-            setting_type='general', 
-            value={}
-        )
+        general_settings = session.query(Settings).filter_by(setting_type='general').first() or Settings(name='General Settings', setting_type='general', value={})
         st.header("General Settings")
         
         with st.form("general_settings_form"):
@@ -573,77 +545,80 @@ def settings_page():
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
-    """Send email using SES or SMTP with proper session handling"""
-    # Get email settings outside of try block to fail fast
-    email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
-    if not email_settings:
-        logging.error(f"No email settings found for {from_email}")
-        return None, None
+    try:
+        email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
+        if not email_settings:
+            logging.error(f"No email settings found for {from_email}")
+            return None, None
 
-    if not all([to_email, subject, body]):
-        logging.error("Missing required email parameters")
-        return None, None
+        if not all([to_email, subject, body]):
+            logging.error("Missing required email parameters")
+            return None, None
 
         tracking_id = str(uuid.uuid4())
-        # Add a try-except to handle tracking pixel failures gracefully
         try:
-            tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"  # Add missing }
+            tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
             tracked_body = wrap_email_body(body).replace('</body>', f'<img src="{tracking_pixel_url}" width="1" height="1" style="display:none;"/></body>')
         except Exception as e:
             logging.warning(f"Failed to add tracking pixel: {str(e)}")
-            tracked_body = wrap_email_body(body)  # Use original body if tracking fails
+            tracked_body = wrap_email_body(body)
 
-    try:
         if email_settings.provider == 'ses':
             if not all([email_settings.aws_access_key_id, email_settings.aws_secret_access_key, email_settings.aws_region]):
                 logging.error("Missing AWS credentials")
                 return None, None
 
-            if ses_client is None:
-                aws_session = boto3.Session(
-                    aws_access_key_id=email_settings.aws_access_key_id,
-                    aws_secret_access_key=email_settings.aws_secret_access_key,
-                    region_name=email_settings.aws_region
+            try:
+                if ses_client is None:
+                    aws_session = boto3.Session(
+                        aws_access_key_id=email_settings.aws_access_key_id,
+                        aws_secret_access_key=email_settings.aws_secret_access_key,
+                        region_name=email_settings.aws_region
+                    )
+                    ses_client = aws_session.client('ses')
+                
+                response = ses_client.send_email(
+                    Source=from_email,
+                    Destination={'ToAddresses': [to_email]},
+                    Message={
+                        'Subject': {'Data': subject, 'Charset': charset},
+                        'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
+                    },
+                    ReplyToAddresses=[reply_to] if reply_to else []
                 )
-                ses_client = aws_session.client('ses')
-            
-            response = ses_client.send_email(
-                Source=from_email,
-                Destination={'ToAddresses': [to_email]},
-                Message={
-                    'Subject': {'Data': subject, 'Charset': charset},
-                    'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
-                },
-                ReplyToAddresses=[reply_to] if reply_to else []
-            )
-            return response, tracking_id
+                return response, tracking_id
+            except Exception as e:
+                logging.error(f"AWS SES error: {str(e)}")
+                return None, None
 
         elif email_settings.provider == 'smtp':
             if not all([email_settings.smtp_server, email_settings.smtp_port, email_settings.smtp_username, email_settings.smtp_password]):
                 logging.error("Missing SMTP credentials")
                 return None, None
 
-            msg = MIMEMultipart()
-            msg['From'] = from_email
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            if reply_to:
-                msg['Reply-To'] = reply_to
-            msg.attach(MIMEText(tracked_body, 'html'))
+            try:
+                msg = MIMEMultipart()
+                msg['From'] = from_email
+                msg['To'] = to_email
+                msg['Subject'] = subject
+                if reply_to:
+                    msg['Reply-To'] = reply_to
+                msg.attach(MIMEText(tracked_body, 'html'))
 
-            with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
-                server.starttls()
-                server.login(email_settings.smtp_username, email_settings.smtp_password)
-                server.send_message(msg)
-            return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
-
+                with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
+                    server.starttls()
+                    server.login(email_settings.smtp_username, email_settings.smtp_password)
+                    server.send_message(msg)
+                return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
+            except Exception as e:
+                logging.error(f"SMTP error: {str(e)}")
+                return None, None
         else:
             logging.error(f"Unknown email provider: {email_settings.provider}")
             return None, None
-
     except Exception as e:
-        logging.error(f"Error sending email: {str(e)}")
-        raise  # Let the retry decorator handle the retry
+        logging.error(f"Error in send_email_ses after retries: {str(e)}")
+        return None, None
 
 def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
     try:
@@ -2461,18 +2436,10 @@ def wrap_email_body(body_content):
     </body>
     </html>
     """
+
 def fetch_sent_email_campaigns(session):
     try:
-        email_campaigns = session.query(EmailCampaign)\
-            .join(Lead)\
-            .join(EmailTemplate)\
-            .options(
-                joinedload(EmailCampaign.lead),
-                joinedload(EmailCampaign.template)
-            )\
-            .order_by(EmailCampaign.sent_at.desc())\
-            .all()
-            
+        email_campaigns = session.query(EmailCampaign).join(Lead).join(EmailTemplate).options(joinedload(EmailCampaign.lead), joinedload(EmailCampaign.template)).order_by(EmailCampaign.sent_at.desc()).all()
         return pd.DataFrame({
             'ID': [ec.id for ec in email_campaigns],
             'Sent At': [ec.sent_at.strftime("%Y-%m-%d %H:%M:%S") if ec.sent_at else "" for ec in email_campaigns],
@@ -2485,21 +2452,114 @@ def fetch_sent_email_campaigns(session):
             'Campaign ID': [ec.campaign_id for ec in email_campaigns],
             'Lead Name': [f"{ec.lead.first_name or ''} {ec.lead.last_name or ''}".strip() or "Unknown" for ec in email_campaigns],
             'Lead Company': [ec.lead.company or "Unknown" for ec in email_campaigns]
-        }, index=range(len(email_campaigns)))
-    except Exception as e:
-        logging.error(f"Error fetching email campaigns: {str(e)}")
+        })
+    except SQLAlchemyError as e:
+        logging.error(f"Database error in fetch_sent_email_campaigns: {str(e)}")
         return pd.DataFrame()
 
-try:
-    with db_session() as session:
-        pages[selected]()
-except Exception as e:
-    st.error(f"An error occurred: {str(e)}")
-    logging.exception("An error occurred in the main function")
-    st.write("Please try refreshing the page or contact support if the issue persists.")
+def display_logs(log_container, logs):
+    if not logs:
+        log_container.info("No logs to display yet.")
+        return
 
-st.sidebar.markdown("---")
-st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+    log_container.markdown(
+        """
+        <style>
+        .log-container {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid rgba(49, 51, 63, 0.2);
+            border-radius: 0.25rem;
+            padding: 1rem;
+        }
+        .log-entry {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+            background-color: rgba(28, 131, 225, 0.1);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    log_entries = "".join(f'<div class="log-entry">{log}</div>' for log in logs[-20:])
+    log_container.markdown(f'<div class="log-container">{log_entries}</div>', unsafe_allow_html=True)
+
+def view_sent_email_campaigns():
+    st.header("Sent Email Campaigns")
+    try:
+        with db_session() as session:
+            email_campaigns = fetch_sent_email_campaigns(session)
+        if not email_campaigns.empty:
+            st.dataframe(email_campaigns)
+            st.subheader("Detailed Content")
+            selected_campaign = st.selectbox("Select a campaign to view details", email_campaigns['ID'].tolist())
+            if selected_campaign:
+                campaign_content = email_campaigns[email_campaigns['ID'] == selected_campaign]['Content'].iloc[0]
+                st.text_area("Content", campaign_content if campaign_content else "No content available", height=300)
+        else:
+            st.info("No sent email campaigns found.")
+    except Exception as e:
+        st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
+        logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
+
+def main():
+    # Initialize session state
+    if 'automation_status' not in st.session_state:
+        st.session_state.automation_status = False
+    if 'automation_logs' not in st.session_state:
+        st.session_state.automation_logs = []
+    if 'search_terms' not in st.session_state:
+        st.session_state.search_terms = []
+    if 'optimized_terms' not in st.session_state:
+        st.session_state.optimized_terms = []
+
+    st.set_page_config(
+        page_title="Autoclient.ai | Lead Generation AI App",
+        layout="wide",
+        initial_sidebar_state="expanded",
+        page_icon=""
+    )
+
+    st.sidebar.title("AutoclientAI")
+    st.sidebar.markdown("Select a page to navigate through the application.")
+
+    pages = {
+        "🔍 Manual Search": manual_search_page,
+        "📦 Bulk Send": bulk_send_page,
+        "👥 View Leads": view_leads_page,
+        "🔑 Search Terms": search_terms_page,
+        "✉️ Email Templates": email_templates_page,
+        "🚀 Projects & Campaigns": projects_campaigns_page,
+        "📚 Knowledge Base": knowledge_base_page,
+        "🤖 AutoclientAI": autoclient_ai_page,
+        "⚙️ Automation Control": automation_control_panel_page,
+        "📨 Email Logs": view_campaign_logs,
+        "🔄 Settings": settings_page,
+        "📨 Sent Campaigns": view_sent_email_campaigns
+    }
+
+    with st.sidebar:
+        selected = option_menu(
+            menu_title="Navigation",
+            options=list(pages.keys()),
+            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
+            menu_icon="cast",
+            default_index=0
+        )
+
+    try:
+        with db_session() as session:
+            pages[selected]()
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        logging.exception("An error occurred in the main function")
+        st.write("Please try refreshing the page or contact support if the issue persists.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+
 
 def update_process_log(session, process_id, message, level='info'):
     """Update the logs for a search process"""
@@ -2531,7 +2591,6 @@ def update_process_log(session, process_id, message, level='info'):
         logging.error(f"Error updating process log: {str(e)}")
         session.rollback()
         return False
-
 def display_process_logs(process_id):
     """Display logs for a search process"""
     with db_session() as session:
@@ -2933,7 +2992,6 @@ def generate_search_term_groups_and_templates(session, kb_info, industry_focus=N
         raise
 
 def fetch_leads_for_search_term_groups(session, groups):
-    """Fetch leads associated with the given search term groups"""
     try:
         logger.info(f"Fetching leads for groups: {groups}")
         query = (
