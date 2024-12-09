@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Modern code execution environment">
+    <title>Modern Code Executor</title>
+    
+    <!-- Modern UI Dependencies -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- JS Beautify for code formatting -->
+    <script src="https://cdn.jsdelivr.net/npm/js-beautify@1.14.7/js/lib/beautify.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-beautify@1.14.7/js/lib/beautify-html.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-beautify@1.14.7/js/lib/beautify-css.js"></script>
+
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --secondary: #64748b;
+            --success: #10b981;
+            --danger: #ef4444;
+            --background: #ffffff;
+            --surface: #f8fafc;
+            --text: #1e293b;
+            --border: #e2e8f0;
+            --code-bg: #0f172a;
+            --code-text: #e2e8f0;
+        }
+
+        .dark-mode {
+            --background: #0f172a;
+            --surface: #1e293b;
+            --text: #f8fafc;
+            --border: #334155;
+            --code-bg: #1e293b;
+            --code-text: #f8fafc;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--background);
+            color: var(--text);
+            transition: all 0.3s ease;
+            min-height: 100vh;
+        }
+
+        .navbar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .code-editor {
+            font-family: 'Fira Code', monospace;
+            background: var(--code-bg);
+            color: var(--code-text);
+            border-radius: 8px;
+            padding: 1rem;
+            line-height: 1.6;
+            resize: vertical;
+        }
+
+        .btn {
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            border: none;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .form-control {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem;
+            background: var(--surface);
+            color: var(--text);
+        }
+
+        .form-control:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+        }
+
+        #output {
+            font-family: 'Fira Code', monospace;
+            background: var(--code-bg);
+            color: var(--code-text);
+            padding: 1rem;
+            border-radius: 8px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .theme-switch {
+            position: relative;
+            width: 60px;
+            height: 30px;
+            margin: 0 1rem;
+        }
+
+        .theme-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--secondary);
+            transition: .4s;
+            border-radius: 30px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--primary);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(30px);
+        }
+
+        .execution-progress {
+            height: 4px;
+            border-radius: 2px;
+            background: var(--primary);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .toast-container {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            z-index: 1050;
+        }
+
+        .toast {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .toast.show {
+            animation: slideIn 0.3s ease forwards;
+        }
+
+        .code-actions {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .code-editor-container:hover .code-actions {
+            opacity: 1;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1040;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--surface);
+            border-top: 4px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-code-square me-2"></i>Modern Code Executor
+            </span>
+            <div class="d-flex align-items-center">
+                <i class="bi bi-moon-stars me-2"></i>
+                <label class="theme-switch">
+                    <input type="checkbox" id="theme-toggle">
+                    <span class="slider"></span>
+                </label>
+                <i class="bi bi-sun ms-2"></i>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <form id="code-form">
+                            <div class="mb-4 code-editor-container position-relative">
+                                <label class="form-label d-flex justify-content-between">
+                                    <span>Code Editor</span>
+                                    <small class="text-muted">Press Ctrl + Enter to run</small>
+                                </label>
+                                <textarea id="code" class="code-editor form-control" rows="12" 
+                                    placeholder="Enter your code here..."
+                                    spellcheck="false"></textarea>
+                                <div class="code-actions">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="format-code">
+                                        <i class="bi bi-text-wrap me-1"></i>Format
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="row g-3 mb-4">
+                                <div class="col-sm-6">
+                                    <label class="form-label">Iterations</label>
+                                    <input type="number" id="iterations" class="form-control" 
+                                        min="1" max="100" value="15">
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="form-label">Execution Timeout (ms)</label>
+                                    <input type="number" id="timeout" class="form-control" 
+                                        min="1000" max="30000" value="5000">
+                                </div>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary flex-grow-1">
+                                    <i class="bi bi-play-fill me-1"></i>Execute Code
+                                </button>
+                                <button type="button" id="clear-btn" class="btn btn-outline-secondary">
+                                    <i class="bi bi-trash me-1"></i>Clear
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header bg-transparent border-bottom-0 d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">
+                            <i class="bi bi-terminal me-2"></i>Output
+                        </h6>
+                        <div class="btn-group">
+                            <button id="copy-btn" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-clipboard me-1"></i>Copy
+                            </button>
+                            <button id="download-btn" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-download me-1"></i>Save
+                            </button>
+                        </div>
+                    </div>
+                    <div class="execution-progress" id="progress-bar"></div>
+                    <div class="card-body">
+                        <pre id="output" class="mb-0"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container"></div>
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Hugging Face API key (exposed for demo)
+        const HF_API_KEY = "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";
+
+        // Dark mode toggle logic
+        const themeToggle = document.getElementById('theme-toggle');
+        const body = document.body;
+
+        if (localStorage.getItem('darkMode') === 'enabled') {
+            body.classList.add('dark-mode');
+            themeToggle.checked = true;
+        }
+
+        themeToggle.addEventListener('change', () => {
+            if (themeToggle.checked) {
+                body.classList.add('dark-mode');
+                localStorage.setItem('darkMode', 'enabled');
+            } else {
+                body.classList.remove('dark-mode');
+                localStorage.setItem('darkMode', null);
+            }
+        });
+
+        // Show toast messages
+        function showToast(message) {
+            const toastContainer = document.querySelector('.toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast show';
+            toast.textContent = message;
+            toastContainer.appendChild(toast);
+            setTimeout(() => {
+                toastContainer.removeChild(toast);
+            }, 3000);
+        }
+
+        function showError(message) {
+            showToast('Error: ' + message);
+        }
+
+        // Code execution logic
+        class CodeExecutor {
+            constructor() {
+                this.safe_globals = {
+                    'print': (...args) => { this.output.push(args.join(' ')); },
+                    'range': function*(n) { for(let i = 0; i < n; i++) yield i; },
+                    'len': arr => arr.length,
+                    'str': x => String(x),
+                    'int': x => parseInt(x),
+                    'float': x => parseFloat(x),
+                    'list': x => Array.from(x),
+                    'dict': () => ({}),
+                    'set': x => new Set(x),
+                    'max': (...args) => Math.max(...args),
+                    'min': (...args) => Math.min(...args),
+                    'sum': arr => arr.reduce((a,b) => a + b, 0)
+                };
+                this.safe_locals = {};
+                this.output = [];
+            }
+
+            async executeCodeSafely(code, timeoutMs) {
+                const sandbox = { ...this.safe_globals, ...this.safe_locals };
+                try {
+                    this.output = [];
+                    if (code.length > 10000) {
+                        throw new Error('Code exceeds maximum length of 10000 characters');
+                    }
+
+                    const fn = new Function(...Object.keys(sandbox), code);
+                    const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('Execution timed out')), timeoutMs);
+                    });
+
+                    const executionPromise = Promise.resolve(fn(...Object.values(sandbox)));
+                    await Promise.race([executionPromise, timeoutPromise]);
+                    const result = this.output.join('\n');
+                    const nextCode = await this.processOutput(result);
+                    return [result, nextCode];
+                } catch (error) {
+                    throw new Error(`Execution error: ${error.message}`);
+                }
+            }
+
+            async processOutput(result) {
+                // Call Hugging Face Inference API to transform output into next iteration code
+                try {
+                    const response = await fetch('https://api-inference.huggingface.co/models/Owen', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${HF_API_KEY}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ inputs: result })
+                    });
+                    
+                    if (!response.ok) {
+                        return '';
+                    }
+
+                    const jsonData = await response.json();
+                    if (Array.isArray(jsonData) && jsonData[0]?.generated_text) {
+                        return jsonData[0].generated_text;
+                    } else {
+                        return '';
+                    }
+                } catch (err) {
+                    console.error('Error transforming output via HF:', err);
+                    return '';
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const executor = new CodeExecutor();
+            const form = document.getElementById('code-form');
+            const codeInput = document.getElementById('code');
+            const iterationsInput = document.getElementById('iterations');
+            const timeoutInput = document.getElementById('timeout');
+            const outputElement = document.getElementById('output');
+            const clearBtn = document.getElementById('clear-btn');
+            const copyBtn = document.getElementById('copy-btn');
+            const downloadBtn = document.getElementById('download-btn');
+            const formatCodeBtn = document.getElementById('format-code');
+            const progressBar = document.getElementById('progress-bar');
+            const loadingOverlay = document.getElementById('loading-overlay');
+            let isExecuting = false;
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                if (isExecuting) return;
+
+                const code = codeInput.value.trim();
+                const iterations = parseInt(iterationsInput.value);
+                const timeoutMs = parseInt(timeoutInput.value);
+
+                if (!code) {
+                    showError('Please enter some code');
+                    return;
+                }
+
+                if (iterations < 1 || iterations > 100) {
+                    showError('Iterations must be between 1 and 100');
+                    return;
+                }
+
+                if (timeoutMs < 1000 || timeoutMs > 30000) {
+                    showError('Timeout must be between 1000 and 30000 ms');
+                    return;
+                }
+
+                try {
+                    isExecuting = true;
+                    loadingOverlay.style.display = 'flex';
+                    outputElement.textContent = '';
+                    let currentCode = code;
+                    const output = [];
+
+                    for (let i = 0; i < iterations; i++) {
+                        const progressPercent = ((i / iterations) * 100).toFixed(2);
+                        progressBar.style.width = `${progressPercent}%`;
+                        try {
+                            const [result, nextCode] = await executor.executeCodeSafely(currentCode, timeoutMs);
+                            if (result) {
+                                output.push(`Iteration ${i + 1}:\n${result}`);
+                            }
+                            if (!nextCode) {
+                                break;
+                            }
+                            currentCode = nextCode;
+                        } catch (error) {
+                            output.push(`Iteration ${i + 1} failed:\n${error.message}`);
+                            break;
+                        }
+                    }
+
+                    progressBar.style.width = `100%`;
+                    outputElement.textContent = output.join('\n\n');
+                } catch (error) {
+                    showError(error.message);
+                } finally {
+                    isExecuting = false;
+                    loadingOverlay.style.display = 'none';
+                    setTimeout(() => {
+                        progressBar.style.width = '0%';
+                    }, 1000);
+                }
+            });
+
+            clearBtn.addEventListener('click', () => {
+                codeInput.value = '';
+                outputElement.textContent = '';
+            });
+
+            copyBtn.addEventListener('click', () => {
+                navigator.clipboard.writeText(outputElement.textContent)
+                    .then(() => {
+                        showToast('Output copied to clipboard!');
+                    })
+                    .catch(err => {
+                        showError('Failed to copy text: ' + err);
+                    });
+            });
+
+            downloadBtn.addEventListener('click', () => {
+                const blob = new Blob([outputElement.textContent], { type: 'text/plain' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'output.txt';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                showToast('Output saved as output.txt');
+            });
+
+            formatCodeBtn.addEventListener('click', () => {
+                try {
+                    const formatted = js_beautify(codeInput.value, { indent_size: 2 });
+                    codeInput.value = formatted;
+                    showToast('Code formatted!');
+                } catch (err) {
+                    showError('Failed to format code: ' + err.message);
+                }
+            });
+
+            // Ctrl + Enter to run code
+            codeInput.addEventListener('keydown', (e) => {
+                if (e.ctrlKey && e.key === 'Enter') {
+                    form.dispatchEvent(new Event('submit'));
+                }
+            });
+
+            window.addEventListener('beforeunload', (e) => {
+                if (codeInput.value.trim()) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
