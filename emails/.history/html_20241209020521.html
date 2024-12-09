@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Secure code execution environment for running and iterating code snippets">
+    <meta name="keywords" content="code execution, sandbox, javascript, iterations">
+    <meta name="author" content="Your Name">
+    <meta name="robots" content="index, follow">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; connect-src 'self' https:; font-src 'self' https:; worker-src 'self' blob:;">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAABX0lEQVQ4jY2TvUrDYBSGn9Ok0R+kDg7iILg4uHVwcXAQwUUQXB0FB8HVQfAH3N0El4JQcKwgFBEHQRBxKA6CDiJIW0QKbdM2bRKnNjQxbdLzTYfv+Z7vPed8R1BKsY4EDnxSSrEs3/eBCOAC00U+IYS+yhcGjPwxkAdqwB3wDLwBWSAJHAEJ4AhIrwRQSmml1KNa1INSqqyUcpY5nFLqRin1tYS5EFi2/QwkgTBwCxwDp8A+sANEgQKQAVyXpqnFN4VCoRvgwc0pv5SSaDSKlBLTNInH4/i8Xh4fHhFCZBzHyQshDCAghIgJIZBSUiqVKBaLCCEwDINQKITf72dtZ7fb5fn5hUAgEPR4PEal8gVA0O/3k0qlsCyLer1Ou91mtVolHA4TCoXQNI1Go0GpVKLT6SCl3PL5fEQiEWzbptlsMhgMcByHyWSCruvouo5hGMznc0ajEbqu/37if8gPqaJLqWB6SqwAAAAASUVORK5CYII=">
+    
+    <title>Code Execution Environment</title>
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <style>
+        .execution-spinner {
+            display: none;
+            width: 1rem;
+            height: 1rem;
+            margin-right: 0.5rem;
+        }
+        .code-area {
+            font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            tab-size: 4;
+            resize: vertical;
+        }
+        .output-area {
+            font-family: 'Courier New', Courier, monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .error-boundary {
+            padding: 1rem;
+            margin: 1rem 0;
+            border: 1px solid #dc3545;
+            border-radius: 0.25rem;
+            background-color: #f8d7da;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
+        
+        /* Add smooth transitions */
+        .btn {
+            transition: transform 0.1s ease-in-out;
+        }
+        .btn:active {
+            transform: scale(0.98);
+        }
+        
+        /* Improve dark mode support */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+            }
+            .code-area, .output-area {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border-color: #404040;
+            }
+            .card {
+                background-color: #2d2d2d;
+                border-color: #404040;
+            }
+        }
+    </style>
+    
+    <!-- Preload critical assets -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" as="script">
+</head>
+<body class="container py-4">
+    <!-- Skip to main content -->
+    <a href="#main" class="visually-hidden-focusable">Skip to main content</a>
+
+    <header>
+        <h1 class="mb-4">Secure Code Execution Environment</h1>
+    </header>
+
+    <main id="main">
+        <noscript>
+            <div class="alert alert-warning">
+                Please enable JavaScript to use this application.
+            </div>
+        </noscript>
+
+        <form id="code-form" class="mb-4">
+            <div class="mb-3">
+                <label for="code" class="form-label">Enter your code:</label>
+                <textarea id="code" 
+                          class="form-control" 
+                          rows="10" 
+                          placeholder="Enter code here..."
+                          aria-describedby="codeHelp"></textarea>
+                <div id="codeHelp" class="form-text">
+                    Enter JavaScript code to execute in a sandboxed environment
+                </div>
+            </div>
+            <div class="mb-3">
+                <label for="iterations" class="form-label">Number of iterations:</label>
+                <input type="number" 
+                       id="iterations" 
+                       class="form-control" 
+                       min="1" 
+                       max="100" 
+                       value="15"
+                       aria-describedby="iterationsHelp">
+                <div id="iterationsHelp" class="form-text">
+                    Choose between 1-100 iterations
+                </div>
+            </div>
+            <div class="btn-group">
+                <button type="submit" id="start-btn" class="btn btn-primary">
+                    <i class="bi bi-play-fill"></i> Execute Code
+                </button>
+                <button type="button" id="clear-btn" class="btn btn-secondary">
+                    <i class="bi bi-trash"></i> Clear
+                </button>
+            </div>
+        </form>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Output</h5>
+                <button id="copy-btn" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-clipboard"></i> Copy Output
+                </button>
+            </div>
+            <div class="card-body">
+                <pre id="output" class="border p-3 bg-light" style="max-height: 400px; overflow-y: auto;"></pre>
+                <div id="message" class="alert alert-danger mt-3 d-none" role="alert"></div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="mt-5 text-center text-muted">
+        <small>&copy; 2024 Your Company. All rights reserved.</small>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" defer></script>
+    <script>
+        // Error handling wrapper
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            console.error('Global error:', {msg, url, lineNo, columnNo, error});
+            showError('An unexpected error occurred. Please try again.');
+            return false;
+        };
+
+        class CodeExecutor {
+            constructor() {
+                this.safe_globals = {
+                    'print': (...args) => { 
+                        const sanitized = args.map(arg => this.sanitizeOutput(arg));
+                        this.output.push(sanitized.join(' ')); 
+                    },
+                    'range': function*(n) { 
+                        n = Math.min(Math.max(0, parseInt(n) || 0), 1000000);
+                        for(let i = 0; i < n; i++) yield i; 
+                    },
+                    'len': arr => Array.isArray(arr) ? arr.length : String(arr).length,
+                    'str': x => this.sanitizeOutput(String(x)),
+                    'int': x => {
+                        const parsed = parseInt(x);
+                        if (isNaN(parsed)) throw new Error('Invalid integer conversion');
+                        return parsed;
+                    },
+                    'float': x => {
+                        const parsed = parseFloat(x);
+                        if (isNaN(parsed)) throw new Error('Invalid float conversion');
+                        return parsed;
+                    },
+                    'list': x => Array.from(x).map(item => this.sanitizeOutput(item)),
+                    'dict': () => ({}),
+                    'set': x => new Set(Array.from(x).map(item => this.sanitizeOutput(item))),
+                    'max': (...args) => {
+                        if (args.length === 0) throw new Error('max() arg is an empty sequence');
+                        return Math.max(...args);
+                    },
+                    'min': (...args) => {
+                        if (args.length === 0) throw new Error('min() arg is an empty sequence');
+                        return Math.min(...args);
+                    },
+                    'sum': arr => {
+                        if (!Array.isArray(arr)) throw new Error('sum() argument must be an array');
+                        return arr.reduce((a,b) => {
+                            if (typeof a !== 'number' || typeof b !== 'number') {
+                                throw new Error('sum() can only be used with numbers');
+                            }
+                            return a + b;
+                        }, 0);
+                    }
+                };
+                this.safe_locals = {};
+                this.output = [];
+                this.executionCount = 0;
+                this.maxExecutions = 1000;
+            }
+
+            sanitizeOutput(input) {
+                if (typeof input === 'string') {
+                    return input.replace(/[<>]/g, c => ({ '<': '&lt;', '>': '&gt;' })[c]);
+                }
+                return input;
+            }
+
+            validateCode(code) {
+                if (typeof code !== 'string') {
+                    throw new Error('Code must be a string');
+                }
+                if (code.length > 10000) {
+                    throw new Error('Code exceeds maximum length of 10000 characters');
+                }
+                if (code.includes('eval') || code.includes('Function')) {
+                    throw new Error('Prohibited code constructs detected');
+                }
+                if (this.executionCount > this.maxExecutions) {
+                    throw new Error('Maximum execution count exceeded');
+                }
+            }
+
+            async executeCodeSafely(code) {
+                this.validateCode(code);
+                this.executionCount++;
+
+                const sandbox = {
+                    ...this.safe_globals,
+                    ...this.safe_locals
+                };
+
+                try {
+                    this.output = [];
+                    
+                    const fn = new Function(...Object.keys(sandbox), code);
+                    const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('Execution timed out (5s limit)')), 5000);
+                    });
+                    
+                    const executionPromise = Promise.resolve(fn(...Object.values(sandbox)));
+                    
+                    await Promise.race([executionPromise, timeoutPromise]);
+                    const result = this.output.join('\n');
+                    return [result, this.processOutput(result)];
+                } catch (error) {
+                    throw new Error(`Execution error: ${this.sanitizeOutput(error.message)}`);
+                }
+            }
+
+            processOutput(result) {
+                if (!result || typeof result !== 'string') return '';
+                return result.slice(0, 10000); // Limit output size
+            }
+        }
+
+        // Initialize components after DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            const executor = new CodeExecutor();
+            const form = document.getElementById('code-form');
+            const codeInput = document.getElementById('code');
+            const iterationsInput = document.getElementById('iterations');
+            const outputElement = document.getElementById('output');
+            const messageElement = document.getElementById('message');
+            const clearBtn = document.getElementById('clear-btn');
+            const copyBtn = document.getElementById('copy-btn');
+            const startBtn = document.getElementById('start-btn');
+            let isExecuting = false;
+
+            // Add loading spinner to start button
+            const spinner = document.createElement('span');
+            spinner.className = 'spinner-border spinner-border-sm execution-spinner';
+            spinner.setAttribute('role', 'status');
+            spinner.setAttribute('aria-hidden', 'true');
+            startBtn.prepend(spinner);
+
+            function setExecuting(executing) {
+                isExecuting = executing;
+                document.body.style.cursor = executing ? 'wait' : 'default';
+                startBtn.disabled = executing;
+                spinner.style.display = executing ? 'inline-block' : 'none';
+                if (executing) {
+                    messageElement.classList.add('d-none');
+                }
+            }
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                if (isExecuting) return;
+                
+                const code = codeInput.value.trim();
+                const iterations = parseInt(iterationsInput.value);
+                
+                if (!code) {
+                    showError('Please enter some code');
+                    return;
+                }
+
+                if (iterations < 1 || iterations > 100) {
+                    showError('Iterations must be between 1 and 100');
+                    return;
+                }
+
+                try {
+                    setExecuting(true);
+                    const output = [];
+                    let currentCode = code;
+
+                    for (let i = 0; i < iterations; i++) {
+                        try {
+                            const [result, nextCode] = await executor.executeCodeSafely(currentCode);
+                            if (result) {
+                                output.push(`Iteration ${i + 1}:\n${result}`);
+                            }
+                            if (!nextCode) break;
+                            currentCode = nextCode;
+                        } catch (error) {
+                            output.push(`Iteration ${i + 1} failed:\n${error.message}`);
+                            break;
+                        }
+                    }
+
+                    outputElement.textContent = output.join('\n\n');
+                } catch (error) {
+                    showError(error.message);
+                } finally {
+                    setExecuting(false);
+                }
+            });
+
+            clearBtn.addEventListener('click', () => {
+                if (isExecuting) return;
+                codeInput.value = '';
+                outputElement.textContent = '';
+                messageElement.classList.add('d-none');
+                codeInput.focus();
+            });
+
+            copyBtn.addEventListener('click', async () => {
+                try {
+                    const textToCopy = outputElement.textContent;
+                    if (!textToCopy) {
+                        showError('No output to copy');
+                        return;
+                    }
+                    
+                    await navigator.clipboard.writeText(textToCopy);
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = '<i class="bi bi-check"></i> Copied!';
+                    copyBtn.disabled = true;
+                    
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalText;
+                        copyBtn.disabled = false;
+                    }, 2000);
+                } catch (err) {
+                    showError('Failed to copy to clipboard. Please try selecting and copying manually.');
+                }
+            });
+
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    if (e.key === 'Enter' && !isExecuting) {
+                        e.preventDefault();
+                        form.dispatchEvent(new Event('submit'));
+                    } else if (e.key === 'l') {
+                        e.preventDefault();
+                        clearBtn.click();
+                    }
+                }
+            });
+        });
+
+        function showError(message) {
+            const messageElement = document.getElementById('message');
+            messageElement.textContent = message;
+            messageElement.classList.remove('d-none');
+            messageElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // Prevent accidental navigation when there's unsaved code
+        window.addEventListener('beforeunload', (e) => {
+            const codeInput = document.getElementById('code');
+            if (codeInput.value.trim()) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
+        // Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(error => {
+                    console.error('ServiceWorker registration failed:', error);
+                });
+            });
+        }
+    </script>
+
+    <!-- Analytics (optional - remove if not needed) -->
+    <!-- <script async src="https://www.googletagmanager.com/gtag/js?id=YOUR-ID"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'YOUR-ID');
+    </script> -->
+</body>
+</html>
