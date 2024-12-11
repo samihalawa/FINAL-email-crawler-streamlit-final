@@ -1,16 +1,14 @@
 [Unit]
-Description=Email Lead Generator Worker Service
+Description=Search Worker Service
 After=network.target
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
+User=your_user
+Environment=DATABASE_URL=postgresql://user:pass@host:port/db
 WorkingDirectory=/path/to/your/app
-Environment=PYTHONPATH=/path/to/your/app
-ExecStart=/usr/bin/python3 worker_manager.py
+ExecStart=/usr/bin/python3 /path/to/your/app/WITH_WORKER/worker.py
 Restart=always
-RestartSec=10
 
 [Install]
 WantedBy=multi-user.target 
