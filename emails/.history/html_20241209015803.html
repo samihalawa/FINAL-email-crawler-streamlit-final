@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Secure code execution environment for running and iterating code snippets">
+    <meta name="keywords" content="code execution, sandbox, javascript, iterations">
+    <meta name="author" content="Your Name">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/favicon.png">
+    
+    <title>Code Execution Environment</title>
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="/css/custom.css">
+    
+    <!-- Preload critical assets -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" as="script">
+</head>
+<body class="container py-4">
+    <!-- Skip to main content -->
+    <a href="#main" class="visually-hidden-focusable">Skip to main content</a>
+
+    <header>
+        <h1 class="mb-4">Secure Code Execution Environment</h1>
+    </header>
+
+    <main id="main">
+        <noscript>
+            <div class="alert alert-warning">
+                Please enable JavaScript to use this application.
+            </div>
+        </noscript>
+
+        <form id="code-form" class="mb-4">
+            <div class="mb-3">
+                <label for="code" class="form-label">Enter your code:</label>
+                <textarea id="code" 
+                          class="form-control" 
+                          rows="10" 
+                          placeholder="Enter code here..."
+                          aria-describedby="codeHelp"></textarea>
+                <div id="codeHelp" class="form-text">
+                    Enter JavaScript code to execute in a sandboxed environment
+                </div>
+            </div>
+            <div class="mb-3">
+                <label for="iterations" class="form-label">Number of iterations:</label>
+                <input type="number" 
+                       id="iterations" 
+                       class="form-control" 
+                       min="1" 
+                       max="100" 
+                       value="15"
+                       aria-describedby="iterationsHelp">
+                <div id="iterationsHelp" class="form-text">
+                    Choose between 1-100 iterations
+                </div>
+            </div>
+            <div class="btn-group">
+                <button type="submit" id="start-btn" class="btn btn-primary">
+                    <i class="bi bi-play-fill"></i> Execute Code
+                </button>
+                <button type="button" id="clear-btn" class="btn btn-secondary">
+                    <i class="bi bi-trash"></i> Clear
+                </button>
+            </div>
+        </form>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Output</h5>
+                <button id="copy-btn" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-clipboard"></i> Copy Output
+                </button>
+            </div>
+            <div class="card-body">
+                <pre id="output" class="border p-3 bg-light" style="max-height: 400px; overflow-y: auto;"></pre>
+                <div id="message" class="alert alert-danger mt-3 d-none" role="alert"></div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="mt-5 text-center text-muted">
+        <small>&copy; 2024 Your Company. All rights reserved.</small>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" defer></script>
+    <script>
+        // Error handling wrapper
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            console.error('Global error:', error);
+            showError('An unexpected error occurred. Please try again.');
+            return false;
+        };
+
+        class CodeExecutor {
+            constructor() {
+                // Initialize with safe globals
+                this.safe_globals = {
+                    'print': (...args) => { this.output.push(args.join(' ')); },
+                    'range': function*(n) { for(let i = 0; i < n; i++) yield i; },
+                    'len': arr => arr.length,
+                    'str': x => String(x),
+                    'int': x => parseInt(x),
+                    'float': x => parseFloat(x),
+                    'list': x => Array.from(x),
+                    'dict': () => ({}),
+                    'set': x => new Set(x),
+                    'max': (...args) => Math.max(...args),
+                    'min': (...args) => Math.min(...args),
+                    'sum': arr => arr.reduce((a,b) => a + b, 0)
+                };
+                this.safe_locals = {};
+                this.output = [];
+            }
+
+            executeCodeSafely(code) {
+                const sandbox = {
+                    ...this.safe_globals,
+                    ...this.safe_locals
+                };
+
+                try {
+                    // Reset output for new execution
+                    this.output = [];
+                    
+                    // Validate code length
+                    if (code.length > 10000) {
+                        throw new Error('Code exceeds maximum length of 10000 characters');
+                    }
+                    
+                    // Create and execute the sandboxed function with timeout
+                    const fn = new Function(...Object.keys(sandbox), code);
+                    const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('Execution timed out')), 5000);
+                    });
+                    
+                    const executionPromise = Promise.resolve(fn(...Object.values(sandbox)));
+                    return Promise.race([executionPromise, timeoutPromise])
+                        .then(() => {
+                            const result = this.output.join('\n');
+                            const nextCode = this.processOutput(result);
+                            return [result, nextCode];
+                        });
+                } catch (error) {
+                    throw new Error(`Execution error: ${error.message}`);
+                }
+            }
+
+            processOutput(result) {
+                // Here you can implement logic to transform the output into the next iteration's code
+                return result || '';
+            }
+        }
+
+        // Initialize components after DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            const executor = new CodeExecutor();
+            const form = document.getElementById('code-form');
+            const codeInput = document.getElementById('code');
+            const iterationsInput = document.getElementById('iterations');
+            const outputElement = document.getElementById('output');
+            const messageElement = document.getElementById('message');
+            const clearBtn = document.getElementById('clear-btn');
+            const copyBtn = document.getElementById('copy-btn');
+            let isExecuting = false;
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                if (isExecuting) return;
+                
+                const code = codeInput.value.trim();
+                const iterations = parseInt(iterationsInput.value);
+                
+                if (!code) {
+                    showError('Please enter some code');
+                    return;
+                }
+
+                if (iterations < 1 || iterations > 100) {
+                    showError('Iterations must be between 1 and 100');
+                    return;
+                }
+
+                try {
+                    isExecuting = true;
+                    document.body.style.cursor = 'wait';
+                    const startBtn = document.getElementById('start-btn');
+                    startBtn.disabled = true;
+                    
+                    const output = [];
+                    let currentCode = code;
+
+                    for (let i = 0; i < iterations; i++) {
+                        try {
+                            const [result, nextCode] = await executor.executeCodeSafely(currentCode);
+                            if (result) {
+                                output.push(`Iteration ${i + 1}:\n${result}`);
+                            }
+                            if (!nextCode) {
+                                break;
+                            }
+                            currentCode = nextCode;
+                        } catch (error) {
+                            output.push(`Iteration ${i + 1} failed:\n${error.message}`);
+                            break;
+                        }
+                    }
+
+                    outputElement.textContent = output.join('\n\n');
+                    messageElement.classList.add('d-none');
+                } catch (error) {
+                    showError(error.message);
+                } finally {
+                    isExecuting = false;
+                    document.body.style.cursor = 'default';
+                    startBtn.disabled = false;
+                }
+            });
+
+            clearBtn.addEventListener('click', () => {
+                codeInput.value = '';
+                outputElement.textContent = '';
+                messageElement.classList.add('d-none');
+            });
+
+            copyBtn.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(outputElement.textContent);
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = '<i class="bi bi-check"></i> Copied!';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalText;
+                    }, 2000);
+                } catch (err) {
+                    showError('Failed to copy to clipboard');
+                }
+            });
+        });
+
+        function showError(message) {
+            const messageElement = document.getElementById('message');
+            messageElement.textContent = message;
+            messageElement.classList.remove('d-none');
+        }
+
+        // Prevent accidental navigation when there's unsaved code
+        window.addEventListener('beforeunload', (e) => {
+            const codeInput = document.getElementById('code');
+            if (codeInput.value.trim()) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
+        // Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(error => {
+                    console.error('ServiceWorker registration failed:', error);
+                });
+            });
+        }
+    </script>
+
+    <!-- Analytics (replace with your analytics code) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=YOUR-ID"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'YOUR-ID');
+    </script>
+</body>
+</html>
