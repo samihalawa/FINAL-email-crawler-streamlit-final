@@ -1,5 +1,6 @@
 streamlit==1.28.2
 sqlalchemy==2.0.23
+<<<<<<< HEAD
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 requests==2.31.0
@@ -17,3 +18,18 @@ healthcheck==1.5.0
 ratelimit==2.2.1
 tenacity==8.2.3
 urllib3==2.1.0
+=======
+pandas==2.1.3
+plotly==5.18.0
+openai==1.3.5
+python-dotenv==1.0.0
+beautifulsoup4==4.12.2
+googlesearch-python==3.0.0
+fake-useragent==1.4.0
+email-validator
+boto3==1.33.6
+aiohttp==3.9.1
+tenacity==8.2.3
+psycopg2-binary==2.9.9
+streamlit-option-menu
+>>>>>>> 93fc00179f4385548fe8a74236c971111b558c22
