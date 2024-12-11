@@ -2359,3 +2359,6 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+
+if __name__ == "__main__":
+    main()
