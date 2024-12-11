@@ -21,6 +21,9 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+from worker_utils import celery_app, run_worker_process
+import atexit
+
 #database info
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -962,67 +965,44 @@ def manual_search_page():
                 st.error("No email setting selected. Please select an email setting.")
                 return
 
-    if st.button("Search"):
-        if not search_terms:
-            return st.warning("Enter at least one search term.")
-
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        email_status = st.empty()
-        results = []
-
-        leads_container = st.empty()
-        leads_found, emails_sent = [], []
-
-        # Create a single log container for all search terms
-        log_container = st.empty()
-
-        for i, term in enumerate(search_terms):
-            status_text.text(f"Searching: '{term}' ({i+1}/{len(search_terms)})")
-
-            with db_session() as session:
-                term_results = manual_search(session, [term], num_results, ignore_previously_fetched, optimize_english, optimize_spanish, shuffle_keywords_option, language, enable_email_sending, log_container, from_email, reply_to, email_template)
-                results.extend(term_results['results'])
-
-                leads_found.extend([f"{res['Email']} - {res['Company']}" for res in term_results['results']])
-
-                if enable_email_sending:
-                    template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                    for result in term_results['results']:
-                        if not result or 'Email' not in result or not is_valid_email(result['Email']):
-                            status_text.text(f"Skipping invalid result or email: {result.get('Email') if result else 'None'}")
-                            continue
-                        wrapped_content = wrap_email_body(template.body_content)
-                        response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
-                        if response:
-                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), template.body_content)
-                            emails_sent.append(f"✅ {result['Email']}")
-                            status_text.text(f"Email sent to: {result['Email']}")
-                        else:
-                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, template.body_content)
-                            emails_sent.append(f"❌ {result['Email']}")
-                            status_text.text(f"Failed to send email to: {result['Email']}")
-
-            leads_container.dataframe(pd.DataFrame({"Leads Found": leads_found, "Emails Sent": emails_sent + [""] * (len(leads_found) - len(emails_sent))}))
-            progress_bar.progress((i + 1) / len(search_terms))
-
-        # Display final results
-        st.subheader("Search Results")
-        st.dataframe(pd.DataFrame(results))
-
-        if enable_email_sending:
-            st.subheader("Email Sending Results")
-            success_rate = sum(1 for email in emails_sent if email.startswith("✅")) / len(emails_sent) if emails_sent else 0
-            st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
-
-        st.download_button(
-            label="Download CSV",
-            data=pd.DataFrame(results).to_csv(index=False).encode('utf-8'),
-            file_name="search_results.csv",
-            mime="text/csv",
-        )
-
-# Update other functions that might be accessing detached objects
+    if st.button("Start Search"):
+        search_config = {
+            'ignore_previously_fetched': ignore_previously_fetched,
+            'optimize_english': optimize_english,
+            'optimize_spanish': optimize_spanish,
+            'shuffle_keywords_option': shuffle_keywords_option,
+            'language': language,
+            'enable_email_sending': enable_email_sending,
+            'from_email': from_email,
+            'reply_to': reply_to,
+            'email_template': email_template
+        }
+        
+        # Start background task
+        task = background_search_task.delay(search_terms, num_results, search_config)
+        st.session_state['search_task_id'] = task.id
+        
+    # Check task status
+    if 'search_task_id' in st.session_state:
+        task = background_search_task.AsyncResult(st.session_state['search_task_id'])
+        
+        if task.state == 'PENDING':
+            st.info("Starting search...")
+        elif task.state == 'PROGRESS':
+            progress = task.info.get('current', 0)
+            term = task.info.get('term', '')
+            st.progress(progress / len(search_terms))
+            st.text(f"Searching: {term}")
+            
+            # Update results display
+            latest_results = task.info.get('latest_results', [])
+            if latest_results:
+                update_results_display(st.empty(), latest_results)
+                
+        elif task.state == 'SUCCESS':
+            results = task.get()
+            display_search_results(results['results'], 'manual')
+            del st.session_state['search_task_id']
 
 def fetch_search_terms_with_lead_count(session):
     query = (session.query(SearchTerm.term, 
@@ -1705,14 +1685,22 @@ def bulk_send_page():
             st.error("No email templates or settings available. Please set them up first.")
             return
 
-        template_option = st.selectbox("Email Template", options=templates, format_func=lambda x: x.split(":")[1].strip())
+        template_option = st.selectbox(
+            "Email Template", 
+            options=templates, 
+            format_func=lambda x: x.split(":")[1].strip()
+        )
         template_id = int(template_option.split(":")[0])
         template = session.query(EmailTemplate).filter_by(id=template_id).first()
 
         col1, col2 = st.columns(2)
         with col1:
             subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
+            email_setting_option = st.selectbox(
+                "From Email", 
+                options=email_settings, 
+                format_func=lambda x: f"{x['name']} ({x['email']})"
+            )
             if email_setting_option:
                 from_email = email_setting_option['email']
                 reply_to = st.text_input("Reply To", email_setting_option['email'])
@@ -1945,23 +1933,53 @@ def knowledge_base_page():
     st.title("Knowledge Base")
     with db_session() as session:
         project_options = fetch_projects(session)
-        if not project_options: return st.warning("No projects found. Please create a project first.")
+        if not project_options:
+            return st.warning("No projects found. Please create a project first.")
+        
         selected_project = st.selectbox("Select Project", options=project_options)
         project_id = int(selected_project.split(":")[0])
         set_active_project_id(project_id)
         kb_entry = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
+        
         with st.form("knowledge_base_form"):
-            fields = ['kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role', 'contact_email', 'company_description', 'company_mission', 'company_target_market', 'company_other', 'product_name', 'product_description', 'product_target_customer', 'product_other', 'other_context', 'example_email']
-            form_data = {field: st.text_input(field.replace('_', ' ').title(), value=getattr(kb_entry, field, '')) if field in ['kb_name', 'contact_name', 'contact_role', 'contact_email', 'product_name'] else st.text_area(field.replace('_', ' ').title(), value=getattr(kb_entry, field, '')) for field in fields}
+            fields = [
+                'kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role', 
+                'contact_email', 'company_description', 'company_mission', 
+                'company_target_market', 'company_other', 'product_name', 
+                'product_description', 'product_target_customer', 'product_other', 
+                'other_context', 'example_email'
+            ]
+            
+            form_data = {}
+            for field in fields:
+                if field in ['kb_name', 'contact_name', 'contact_role', 'contact_email', 'product_name']:
+                    form_data[field] = st.text_input(
+                        field.replace('_', ' ').title(), 
+                        value=getattr(kb_entry, field, '')
+                    )
+                else:
+                    form_data[field] = st.text_area(
+                        field.replace('_', ' ').title(), 
+                        value=getattr(kb_entry, field, '')
+                    )
+            
             if st.form_submit_button("Save Knowledge Base"):
                 try:
-                    form_data.update({'project_id': project_id, 'created_at': datetime.utcnow()})
+                    form_data.update({
+                        'project_id': project_id,
+                        'created_at': datetime.utcnow()
+                    })
+                    
                     if kb_entry:
-                        for k, v in form_data.items(): setattr(kb_entry, k, v)
-                    else: session.add(KnowledgeBase(**form_data))
+                        for k, v in form_data.items():
+                            setattr(kb_entry, k, v)
+                    else:
+                        session.add(KnowledgeBase(**form_data))
+                    
                     session.commit()
                     st.success("Knowledge Base saved successfully!", icon="✅")
-                except Exception as e: st.error(f"An error occurred while saving the Knowledge Base: {str(e)}")
+                except Exception as e:
+                    st.error(f"An error occurred while saving the Knowledge Base: {str(e)}")
 
 def autoclient_ai_page():
     st.header("AutoclientAI - Automated Lead Generation")
@@ -2315,7 +2333,22 @@ def view_sent_email_campaigns():
         st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
+def start_background_processes():
+    """Start all background processes"""
+    worker_process = run_worker_process()
+    
+    # Register cleanup
+    def cleanup():
+        if worker_process.is_alive():
+            worker_process.terminate()
+            worker_process.join()
+    
+    atexit.register(cleanup)
+
 def main():
+    # Start background processes
+    start_background_processes()
+    
     st.set_page_config(
         page_title="Autoclient.ai | Lead Generation AI App",
         layout="wide",
