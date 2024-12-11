@@ -1,21 +1,15 @@
 from celery import Celery
-import os
-from dotenv import load_dotenv
+from config import CELERY_CONFIG
 
-load_dotenv()
+celery_app = Celery('autoclient_tasks')
+celery_app.conf.update(CELERY_CONFIG)
 
-# Configure Celery
-celery_app = Celery(
-    'autoclient_tasks',
-    broker=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
-    backend=os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-)
+# Optional task routing
+celery_app.conf.task_routes = {
+    'tasks.background_search_task': {'queue': 'search'},
+    'tasks.automation_loop_task': {'queue': 'automation'}
+}
 
-# Celery configuration
-celery_app.conf.update(
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
-) 
+# Optional task time limits
+celery_app.conf.task_time_limit = 3600  # 1 hour
+celery_app.conf.task_soft_time_limit = 3300  # 55 minutes 

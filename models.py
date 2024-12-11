@@ -1,6 +1,5 @@
 from sqlalchemy import Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, func
 from sqlalchemy.orm import declarative_base, relationship
-from datetime import datetime
 
 Base = declarative_base()
 
@@ -22,12 +21,55 @@ class Campaign(Base):
     auto_send = Column(Boolean, default=False)
     loop_automation = Column(Boolean, default=False)
     ai_customization = Column(Boolean, default=False)
-    max_emails_per_group = Column(BigInteger, default=40)
+    max_emails_per_group = Column(BigInteger, default=500)
     loop_interval = Column(BigInteger, default=60)
     project = relationship("Project", back_populates="campaigns")
     email_campaigns = relationship("EmailCampaign", back_populates="campaign")
     search_terms = relationship("SearchTerm", back_populates="campaign")
     campaign_leads = relationship("CampaignLead", back_populates="campaign")
+
+class CampaignLead(Base):
+    __tablename__ = 'campaign_leads'
+    id = Column(BigInteger, primary_key=True)
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    lead_id = Column(BigInteger, ForeignKey('leads.id'))
+    status = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    lead = relationship("Lead", back_populates="campaign_leads")
+    campaign = relationship("Campaign", back_populates="campaign_leads")
+
+class KnowledgeBase(Base):
+    __tablename__ = 'knowledge_base'
+    id = Column(BigInteger, primary_key=True)
+    project_id = Column(BigInteger, ForeignKey('projects.id'), nullable=False)
+    kb_name = Column(Text)
+    kb_bio = Column(Text)
+    kb_values = Column(Text)
+    contact_name = Column(Text)
+    contact_role = Column(Text)
+    contact_email = Column(Text)
+    company_description = Column(Text)
+    company_mission = Column(Text)
+    company_target_market = Column(Text)
+    company_other = Column(Text)
+    product_name = Column(Text)
+    product_description = Column(Text)
+    product_target_customer = Column(Text)
+    product_other = Column(Text)
+    other_context = Column(Text)
+    example_email = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    project = relationship("Project", back_populates="knowledge_base")
+
+    def to_dict(self):
+        return {attr: getattr(self, attr) for attr in [
+            'kb_name', 'kb_bio', 'kb_values', 'contact_name', 'contact_role',
+            'contact_email', 'company_description', 'company_mission',
+            'company_target_market', 'company_other', 'product_name',
+            'product_description', 'product_target_customer', 'product_other',
+            'other_context', 'example_email'
+        ]}
 
 class Lead(Base):
     __tablename__ = 'leads'
@@ -80,39 +122,49 @@ class EmailCampaign(Base):
     lead = relationship("Lead", back_populates="email_campaigns")
     template = relationship("EmailTemplate", back_populates="email_campaigns")
 
-class KnowledgeBase(Base):
-    __tablename__ = 'knowledge_base'
+class OptimizedSearchTerm(Base):
+    __tablename__ = 'optimized_search_terms'
     id = Column(BigInteger, primary_key=True)
-    project_id = Column(BigInteger, ForeignKey('projects.id'), nullable=False)
-    kb_name = Column(Text)
-    kb_bio = Column(Text)
-    kb_values = Column(Text)
-    contact_name = Column(Text)
-    contact_role = Column(Text)
-    contact_email = Column(Text)
-    company_description = Column(Text)
-    company_mission = Column(Text)
-    company_target_market = Column(Text)
-    company_other = Column(Text)
-    product_name = Column(Text)
-    product_description = Column(Text)
-    product_target_customer = Column(Text)
-    product_other = Column(Text)
-    other_context = Column(Text)
-    example_email = Column(Text)
+    original_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
+    term = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    project = relationship("Project", back_populates="knowledge_base")
+    original_term = relationship("SearchTerm", back_populates="optimized_terms")
 
-class CampaignLead(Base):
-    __tablename__ = 'campaign_leads'
+class SearchTermEffectiveness(Base):
+    __tablename__ = 'search_term_effectiveness'
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    lead_id = Column(BigInteger, ForeignKey('leads.id'))
-    status = Column(Text)
+    search_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
+    total_results = Column(BigInteger)
+    valid_leads = Column(BigInteger)
+    irrelevant_leads = Column(BigInteger)
+    blogs_found = Column(BigInteger)
+    directories_found = Column(BigInteger)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    lead = relationship("Lead", back_populates="campaign_leads")
-    campaign = relationship("Campaign", back_populates="campaign_leads")
+    search_term = relationship("SearchTerm", back_populates="effectiveness")
+
+class SearchTermGroup(Base):
+    __tablename__ = 'search_term_groups'
+    id = Column(BigInteger, primary_key=True)
+    name = Column(Text)
+    email_template = Column(Text)
+    description = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    search_terms = relationship("SearchTerm", back_populates="group")
+
+class SearchTerm(Base):
+    __tablename__ = 'search_terms'
+    id = Column(BigInteger, primary_key=True)
+    group_id = Column(BigInteger, ForeignKey('search_term_groups.id'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    term = Column(Text)
+    category = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    language = Column(Text, default='ES')
+    group = relationship("SearchTermGroup", back_populates="search_terms")
+    campaign = relationship("Campaign", back_populates="search_terms")
+    optimized_terms = relationship("OptimizedSearchTerm", back_populates="original_term")
+    lead_sources = relationship("LeadSource", back_populates="search_term")
+    effectiveness = relationship("SearchTermEffectiveness", back_populates="search_term", uselist=False)
 
 class LeadSource(Base):
     __tablename__ = 'lead_sources'
@@ -133,13 +185,52 @@ class LeadSource(Base):
     lead = relationship("Lead", back_populates="lead_sources")
     search_term = relationship("SearchTerm", back_populates="lead_sources")
 
-class SearchTerm(Base):
-    __tablename__ = 'search_terms'
+class AIRequestLog(Base):
+    __tablename__ = 'ai_request_logs'
+    id = Column(BigInteger, primary_key=True)
+    function_name = Column(Text)
+    prompt = Column(Text)
+    response = Column(Text)
+    model_used = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    lead_id = Column(BigInteger, ForeignKey('leads.id'))
+    email_campaign_id = Column(BigInteger, ForeignKey('email_campaigns.id'))
+    lead = relationship("Lead")
+    email_campaign = relationship("EmailCampaign")
+
+class AutomationLog(Base):
+    __tablename__ = 'automation_logs'
     id = Column(BigInteger, primary_key=True)
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    term = Column(Text)
-    category = Column(Text)
+    search_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
+    leads_gathered = Column(BigInteger)
+    emails_sent = Column(BigInteger)
+    start_time = Column(DateTime(timezone=True), server_default=func.now())
+    end_time = Column(DateTime(timezone=True))
+    status = Column(Text)
+    logs = Column(JSON)
+    campaign = relationship("Campaign")
+    search_term = relationship("SearchTerm")
+
+class Settings(Base):
+    __tablename__ = 'settings'
+    id = Column(BigInteger, primary_key=True)
+    name = Column(Text, nullable=False)
+    setting_type = Column(Text, nullable=False)
+    value = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    language = Column(Text, default='ES')
-    campaign = relationship("Campaign", back_populates="search_terms")
-    lead_sources = relationship("LeadSource", back_populates="search_term") 
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+class EmailSettings(Base):
+    __tablename__ = 'email_settings'
+    id = Column(BigInteger, primary_key=True)
+    name = Column(Text, nullable=False)
+    email = Column(Text, nullable=False)
+    provider = Column(Text, nullable=False)
+    smtp_server = Column(Text)
+    smtp_port = Column(BigInteger)
+    smtp_username = Column(Text)
+    smtp_password = Column(Text)
+    aws_access_key_id = Column(Text)
+    aws_secret_access_key = Column(Text)
+    aws_region = Column(Text)

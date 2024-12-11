@@ -1,34 +1,45 @@
 from celery_config import celery_app
-from streamlit_app import (
-    manual_search, db_session, get_knowledge_base_info,
-    get_active_project_id, generate_optimized_search_terms,
-    save_lead, bulk_send_emails, EmailTemplate
-)
+from database import db_session
+from models import SearchTerm
+from tenacity import retry, stop_after_attempt
+import logging
 
-@celery_app.task(bind=True)
+logger = logging.getLogger(__name__)
+
+@celery_app.task(bind=True, max_retries=3)
 def background_search_task(self, search_terms, num_results, search_config):
-    """Background task for performing searches"""
-    results = []
-    with db_session() as session:
-        for term in search_terms:
-            term_results = manual_search(
-                session=session,
-                search_terms=[term],
-                num_results=num_results,
-                **search_config
-            )
-            results.extend(term_results['results'])
-            
-            # Update task state
-            self.update_state(
-                state='PROGRESS',
-                meta={
-                    'current': len(results),
-                    'term': term,
-                    'latest_results': term_results['results']
-                }
-            )
-    return {'status': 'completed', 'results': results}
+    try:
+        results = []
+        with db_session() as session:
+            total_terms = len(search_terms)
+            for idx, term in enumerate(search_terms):
+                try:
+                    term_results = manual_search(
+                        session=session,
+                        search_terms=[term],
+                        num_results=num_results,
+                        **search_config
+                    )
+                    results.extend(term_results['results'])
+                    
+                    # Update progress
+                    self.update_state(
+                        state='PROGRESS',
+                        meta={
+                            'current': idx + 1,
+                            'total': total_terms,
+                            'term': term,
+                            'latest_results': term_results['results']
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error processing term {term}: {str(e)}")
+                    continue
+                    
+        return {'status': 'completed', 'results': results}
+    except Exception as e:
+        logger.error(f"Task failed: {str(e)}")
+        self.retry(exc=e)
 
 @celery_app.task
 def automation_loop_task(search_config):
