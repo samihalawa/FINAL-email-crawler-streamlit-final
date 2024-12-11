@@ -623,26 +623,44 @@ def add_search_term(session, term, campaign_id):
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
-        current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
-        existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
-        for term in existing_terms:
-            term.group_id = None if term.id not in current_term_ids else group_id
-        for term_str in updated_terms:
-            term = session.query(SearchTerm).get(int(term_str.split(":")[0]))
-            if term: term.group_id = group_id
+        # Get IDs of selected terms
+        selected_term_ids = [int(term.split(':')[0]) for term in updated_terms]
+        
+        # Update all terms that should be in this group
+        session.query(SearchTerm)\
+            .filter(SearchTerm.id.in_(selected_term_ids))\
+            .update({SearchTerm.group_id: group_id}, synchronize_session=False)
+        
+        # Remove group_id from terms that were unselected
+        session.query(SearchTerm)\
+            .filter(SearchTerm.group_id == group_id)\
+            .filter(~SearchTerm.id.in_(selected_term_ids))\
+            .update({SearchTerm.group_id: None}, synchronize_session=False)
+        
         session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error in update_search_term_group: {str(e)}")
+        raise
 
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
-        new_search_term = SearchTerm(term=new_term, campaign_id=campaign_id, created_at=datetime.utcnow(), group_id=int(group_for_new_term.split(":")[0]) if group_for_new_term != "None" else None)
+        group_id = None
+        if group_for_new_term != "None":
+            group_id = int(group_for_new_term.split(':')[0])
+            
+        new_search_term = SearchTerm(
+            term=new_term,
+            campaign_id=campaign_id,
+            group_id=group_id,
+            created_at=datetime.utcnow()
+        )
         session.add(new_search_term)
         session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error adding search term: {str(e)}")
+        raise
 
 def ai_group_search_terms(session, ungrouped_terms):
     existing_groups = session.query(SearchTermGroup).all()
@@ -1408,120 +1426,109 @@ def get_active_campaign_id():
     return st.session_state.get('active_campaign_id', 1)
 
 def search_terms_page():
-    st.markdown("<h1 style='text-align: center; color: #1E88E5;'>Search Terms Dashboard</h1>", unsafe_allow_html=True)
+    st.title("Search Terms Management")
+    
     with db_session() as session:
-        search_terms_df = fetch_search_terms_with_lead_count(session)
-        if not search_terms_df.empty:
-            st.columns(3)[0].metric("Total Search Terms", len(search_terms_df))
-            st.columns(3)[1].metric("Total Leads", search_terms_df['Lead Count'].sum())
-            st.columns(3)[2].metric("Total Emails Sent", search_terms_df['Email Count'].sum())
-            
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(["Search Term Groups", "Performance", "Add New Term", "AI Grouping", "Manage Groups"])
-            
-            with tab1:
-                groups = session.query(SearchTermGroup).all()
-                groups.append("Ungrouped")
-                for group in groups:
-                    with st.expander(group.name if isinstance(group, SearchTermGroup) else group, expanded=True):
-                        group_id = group.id if isinstance(group, SearchTermGroup) else None
-                        terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all() if group_id else session.query(SearchTerm).filter(SearchTerm.group_id == None).all()
-                        updated_terms = st_tags(
-                            label="",
-                            text="Add or remove terms",
-                            value=[f"{term.id}: {term.term}" for term in terms],
-                            suggestions=[term for term in search_terms_df['Term'] if term not in [f"{t.id}: {t.term}" for t in terms]],
-                            key=f"group_{group_id}"
-                        )
-                        if st.button("Update", key=f"update_{group_id}"):
-                            update_search_term_group(session, group_id, updated_terms)
-                            st.success("Group updated successfully")
-                            st.rerun()
-            
-            with tab2:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    chart_type = st.radio("Chart Type", ["Bar", "Pie"], horizontal=True)
-                    fig = px.bar(search_terms_df.nlargest(10, 'Lead Count'), x='Term', y=['Lead Count', 'Email Count'], title='Top 10 Search Terms', labels={'value': 'Count', 'variable': 'Type'}, barmode='group') if chart_type == "Bar" else px.pie(search_terms_df, values='Lead Count', names='Term', title='Lead Distribution')
-                    st.plotly_chart(fig, use_container_width=True)
-                with col2:
-                    st.dataframe(search_terms_df.nlargest(5, 'Lead Count')[['Term', 'Lead Count', 'Email Count']], use_container_width=True)
-            
-            with tab3:
-                col1, col2, col3 = st.columns([2,1,1])
-                new_term = col1.text_input("New Search Term")
-                campaign_id = get_active_campaign_id()
-                group_for_new_term = col2.selectbox("Assign to Group", ["None"] + [f"{g.id}: {g.name}" for g in groups if isinstance(g, SearchTermGroup)], format_func=lambda x: x.split(":")[1] if ":" in x else x)
-                if col3.button("Add Term", use_container_width=True) and new_term:
-                    add_new_search_term(session, new_term, campaign_id, group_for_new_term)
-                    st.success(f"Added: {new_term}")
+        # Create new group section
+        with st.expander("Create New Group", expanded=False):
+            new_group_name = st.text_input("New Group Name")
+            if st.button("Create Group"):
+                if new_group_name.strip():
+                    create_search_term_group(session, new_group_name)
+                    st.success(f"Group '{new_group_name}' created successfully!")
                     st.rerun()
-
-            with tab4:
-                st.subheader("AI-Powered Search Term Grouping")
-                ungrouped_terms = session.query(SearchTerm).filter(SearchTerm.group_id == None).all()
-                if ungrouped_terms:
-                    st.write(f"Found {len(ungrouped_terms)} ungrouped search terms.")
-                    if st.button("Group Ungrouped Terms with AI"):
-                        with st.spinner("AI is grouping terms..."):
-                            grouped_terms = ai_group_search_terms(session, ungrouped_terms)
-                            update_search_term_groups(session, grouped_terms)
-                            st.success("Search terms have been grouped successfully!")
-                            st.rerun()
                 else:
-                    st.info("No ungrouped search terms found.")
+                    st.warning("Please enter a group name")
 
-            with tab5:
-                st.subheader("Manage Search Term Groups")
-                col1, col2 = st.columns(2)
-                with col1:
-                    new_group_name = st.text_input("New Group Name")
-                    if st.button("Create New Group") and new_group_name:
-                        create_search_term_group(session, new_group_name)
-                        st.success(f"Created new group: {new_group_name}")
+        # Manage existing groups
+        groups = session.query(SearchTermGroup).all()
+        if groups:
+            st.subheader("Existing Groups")
+            for group in groups:
+                with st.expander(f"Group: {group.name}", expanded=False):
+                    # Get all search terms
+                    all_terms = session.query(SearchTerm).filter_by(campaign_id=get_active_campaign_id()).all()
+                    
+                    # Get terms currently in this group
+                    group_terms = [term for term in all_terms if term.group_id == group.id]
+                    
+                    # Create options for multiselect
+                    term_options = [f"{term.id}:{term.term}" for term in all_terms]
+                    default_values = [f"{term.id}:{term.term}" for term in group_terms]
+                    
+                    # Display multiselect for terms
+                    selected_terms = st.multiselect(
+                        "Select terms for this group",
+                        options=term_options,
+                        default=default_values,
+                        format_func=lambda x: x.split(':')[1]
+                    )
+                    
+                    if st.button("Update Group", key=f"update_{group.id}"):
+                        update_search_term_group(session, group.id, selected_terms)
+                        st.success("Group updated successfully!")
                         st.rerun()
-                with col2:
-                    group_to_delete = st.selectbox("Select Group to Delete", 
-                                                   [f"{g.id}: {g.name}" for g in groups if isinstance(g, SearchTermGroup)],
-                                                   format_func=lambda x: x.split(":")[1])
-                    if st.button("Delete Group") and group_to_delete:
-                        group_id = int(group_to_delete.split(":")[0])
-                        delete_search_term_group(session, group_id)
-                        st.success(f"Deleted group: {group_to_delete.split(':')[1]}")
+                    
+                    if st.button("Delete Group", key=f"delete_{group.id}"):
+                        delete_search_term_group(session, group.id)
+                        st.success("Group deleted successfully!")
                         st.rerun()
 
-        else:
-            st.info("No search terms available. Add some to your campaigns.")
+        # Add new search terms section
+        st.subheader("Add New Search Term")
+        with st.form("add_search_term_form"):
+            new_term = st.text_input("New Search Term")
+            group_options = ["None"] + [f"{g.id}:{g.name}" for g in groups]
+            group_for_new_term = st.selectbox("Assign to Group", options=group_options)
+            
+            if st.form_submit_button("Add Term"):
+                if new_term.strip():
+                    add_new_search_term(session, new_term, get_active_campaign_id(), group_for_new_term)
+                    st.success(f"Term '{new_term}' added successfully!")
+                    st.rerun()
+                else:
+                    st.warning("Please enter a search term")
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
-        current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
-        existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
+        # Get IDs of selected terms
+        selected_term_ids = [int(term.split(':')[0]) for term in updated_terms]
         
-        for term in existing_terms:
-            if term.id not in current_term_ids:
-                term.group_id = None
+        # Update all terms that should be in this group
+        session.query(SearchTerm)\
+            .filter(SearchTerm.id.in_(selected_term_ids))\
+            .update({SearchTerm.group_id: group_id}, synchronize_session=False)
         
-        for term_str in updated_terms:
-            term_id = int(term_str.split(":")[0])
-            term = session.query(SearchTerm).get(term_id)
-            if term:
-                term.group_id = group_id
+        # Remove group_id from terms that were unselected
+        session.query(SearchTerm)\
+            .filter(SearchTerm.group_id == group_id)\
+            .filter(~SearchTerm.id.in_(selected_term_ids))\
+            .update({SearchTerm.group_id: None}, synchronize_session=False)
         
         session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error in update_search_term_group: {str(e)}")
+        raise
 
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
-        new_search_term = SearchTerm(term=new_term, campaign_id=campaign_id, created_at=datetime.utcnow())
+        group_id = None
         if group_for_new_term != "None":
-            new_search_term.group_id = int(group_for_new_term.split(":")[0])
+            group_id = int(group_for_new_term.split(':')[0])
+            
+        new_search_term = SearchTerm(
+            term=new_term,
+            campaign_id=campaign_id,
+            group_id=group_id,
+            created_at=datetime.utcnow()
+        )
         session.add(new_search_term)
         session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error adding search term: {str(e)}")
+        raise
 
 def ai_group_search_terms(session, ungrouped_terms):
     existing_groups = session.query(SearchTermGroup).all()
@@ -2044,6 +2051,19 @@ def update_results_display(results_container, results):
     )
 
 def automation_control_panel_page():
+    # Initialize persistent state variables
+    if 'automation_running' not in st.session_state:
+        st.session_state.automation_running = False
+    if 'automation_stats' not in st.session_state:
+        st.session_state.automation_stats = {
+            'total_leads': 0,
+            'emails_sent': 0,
+            'last_run': None,
+            'current_term': None
+        }
+    if 'automation_logs' not in st.session_state:
+        st.session_state.automation_logs = []
+
     st.title("Automation Control Panel")
 
     col1, col2 = st.columns([2, 1])
@@ -2339,6 +2359,3 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
-
-if __name__ == "__main__":
-    main()
