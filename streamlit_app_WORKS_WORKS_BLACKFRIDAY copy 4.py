@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_
+from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_, Index, Float
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from botocore.exceptions import ClientError
@@ -21,6 +21,70 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+from threading import local, Lock
+import threading
+import logging.config
+
+# Logging Configuration
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s [%(levelname)s] %(message)s'
+        },
+    },
+    'handlers': {
+        'default': {
+            'level': 'INFO',
+            'formatter': 'standard',
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        '': {
+            'handlers': ['default'],
+            'level': 'INFO',
+            'propagate': True
+        }
+    }
+}
+
+# Email configuration constants
+EMAIL_SETTINGS = {
+    'charset': 'UTF-8',
+    'max_retries': 3,
+    'retry_delay': 1,
+    'timeout': 30
+}
+
+# Search configuration
+SEARCH_CONFIG = {
+    'max_results_per_term': 100,
+    'request_timeout': 30,
+    'max_retries': 3
+}
+
+# Default Settings
+DEFAULT_SETTINGS = {
+    'openai_api_key': '',
+    'openai_api_base': 'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-72B-Instruct/v1/',
+    'openai_model': 'Qwen/Qwen2.5-72B-Instruct'
+}
+
+DEFAULT_SEARCH_SETTINGS = {
+    'num_results': 50,
+    'ignore_previously_fetched': True,
+    'optimize_english': False,
+    'optimize_spanish': False,
+    'shuffle_keywords_option': False,
+    'language': 'ES',
+    'enable_email_sending': True
+}
+
+# Initialize logging
+logging.config.dictConfig(LOGGING_CONFIG)
+
 #database info
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -35,26 +99,60 @@ load_dotenv()
 DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT = map(os.getenv, ["SUPABASE_DB_HOST", "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD", "SUPABASE_DB_PORT"])
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=0)
-SessionLocal, Base = sessionmaker(bind=engine), declarative_base()
+SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
 
+@contextmanager
+def db_session():
+    """Provide a transactional scope around a series of operations."""
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logging.error(f"Database session error: {str(e)}")
+        raise
+    finally:
+        session.close()
+
+def settings_page():
+    st.title("Settings")
+try:
+    # Test connection with timeout
+    with db_session() as session:
+        session.execute(text("SELECT 1"))
+except Exception as e:
+    st.error(f"Failed to connect to database: {str(e)}")
+    logging.error(f"Database connection error: {str(e)}")
+    raise
+
+
 
 class Project(Base):
     __tablename__ = 'projects'
+    __table_args__ = (
+        Index('idx_project_created', 'created_at'),
+    )
     id = Column(BigInteger, primary_key=True)
     project_name = Column(Text, default="Default Project")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    campaigns = relationship("Campaign", back_populates="project")
-    knowledge_base = relationship("KnowledgeBase", back_populates="project", uselist=False)
+    campaigns = relationship("Campaign", back_populates="project", cascade="all, delete-orphan")
+    knowledge_base = relationship("KnowledgeBase", back_populates="project", uselist=False, cascade="all, delete-orphan")
 
 class Campaign(Base):
     __tablename__ = 'campaigns'
+    __table_args__ = (
+        Index('idx_campaign_created', 'created_at'),
+        Index('idx_campaign_project', 'project_id'),
+    )
     id = Column(BigInteger, primary_key=True)
     campaign_name = Column(Text, default="Default Campaign")
     campaign_type = Column(Text, default="Email")
-    project_id = Column(BigInteger, ForeignKey('projects.id'), default=1)
+    project_id = Column(BigInteger, ForeignKey('projects.id', ondelete='CASCADE'), default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     auto_send = Column(Boolean, default=False)
     loop_automation = Column(Boolean, default=False)
@@ -62,15 +160,19 @@ class Campaign(Base):
     max_emails_per_group = Column(BigInteger, default=500)
     loop_interval = Column(BigInteger, default=60)
     project = relationship("Project", back_populates="campaigns")
-    email_campaigns = relationship("EmailCampaign", back_populates="campaign")
-    search_terms = relationship("SearchTerm", back_populates="campaign")
-    campaign_leads = relationship("CampaignLead", back_populates="campaign")
+    email_campaigns = relationship("EmailCampaign", back_populates="campaign", cascade="all, delete-orphan")
+    search_terms = relationship("SearchTerm", back_populates="campaign", cascade="all, delete-orphan")
+    campaign_leads = relationship("CampaignLead", back_populates="campaign", cascade="all, delete-orphan")
 
 class CampaignLead(Base):
     __tablename__ = 'campaign_leads'
+    __table_args__ = (
+        Index('idx_campaign_lead_created', 'created_at'),
+        Index('idx_campaign_lead_status', 'status'),
+    )
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    lead_id = Column(BigInteger, ForeignKey('leads.id'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id', ondelete='CASCADE'))
+    lead_id = Column(BigInteger, ForeignKey('leads.id', ondelete='CASCADE'))
     status = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     lead = relationship("Lead", back_populates="campaign_leads")
@@ -94,34 +196,52 @@ class KnowledgeBase(Base):
 # Update the Lead model to remove the domain attribute
 class Lead(Base):
     __tablename__ = 'leads'
+    __table_args__ = (
+        Index('idx_lead_email', 'email'),
+        Index('idx_lead_created', 'created_at'),
+    )
     id = Column(BigInteger, primary_key=True)
     email = Column(Text, unique=True)
     phone, first_name, last_name, company, job_title = [Column(Text) for _ in range(5)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Remove the domain column
-    campaign_leads = relationship("CampaignLead", back_populates="lead")
-    lead_sources = relationship("LeadSource", back_populates="lead")
-    email_campaigns = relationship("EmailCampaign", back_populates="lead")
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    is_processed = Column(Boolean, default=False)
+    last_contacted = Column(DateTime(timezone=True))
+    notes = Column(Text)
+    status = Column(Text, default='New')
+    source = Column(Text)
+    campaign_leads = relationship("CampaignLead", back_populates="lead", cascade="all, delete-orphan")
+    lead_sources = relationship("LeadSource", back_populates="lead", cascade="all, delete-orphan")
+    email_campaigns = relationship("EmailCampaign", back_populates="lead", cascade="all, delete-orphan")
 
 class EmailTemplate(Base):
     __tablename__ = 'email_templates'
+    __table_args__ = (
+        Index('idx_template_created', 'created_at'),
+        Index('idx_template_campaign', 'campaign_id'),
+    )
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id', ondelete='CASCADE'))
     template_name, subject, body_content = Column(Text), Column(Text), Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_ai_customizable = Column(Boolean, default=False)
-    language = Column(Text, default='ES')  # Add language column
+    language = Column(Text, default='ES')
     campaign = relationship("Campaign")
-    email_campaigns = relationship("EmailCampaign", back_populates="template")
+    email_campaigns = relationship("EmailCampaign", back_populates="template", cascade="all, delete-orphan")
 
 class EmailCampaign(Base):
     __tablename__ = 'email_campaigns'
+    __table_args__ = (
+        Index('idx_campaign_sent', 'sent_at'),
+        Index('idx_campaign_status', 'status'),
+        Index('idx_campaign_tracking', 'tracking_id'),
+    )
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    lead_id = Column(BigInteger, ForeignKey('leads.id'))
-    template_id = Column(BigInteger, ForeignKey('email_templates.id'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id', ondelete='CASCADE'))
+    lead_id = Column(BigInteger, ForeignKey('leads.id', ondelete='CASCADE'))
+    template_id = Column(BigInteger, ForeignKey('email_templates.id', ondelete='SET NULL'))
     customized_subject = Column(Text)
-    customized_content = Column(Text)  # Make sure this column exists
+    customized_content = Column(Text)
     original_subject = Column(Text)
     original_content = Column(Text)
     status = Column(Text)
@@ -163,25 +283,43 @@ class SearchTermGroup(Base):
 
 class SearchTerm(Base):
     __tablename__ = 'search_terms'
+    __table_args__ = (
+        Index('idx_term', 'term'),
+        Index('idx_term_group', 'group_id'),
+        Index('idx_term_campaign', 'campaign_id'),
+        Index('idx_term_created', 'created_at'),
+    )
     id = Column(BigInteger, primary_key=True)
-    group_id = Column(BigInteger, ForeignKey('search_term_groups.id'))
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    term, category = Column(Text), Column(Text)
+    term = Column(Text, nullable=False)
+    group_id = Column(BigInteger, ForeignKey('search_term_groups.id', ondelete='SET NULL'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id', ondelete='CASCADE'))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    language = Column(Text, default='ES')  # Add language column
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    effectiveness_score = Column(Float, default=0.0)
+    last_used = Column(DateTime(timezone=True))
+    is_active = Column(Boolean, default=True)
     group = relationship("SearchTermGroup", back_populates="search_terms")
     campaign = relationship("Campaign", back_populates="search_terms")
-    optimized_terms = relationship("OptimizedSearchTerm", back_populates="original_term")
-    lead_sources = relationship("LeadSource", back_populates="search_term")
-    effectiveness = relationship("SearchTermEffectiveness", back_populates="search_term", uselist=False)
+    lead_sources = relationship("LeadSource", back_populates="search_term", cascade="all, delete-orphan")
 
 class LeadSource(Base):
     __tablename__ = 'lead_sources'
+    __table_args__ = (
+        Index('idx_source_url', 'url'),
+        Index('idx_source_domain', 'domain'),
+    )
     id = Column(BigInteger, primary_key=True)
-    lead_id = Column(BigInteger, ForeignKey('leads.id'))
-    search_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
-    url, domain, page_title, meta_description, scrape_duration = [Column(Text) for _ in range(5)]
-    meta_tags, phone_numbers, content, tags = [Column(Text) for _ in range(4)]
+    lead_id = Column(BigInteger, ForeignKey('leads.id', ondelete='CASCADE'))
+    search_term_id = Column(BigInteger, ForeignKey('search_terms.id', ondelete='CASCADE'))
+    url = Column(Text)
+    domain = Column(Text)
+    page_title = Column(Text)
+    meta_description = Column(Text)
+    scrape_duration = Column(Text)
+    meta_tags = Column(Text)
+    phone_numbers = Column(Text)
+    content = Column(Text)
+    tags = Column(Text)
     http_status = Column(BigInteger)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     lead = relationship("Lead", back_populates="lead_sources")
@@ -189,29 +327,41 @@ class LeadSource(Base):
 
 class AIRequestLog(Base):
     __tablename__ = 'ai_request_logs'
+    __table_args__ = (
+        Index('idx_ai_request_created', 'created_at'),
+    )
     id = Column(BigInteger, primary_key=True)
     function_name, prompt, response, model_used = [Column(Text) for _ in range(4)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    lead_id = Column(BigInteger, ForeignKey('leads.id'))
-    email_campaign_id = Column(BigInteger, ForeignKey('email_campaigns.id'))
+    lead_id = Column(BigInteger, ForeignKey('leads.id', ondelete='SET NULL'))
+    email_campaign_id = Column(BigInteger, ForeignKey('email_campaigns.id', ondelete='SET NULL'))
     lead = relationship("Lead")
     email_campaign = relationship("EmailCampaign")
 
 class AutomationLog(Base):
     __tablename__ = 'automation_logs'
+    __table_args__ = (
+        Index('idx_automation_start', 'start_time'),
+        Index('idx_automation_status', 'status'),
+    )
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    search_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
-    leads_gathered, emails_sent = Column(BigInteger), Column(BigInteger)
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id', ondelete='CASCADE'))
+    search_term_id = Column(BigInteger, ForeignKey('search_terms.id', ondelete='SET NULL'))
+    leads_gathered = Column(BigInteger)
+    emails_sent = Column(BigInteger)
     start_time = Column(DateTime(timezone=True), server_default=func.now())
     end_time = Column(DateTime(timezone=True))
-    status, logs = Column(Text), Column(JSON)
+    status = Column(Text)
+    logs = Column(JSON)
     campaign = relationship("Campaign")
     search_term = relationship("SearchTerm")
 
 # Replace the existing EmailSettings class with this unified Settings class
 class Settings(Base):
     __tablename__ = 'settings'
+    __table_args__ = (
+        Index('idx_settings_type', 'setting_type'),
+    )
     id = Column(BigInteger, primary_key=True)
     name = Column(Text, nullable=False)
     setting_type = Column(Text, nullable=False)  # 'general', 'email', etc.
@@ -221,6 +371,9 @@ class Settings(Base):
 
 class EmailSettings(Base):
     __tablename__ = 'email_settings'
+    __table_args__ = (
+        Index('idx_email_settings_email', 'email'),
+    )
     id = Column(BigInteger, primary_key=True)
     name = Column(Text, nullable=False)
     email = Column(Text, nullable=False)
@@ -232,14 +385,8 @@ class EmailSettings(Base):
     aws_access_key_id = Column(Text)
     aws_secret_access_key = Column(Text)
     aws_region = Column(Text)
-
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL not set")
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base.metadata.create_all(bind=engine)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 @contextmanager
 def db_session():
@@ -623,44 +770,26 @@ def add_search_term(session, term, campaign_id):
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
-        # Get IDs of selected terms
-        selected_term_ids = [int(term.split(':')[0]) for term in updated_terms]
-        
-        # Update all terms that should be in this group
-        session.query(SearchTerm)\
-            .filter(SearchTerm.id.in_(selected_term_ids))\
-            .update({SearchTerm.group_id: group_id}, synchronize_session=False)
-        
-        # Remove group_id from terms that were unselected
-        session.query(SearchTerm)\
-            .filter(SearchTerm.group_id == group_id)\
-            .filter(~SearchTerm.id.in_(selected_term_ids))\
-            .update({SearchTerm.group_id: None}, synchronize_session=False)
-        
+        current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
+        existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
+        for term in existing_terms:
+            term.group_id = None if term.id not in current_term_ids else group_id
+        for term_str in updated_terms:
+            term = session.query(SearchTerm).get(int(term_str.split(":")[0]))
+            if term: term.group_id = group_id
         session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error in update_search_term_group: {str(e)}")
-        raise
 
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
-        group_id = None
-        if group_for_new_term != "None":
-            group_id = int(group_for_new_term.split(':')[0])
-            
-        new_search_term = SearchTerm(
-            term=new_term,
-            campaign_id=campaign_id,
-            group_id=group_id,
-            created_at=datetime.utcnow()
-        )
+        new_search_term = SearchTerm(term=new_term, campaign_id=campaign_id, created_at=datetime.utcnow(), group_id=int(group_for_new_term.split(":")[0]) if group_for_new_term != "None" else None)
         session.add(new_search_term)
         session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error adding search term: {str(e)}")
-        raise
 
 def ai_group_search_terms(session, ungrouped_terms):
     existing_groups = session.query(SearchTermGroup).all()
@@ -1426,109 +1555,120 @@ def get_active_campaign_id():
     return st.session_state.get('active_campaign_id', 1)
 
 def search_terms_page():
-    st.title("Search Terms Management")
-    
+    st.markdown("<h1 style='text-align: center; color: #1E88E5;'>Search Terms Dashboard</h1>", unsafe_allow_html=True)
     with db_session() as session:
-        # Create new group section
-        with st.expander("Create New Group", expanded=False):
-            new_group_name = st.text_input("New Group Name")
-            if st.button("Create Group"):
-                if new_group_name.strip():
-                    create_search_term_group(session, new_group_name)
-                    st.success(f"Group '{new_group_name}' created successfully!")
-                    st.rerun()
-                else:
-                    st.warning("Please enter a group name")
-
-        # Manage existing groups
-        groups = session.query(SearchTermGroup).all()
-        if groups:
-            st.subheader("Existing Groups")
-            for group in groups:
-                with st.expander(f"Group: {group.name}", expanded=False):
-                    # Get all search terms
-                    all_terms = session.query(SearchTerm).filter_by(campaign_id=get_active_campaign_id()).all()
-                    
-                    # Get terms currently in this group
-                    group_terms = [term for term in all_terms if term.group_id == group.id]
-                    
-                    # Create options for multiselect
-                    term_options = [f"{term.id}:{term.term}" for term in all_terms]
-                    default_values = [f"{term.id}:{term.term}" for term in group_terms]
-                    
-                    # Display multiselect for terms
-                    selected_terms = st.multiselect(
-                        "Select terms for this group",
-                        options=term_options,
-                        default=default_values,
-                        format_func=lambda x: x.split(':')[1]
-                    )
-                    
-                    if st.button("Update Group", key=f"update_{group.id}"):
-                        update_search_term_group(session, group.id, selected_terms)
-                        st.success("Group updated successfully!")
-                        st.rerun()
-                    
-                    if st.button("Delete Group", key=f"delete_{group.id}"):
-                        delete_search_term_group(session, group.id)
-                        st.success("Group deleted successfully!")
-                        st.rerun()
-
-        # Add new search terms section
-        st.subheader("Add New Search Term")
-        with st.form("add_search_term_form"):
-            new_term = st.text_input("New Search Term")
-            group_options = ["None"] + [f"{g.id}:{g.name}" for g in groups]
-            group_for_new_term = st.selectbox("Assign to Group", options=group_options)
+        search_terms_df = fetch_search_terms_with_lead_count(session)
+        if not search_terms_df.empty:
+            st.columns(3)[0].metric("Total Search Terms", len(search_terms_df))
+            st.columns(3)[1].metric("Total Leads", search_terms_df['Lead Count'].sum())
+            st.columns(3)[2].metric("Total Emails Sent", search_terms_df['Email Count'].sum())
             
-            if st.form_submit_button("Add Term"):
-                if new_term.strip():
-                    add_new_search_term(session, new_term, get_active_campaign_id(), group_for_new_term)
-                    st.success(f"Term '{new_term}' added successfully!")
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(["Search Term Groups", "Performance", "Add New Term", "AI Grouping", "Manage Groups"])
+            
+            with tab1:
+                groups = session.query(SearchTermGroup).all()
+                groups.append("Ungrouped")
+                for group in groups:
+                    with st.expander(group.name if isinstance(group, SearchTermGroup) else group, expanded=True):
+                        group_id = group.id if isinstance(group, SearchTermGroup) else None
+                        terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all() if group_id else session.query(SearchTerm).filter(SearchTerm.group_id == None).all()
+                        updated_terms = st_tags(
+                            label="",
+                            text="Add or remove terms",
+                            value=[f"{term.id}: {term.term}" for term in terms],
+                            suggestions=[term for term in search_terms_df['Term'] if term not in [f"{t.id}: {t.term}" for t in terms]],
+                            key=f"group_{group_id}"
+                        )
+                        if st.button("Update", key=f"update_{group_id}"):
+                            update_search_term_group(session, group_id, updated_terms)
+                            st.success("Group updated successfully")
+                            st.rerun()
+            
+            with tab2:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    chart_type = st.radio("Chart Type", ["Bar", "Pie"], horizontal=True)
+                    fig = px.bar(search_terms_df.nlargest(10, 'Lead Count'), x='Term', y=['Lead Count', 'Email Count'], title='Top 10 Search Terms', labels={'value': 'Count', 'variable': 'Type'}, barmode='group') if chart_type == "Bar" else px.pie(search_terms_df, values='Lead Count', names='Term', title='Lead Distribution')
+                    st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    st.dataframe(search_terms_df.nlargest(5, 'Lead Count')[['Term', 'Lead Count', 'Email Count']], use_container_width=True)
+            
+            with tab3:
+                col1, col2, col3 = st.columns([2,1,1])
+                new_term = col1.text_input("New Search Term")
+                campaign_id = get_active_campaign_id()
+                group_for_new_term = col2.selectbox("Assign to Group", ["None"] + [f"{g.id}: {g.name}" for g in groups if isinstance(g, SearchTermGroup)], format_func=lambda x: x.split(":")[1] if ":" in x else x)
+                if col3.button("Add Term", use_container_width=True) and new_term:
+                    add_new_search_term(session, new_term, campaign_id, group_for_new_term)
+                    st.success(f"Added: {new_term}")
                     st.rerun()
+
+            with tab4:
+                st.subheader("AI-Powered Search Term Grouping")
+                ungrouped_terms = session.query(SearchTerm).filter(SearchTerm.group_id == None).all()
+                if ungrouped_terms:
+                    st.write(f"Found {len(ungrouped_terms)} ungrouped search terms.")
+                    if st.button("Group Ungrouped Terms with AI"):
+                        with st.spinner("AI is grouping terms..."):
+                            grouped_terms = ai_group_search_terms(session, ungrouped_terms)
+                            update_search_term_groups(session, grouped_terms)
+                            st.success("Search terms have been grouped successfully!")
+                            st.rerun()
                 else:
-                    st.warning("Please enter a search term")
+                    st.info("No ungrouped search terms found.")
+
+            with tab5:
+                st.subheader("Manage Search Term Groups")
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_group_name = st.text_input("New Group Name")
+                    if st.button("Create New Group") and new_group_name:
+                        create_search_term_group(session, new_group_name)
+                        st.success(f"Created new group: {new_group_name}")
+                        st.rerun()
+                with col2:
+                    group_to_delete = st.selectbox("Select Group to Delete", 
+                                                   [f"{g.id}: {g.name}" for g in groups if isinstance(g, SearchTermGroup)],
+                                                   format_func=lambda x: x.split(":")[1])
+                    if st.button("Delete Group") and group_to_delete:
+                        group_id = int(group_to_delete.split(":")[0])
+                        delete_search_term_group(session, group_id)
+                        st.success(f"Deleted group: {group_to_delete.split(':')[1]}")
+                        st.rerun()
+
+        else:
+            st.info("No search terms available. Add some to your campaigns.")
 
 def update_search_term_group(session, group_id, updated_terms):
     try:
-        # Get IDs of selected terms
-        selected_term_ids = [int(term.split(':')[0]) for term in updated_terms]
+        current_term_ids = set(int(term.split(":")[0]) for term in updated_terms)
+        existing_terms = session.query(SearchTerm).filter(SearchTerm.group_id == group_id).all()
         
-        # Update all terms that should be in this group
-        session.query(SearchTerm)\
-            .filter(SearchTerm.id.in_(selected_term_ids))\
-            .update({SearchTerm.group_id: group_id}, synchronize_session=False)
+        for term in existing_terms:
+            if term.id not in current_term_ids:
+                term.group_id = None
         
-        # Remove group_id from terms that were unselected
-        session.query(SearchTerm)\
-            .filter(SearchTerm.group_id == group_id)\
-            .filter(~SearchTerm.id.in_(selected_term_ids))\
-            .update({SearchTerm.group_id: None}, synchronize_session=False)
+        for term_str in updated_terms:
+            term_id = int(term_str.split(":")[0])
+            term = session.query(SearchTerm).get(term_id)
+            if term:
+                term.group_id = group_id
         
         session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error in update_search_term_group: {str(e)}")
-        raise
 
 def add_new_search_term(session, new_term, campaign_id, group_for_new_term):
     try:
-        group_id = None
+        new_search_term = SearchTerm(term=new_term, campaign_id=campaign_id, created_at=datetime.utcnow())
         if group_for_new_term != "None":
-            group_id = int(group_for_new_term.split(':')[0])
-            
-        new_search_term = SearchTerm(
-            term=new_term,
-            campaign_id=campaign_id,
-            group_id=group_id,
-            created_at=datetime.utcnow()
-        )
+            new_search_term.group_id = int(group_for_new_term.split(":")[0])
         session.add(new_search_term)
         session.commit()
     except Exception as e:
         session.rollback()
         logging.error(f"Error adding search term: {str(e)}")
-        raise
 
 def ai_group_search_terms(session, ungrouped_terms):
     existing_groups = session.query(SearchTermGroup).all()
@@ -2051,19 +2191,6 @@ def update_results_display(results_container, results):
     )
 
 def automation_control_panel_page():
-    # Initialize persistent state variables
-    if 'automation_running' not in st.session_state:
-        st.session_state.automation_running = False
-    if 'automation_stats' not in st.session_state:
-        st.session_state.automation_stats = {
-            'total_leads': 0,
-            'emails_sent': 0,
-            'last_run': None,
-            'current_term': None
-        }
-    if 'automation_logs' not in st.session_state:
-        st.session_state.automation_logs = []
-
     st.title("Automation Control Panel")
 
     col1, col2 = st.columns([2, 1])
@@ -2359,3 +2486,6 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+
+if __name__ == "__main__":
+    main()

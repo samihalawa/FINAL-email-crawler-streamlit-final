@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
-from sqlalchemy import (func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, Integer, Float, or_)
+from sqlalchemy import (func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, Integer, Float, or_, Index)
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 from sqlalchemy.exc import SQLAlchemyError
 from email_validator import validate_email, EmailNotValidError
@@ -63,13 +63,27 @@ class Campaign(Base):
     max_emails_per_group = Column(BigInteger, default=500)
     loop_interval = Column(BigInteger, default=60)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    project = relationship("Project", back_populates="campaigns")
-    tasks = relationship("AutomationTask", back_populates="campaign")
-    email_templates = relationship("EmailTemplate", back_populates="campaign")
-    # Add progress tracking
     progress = Column(Integer, default=0)
     total_tasks = Column(Integer, default=0)
     completed_tasks = Column(Integer, default=0)
+    email_settings_id = Column(BigInteger, ForeignKey('email_settings.id'))
+
+    # Relationships
+    project = relationship("Project", back_populates="campaigns")
+    tasks = relationship("AutomationTask", back_populates="campaign")
+    email_templates = relationship("EmailTemplate", back_populates="campaign")
+    search_terms = relationship("SearchTerm", back_populates="campaign")
+    search_term_groups = relationship("SearchTermGroup", back_populates="campaign")
+    campaign_leads = relationship("CampaignLead", back_populates="campaign")
+    automation_logs = relationship("AutomationLog", back_populates="campaign")
+    email_settings = relationship("EmailSettings", back_populates="campaigns")
+    automation_status = relationship("AutomationStatus", back_populates="campaign")
+    email_campaigns = relationship("EmailCampaign", back_populates="campaign")
+
+    __table_args__ = (
+        Index('idx_campaign_created_at', 'created_at'),
+        Index('idx_campaign_status', 'status'),
+    )
 
 class SearchTerm(Base):
     __tablename__ = 'search_terms'
@@ -78,6 +92,9 @@ class SearchTerm(Base):
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     group_id = Column(BigInteger, ForeignKey('search_term_groups.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    leads = relationship("Lead", back_populates="search_term")
+    lead_sources = relationship("LeadSource", back_populates="search_term")
+    automation_logs = relationship("AutomationLog", back_populates="search_term")
 
 class SearchTermGroup(Base):
     __tablename__ = 'search_term_groups'
@@ -98,6 +115,8 @@ class Lead(Base):
     url = Column(Text)
     search_term_id = Column(BigInteger, ForeignKey('search_terms.id'))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    campaign_leads = relationship("CampaignLead", back_populates="lead")
+    ai_requests = relationship("AIRequest", back_populates="lead")
 
     def to_dict(self):
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
@@ -123,17 +142,20 @@ class EmailTemplate(Base):
     template_name = Column(Text)
     subject = Column(Text)
     body_content = Column(Text)
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_ai_customizable = Column(Boolean, default=False)
     language = Column(Text, default='ES')
-    campaign = relationship("Campaign", back_populates="email_templates")
-    # Add version tracking
     version = Column(Integer, default=1)
     parent_version_id = Column(BigInteger, ForeignKey('email_templates.id'), nullable=True)
+
+    # Relationships
+    campaign = relationship("Campaign", back_populates="email_templates")
 
 class EmailCampaign(Base):
     __tablename__ = 'email_campaigns'
     id = Column(BigInteger, primary_key=True)
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     lead_id = Column(BigInteger, ForeignKey('leads.id'))
     template_id = Column(BigInteger, ForeignKey('email_templates.id'))
     status = Column(Text)
@@ -145,6 +167,17 @@ class EmailCampaign(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     open_count = Column(BigInteger, default=0)
     click_count = Column(BigInteger, default=0)
+
+    # Relationships
+    campaign = relationship("Campaign", back_populates="email_campaigns")
+    lead = relationship("Lead", back_populates="email_campaigns")
+    template = relationship("EmailTemplate")
+    ai_requests = relationship("AIRequest", back_populates="email_campaign")
+
+    __table_args__ = (
+        Index('idx_email_campaign_sent_at', 'sent_at'),
+        Index('idx_email_campaign_status', 'status'),
+    )
 
 class EmailSettings(Base):
     __tablename__ = 'email_settings'
@@ -160,6 +193,13 @@ class EmailSettings(Base):
     aws_secret_access_key = Column(Text, nullable=True)
     aws_region = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    campaigns = relationship("Campaign", back_populates="email_settings")
+
+    __table_args__ = (
+        Index('idx_email_settings_email', 'email'),
+    )
 
 class KnowledgeBase(Base):
     __tablename__ = 'knowledge_base'
@@ -244,15 +284,20 @@ class Settings(Base):
 class AutomationStatus(Base):
     __tablename__ = 'automation_status'
     id = Column(BigInteger, primary_key=True)
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     status = Column(Text)
     started_at = Column(DateTime(timezone=True))
     stopped_at = Column(DateTime(timezone=True))
     paused_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Relationships
+    campaign = relationship("Campaign", back_populates="automation_status")
+
 class AutomationTask(Base):
     __tablename__ = 'automation_tasks'
     id = Column(BigInteger, primary_key=True)
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     task_type = Column(Text)
     status = Column(Text)
     progress = Column(Integer, default=0)
@@ -261,6 +306,15 @@ class AutomationTask(Base):
     eta = Column(DateTime(timezone=True))
     logs = Column(JSON, default=list)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    retry_count = Column(Integer, default=0)
+
+    # Relationships
+    campaign = relationship("Campaign", back_populates="tasks")
+
+    __table_args__ = (
+        Index('idx_automation_task_status', 'status'),
+        Index('idx_automation_task_created_at', 'created_at'),
+    )
 
 class AutomationSchedule(Base):
     __tablename__ = 'automation_schedules'
@@ -578,6 +632,7 @@ def save_email_campaign(session: Session, lead_email: str, template_id: int,
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
             tracking_id=str(uuid.uuid4())
+        )
         
         session.add(new_campaign)
         session.commit()
@@ -633,6 +688,10 @@ def is_valid_email(email):
     except EmailNotValidError: 
         return False
 
+
+
+
+
 def remove_invalid_leads(session):
     """Remove invalid leads from database"""
     invalid_leads = session.query(Lead).filter(
@@ -660,22 +719,57 @@ def get_knowledge_base_info(session, project_id):
     kb_info = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
     return kb_info.to_dict() if kb_info else None
 
-def create_theme():
-    return gr.Theme.from_hub("freddyaboulton/dracula_revamped").set(
-        body_background_fill="*neutral-50",
-        button_primary_background_fill="*blue-600",
-        button_primary_background_fill_hover="*blue-700",
-        input_background_fill="white",
-        input_border_color="*neutral-200",
-        input_shadow="*shadow-sm",
-        spacing_sm="2",
-        spacing_md="4", 
-        radius_sm="0.375rem",
-        radius_md="0.5rem",
-        radius_lg="0.75rem",
-        text_md="0.875rem",
-        font=["Inter", "sans-serif"]
-    )
+
+def shuffle_search_term(term: str) -> str:
+    """Shuffle words in search term"""
+    words = term.split()
+    random.shuffle(words)
+    return " ".join(words)
+
+def optimize_search_term(term: str, language: str) -> str:
+    """Optimize search term for given language"""
+    if language == 'english':
+        return f'"{term}" email OR contact OR "get in touch" site:.com'
+    elif language == 'spanish':
+        return f'"{term}" correo OR contacto OR "ponte en contacto" site:.es'
+    return term
+
+def is_contacted_lead(lead: Lead) -> bool:
+    """Check if lead has been contacted"""
+    return bool(lead.email_campaigns)
+
+def is_successful_lead(lead: Lead) -> bool:
+    """Check if lead was successfully processed"""
+    return bool(lead and lead.email and is_valid_email(lead.email))
+
+def generate_or_adjust_email_template(prompt: str, kb_info: Optional[Dict[str, Any]] = None, current_template: Optional[str] = None) -> Dict[str, str]:
+    """Generate or adjust email template using AI"""
+    messages = []
+    
+    if kb_info:
+        messages.append({
+            "role": "system",
+            "content": f"Use this knowledge base info to inform the email: {kb_info}"
+        })
+    
+    if current_template:
+        messages.append({
+            "role": "system", 
+            "content": f"Adjust this template: {current_template}"
+        })
+        
+    messages.append({
+        "role": "user",
+        "content": prompt
+    })
+    
+    response = openai_chat_completion(messages, "generate_email_template")
+    
+    return {
+        "subject": response.split("\nBody:")[0].replace("Subject:", "").strip(),
+        "body": response.split("\nBody:")[1].strip() if "\nBody:" in response else response
+    }
+
 
 def openai_chat_completion(messages: List[Dict[str, str]], function_name: Optional[str] = None, temperature: float = 0.7) -> Any:
     """Execute OpenAI chat completion"""
@@ -712,7 +806,6 @@ def openai_chat_completion(messages: List[Dict[str, str]], function_name: Option
 
 class GradioAutoclientApp:
     def __init__(self):
-        self.theme = create_theme()
         self.automation_status = False
         self.automation_logs = []
         self.total_leads_found = 0
@@ -782,7 +875,7 @@ class GradioAutoclientApp:
             return f"Error: {str(e)}", error_msg, None
 
     def create_ui(self):
-        with gr.Blocks(theme=self.theme, title="AutoclientAI - Lead Generation Platform") as demo:
+        with gr.Blocks(title="AutoclientAI - Lead Generation Platform") as demo:
             gr.Markdown("""
                 # AutoclientAI Lead Generation Platform
                 Transform your sales pipeline with AI-powered lead generation
@@ -846,6 +939,10 @@ class GradioAutoclientApp:
                         placeholder="Enter reply-to email address"
                     )
 
+                # Add both ID extractions before the search button click handler
+                template_id = int(template_dropdown.split(":")[0]) if template_dropdown else None
+                email_setting_id = int(email_settings_dropdown.split(":")[0]) if email_settings_dropdown else None
+
                 search_btn = gr.Button("Search", variant="primary")
                 status = gr.Textbox(label="Status", interactive=False)
                 logs = gr.Textbox(label="Logs", interactive=False)
@@ -876,6 +973,7 @@ class GradioAutoclientApp:
             # Add other tabs here...
 
         return demo.queue()
+
 
     def create_manual_search_tab(self):
         """Create the Manual Search tab UI"""
@@ -3529,13 +3627,13 @@ class GradioAutoclientApp:
                 "Metric": "Response Rate",
                 "Value": f"{(total_responses/total_sent*100):.1f}%",
                 "Benchmark": "10%",
-                "Status": "Good" if total_responses/total_sent >= 0.1 else "Warning"
+                "Status": "Good" if total_responses/total_sent >=0.1 else "Warning"
             },
             {
                 "Metric": "Average Sent",
                 "Value": f"{total_sent/total:.1f}",
                 "Benchmark": "100",
-                "Status": "Good" if total_sent/total >= 100 else "Warning"
+                "Status": "Good" if total_sent/total >=100 else "Warning"
             }
         ]
 
@@ -3789,16 +3887,15 @@ def is_successful_lead(lead: Lead) -> bool:
 
 def generate_or_adjust_email_template(prompt: str, kb_info: Optional[Dict[str, Any]] = None, current_template: Optional[str] = None) -> Dict[str, str]:
     """Generate or adjust email template using AI"""
+    template_type = "Adjust the following email template based on the given instructions:" if current_template else "Create an email template based on the following prompt:"
+    
+    guidelines = "Current Template:\n" + current_template if current_template else "Guidelines:\n1. Focus on benefits to the reader\n2. Address potential customer doubts\n3. Include clear CTAs\n4. Use a natural tone\n5. Be concise"
+    
+    kb_context = json.dumps(kb_info) if kb_info else "No knowledge base information provided"
+    
     messages = [
         {"role": "system", "content": "You are an AI assistant specializing in creating and refining email templates for marketing campaigns."},
-        {"role": "user", "content": f"""{'Adjust the following email template based on the given instructions:' if current_template else 'Create an email template based on the following prompt:'} {prompt}
-
-        {'Current Template:' if current_template else 'Guidelines:'}
-        {current_template if current_template else '1. Focus on benefits to the reader\n2. Address potential customer doubts\n3. Include clear CTAs\n4. Use a natural tone\n5. Be concise'}
-
-        Knowledge Base Context:
-        {json.dumps(kb_info) if kb_info else 'No knowledge base information provided'}
-        """}
+        {"role": "user", "content": f"{template_type} {prompt}\n\n{guidelines}\n\nKnowledge Base Context:\n{kb_context}"}
     ]
 
     try:
