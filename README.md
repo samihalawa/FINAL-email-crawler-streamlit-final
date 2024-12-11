@@ -1,201 +1,132 @@
-# AutoclientAI - Lead Generation AI Application
+# Email Lead Finder
 
-A powerful Streamlit-based application for automated lead generation, email campaigns, and customer outreach.
+A production-ready Streamlit application for finding and managing email leads with automated outreach capabilities.
 
-## 🚀 Features
+## Features
 
-- Manual and automated lead search
-- Email campaign management
-- Search term organization and tracking
-- Email template management
-- Project and campaign organization
-- Knowledge base integration
-- Automated client outreach
-- Email tracking and analytics
-- Settings management
+- 🔍 Advanced email search with domain filtering
+- 📧 Automated email outreach with tracking
+- 📊 Real-time monitoring and metrics
+- 🔄 Background processing with worker threads
+- 🛡️ Rate limiting and error handling
+- 📈 Performance monitoring with Prometheus
+- 🐛 Error tracking with Sentry
+- 🔒 Secure credential management
+- 📝 Comprehensive logging
 
-## 📋 Requirements
+## Prerequisites
 
 - Python 3.8+
-- PostgreSQL database (Supabase)
-- OpenAI API access
-- AWS SES (optional for email sending)
-- SMTP server (optional alternative to AWS SES)
+- PostgreSQL database
+- SMTP server or AWS SES account for email sending
+- (Optional) Sentry account for error tracking
 
-## 🛠️ Installation
+## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/autoclientai.git
-cd autoclientai
+git clone https://github.com/yourusername/email-lead-finder.git
+cd email-lead-finder
 ```
 
-2. Install dependencies:
+2. Create and activate a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create a `.env` file with the following variables:
+4. Create a `.env` file with your configuration:
 ```env
-# Database Configuration
-SUPABASE_DB_HOST=your_host
+# Database
+SUPABASE_DB_HOST=your_db_host
 SUPABASE_DB_NAME=your_db_name
-SUPABASE_DB_USER=your_username
-SUPABASE_DB_PASSWORD=your_password
+SUPABASE_DB_USER=your_db_user
+SUPABASE_DB_PASSWORD=your_db_password
 SUPABASE_DB_PORT=5432
 
-# OpenAI Configuration
-OPENAI_API_KEY=your_api_key
+# Error Tracking
+SENTRY_DSN=your_sentry_dsn
+ENVIRONMENT=production
 
-# AWS Configuration (optional)
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
-AWS_REGION=your_region
-
-# Email Configuration (required for email functionality)
-SMTP_SERVER=your_smtp_server
-SMTP_PORT=587
-SMTP_USERNAME=your_username
-SMTP_PASSWORD=your_password
-
-# Optional Analytics Configuration
-ENABLE_ANALYTICS=true
-ANALYTICS_KEY=your_analytics_key
+# OpenAI (optional)
+OPENAI_API_KEY=your_openai_api_key
 ```
 
-## 🗄️ Database Schema
-
-The application uses the following main tables:
-- Projects
-- Campaigns
-- SearchTerms
-- EmailTemplates
-- Settings
-- EmailSettings
-- Leads
-- EmailLogs
-
-## 📊 Application Structure
-
-```
-streamlit_app.py
-├── Database Models
-│   ├── Project
-│   ├── Campaign
-│   ├── SearchTerm
-│   ├── EmailTemplate
-│   └── Settings
-│
-├── Core Pages
-│   ├── manual_search_page()
-│   ├── bulk_send_page()
-│   ├── view_leads_page()
-│   ├── search_terms_page()
-│   ├── email_templates_page()
-│   ├── projects_campaigns_page()
-│   ├── knowledge_base_page()
-│   ├── autoclient_ai_page()
-│   ├── automation_control_panel_page()
-│   ├── view_campaign_logs()
-│   └── settings_page()
-│
-└── Utility Functions
-    ├── db_session()
-    ├── send_email_ses()
-    ├── validate_settings()
-    └── update_results_display()
-```
-
-## 🚀 Running the Application
+## Usage
 
 1. Start the application:
 ```bash
-streamlit run streamlit_app.py
+streamlit run streamlit_app_BACKGROUND_PROCESS_ADDED.py
 ```
 
-2. Navigate to `http://localhost:8501` in your browser
+2. Access the web interface at `http://localhost:8501`
 
-3. Configure settings:
-   - Add OpenAI API credentials
-   - Configure email settings (SMTP or AWS SES)
-   - Set up projects and campaigns
+3. Configure email settings:
+   - Navigate to the Settings page
+   - Add SMTP or AWS SES credentials
+   - Configure general settings
 
-## 📝 Usage Flow
+4. Start searching:
+   - Go to Manual Search
+   - Enter search terms
+   - Configure search options
+   - Start the search process
 
-1. **Project Setup**
-   - Create a new project
-   - Add campaigns within the project
+5. Monitor progress:
+   - View real-time logs
+   - Check system metrics
+   - Monitor email sending status
 
-2. **Search Configuration**
-   - Add search terms
-   - Configure search parameters
-   - Set up email templates
+## Monitoring
 
-3. **Lead Generation**
-   - Use manual search or automated AI search
-   - Review and manage leads
-   - Execute email campaigns
+The application includes comprehensive monitoring:
 
-4. **Monitoring**
-   - Track email campaign performance
-   - View lead statistics
-   - Monitor automation logs
+- Prometheus metrics at `http://localhost:8000`
+- System status in the Monitoring page
+- Real-time logs in the application
+- Error tracking in Sentry
 
-## 🔒 Security Considerations
+## Production Deployment
 
-- All sensitive credentials are stored in environment variables
-- Database connections use secure SSL
-- Email sending supports both SMTP and AWS SES
-- API keys are encrypted in the database
+For production deployment:
 
-## 🤝 Contributing
+1. Use a production-grade WSGI server:
+```bash
+pip install waitress
+waitress-serve --port=8501 streamlit_app_BACKGROUND_PROCESS_ADDED:app
+```
+
+2. Set up a reverse proxy (e.g., Nginx) with SSL
+
+3. Configure environment variables for production
+
+4. Set up monitoring and alerting
+
+## Security Considerations
+
+- All credentials are stored securely in the database
+- Rate limiting prevents abuse
+- Email tracking respects privacy
+- Error handling prevents data leaks
+- Database connections are pooled and managed
+
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Commit changes
+3. Commit your changes
 4. Push to the branch
-5. Open a pull request
+5. Create a Pull Request
 
-## 📄 License
+## License
 
-© 2024 AutoclientAI. All rights reserved.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 📝 Function Relationship Diagram
+## Support
 
-```
-Core Application Flow:
-main() → Navigation
-├── Data Management
-│   ├── manual_search_page() ←→ fetch_search_terms_with_lead_count()
-│   ├── bulk_send_page() ←→ send_email_ses()
-│   └── view_leads_page() ←→ db_session()
-│
-├── Configuration
-│   ├── settings_page() ←→ validate_settings()
-│   ├── email_templates_page()
-│   └── search_terms_page()
-│
-├── Project Management
-│   ├── projects_campaigns_page()
-│   └── knowledge_base_page()
-│
-└── Automation
-    ├── autoclient_ai_page() ←→ ai_automation_loop()
-    ├── automation_control_panel_page()
-    └── view_campaign_logs()
-```
-
-## 📝 Initial Setup
-
-1. Create database tables:
-```bash
-python setup_database.py
-```
-
-2. Configure email settings:
-   - SMTP or AWS SES configuration required
-   - Test email configuration before deployment
-
-3. Initialize OpenAI:
-   - Verify API key permissions
-   - Test model access
+For support, please open an issue in the GitHub repository or contact the maintainers.
