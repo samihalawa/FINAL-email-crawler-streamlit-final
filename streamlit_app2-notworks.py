@@ -1,4 +1,4 @@
-ru"""
+"""
 AUTOCLIENT - Lead Generation App
 
 This application facilitates lead generation through manual and bulk searches,
