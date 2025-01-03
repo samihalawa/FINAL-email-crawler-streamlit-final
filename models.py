@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, func
+from sqlalchemy import Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, func, Float, Index
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
@@ -28,6 +28,7 @@ class Campaign(Base):
     email_campaigns = relationship("EmailCampaign", back_populates="campaign")
     search_terms = relationship("SearchTerm", back_populates="campaign")
     campaign_leads = relationship("CampaignLead", back_populates="campaign")
+    email_templates = relationship("EmailTemplate", back_populates="campaign")
 
 class Lead(Base):
     __tablename__ = 'leads'
@@ -53,7 +54,7 @@ class EmailTemplate(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_ai_customizable = Column(Boolean, default=False)
     language = Column(Text, default='ES')
-    campaign = relationship("Campaign")
+    campaign = relationship("Campaign", back_populates="email_templates")
     email_campaigns = relationship("EmailCampaign", back_populates="template")
 
 class EmailCampaign(Base):
@@ -135,11 +136,27 @@ class LeadSource(Base):
 
 class SearchTerm(Base):
     __tablename__ = 'search_terms'
+    __table_args__ = (
+        Index('idx_term', 'term'),
+        Index('idx_term_group', 'group_id'),
+        Index('idx_term_campaign', 'campaign_id'),
+        Index('idx_term_created', 'created_at'),
+    )
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    term = Column(Text)
+    term = Column(Text, nullable=False)
+    group_id = Column(BigInteger, ForeignKey('search_term_groups.id', ondelete='SET NULL'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id', ondelete='CASCADE'))
     category = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
     language = Column(Text, default='ES')
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    effectiveness_score = Column(Float, default=0.0)
+    last_used = Column(DateTime(timezone=True))
+    is_active = Column(Boolean, default=True)
+    
+    # Relationships
+    group = relationship("SearchTermGroup", back_populates="search_terms")
     campaign = relationship("Campaign", back_populates="search_terms")
-    lead_sources = relationship("LeadSource", back_populates="search_term") 
+    lead_sources = relationship("LeadSource", back_populates="search_term")
+    effectiveness = relationship("SearchTermEffectiveness", back_populates="search_term", uselist=False)
+    optimized_terms = relationship("OptimizedSearchTerm", back_populates="original_term") 
