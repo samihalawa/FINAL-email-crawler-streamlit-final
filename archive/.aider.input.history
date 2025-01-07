@@ -1,0 +1,755 @@
+
+# 2024-12-09 03:08:38.656345
++edit `html.html and fixx all bugs one by one
+
+# 2024-12-09 03:27:35.194589
++fix all bug s
+
+# 2024-12-09 03:27:38.937645
++/clear
+
+# 2024-12-09 03:27:40.081470
++fix bugs
+
+# 2024-12-09 03:28:04.983783
++/commitg
+
+# 2024-12-09 03:28:06.418112
++/commit
+
+# 2024-12-09 03:28:10.676965
++fix
+
+# 2024-12-09 03:28:41.901222
++/uno
+
+# 2024-12-09 03:28:44.895015
++/undol
+
+# 2024-12-09 03:28:46.912935
++/undo
+
+# 2024-12-09 16:37:30.387383
++# Analyzing the provided code in streamlit_app.py for fatal bugs and grouping them
++
++# 1. Checking for potential SQL injection vulnerabilities in the database queries
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses SQLAlchemy's text() function to execute raw SQL queries. This is generally safe, but it's important to ensure that any user input is properly sanitized to prevent SQL injection attacks.
++
++# 2. Ensuring that the database connection is properly closed after each operation
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a context manager to handle the database session. This ensures that the session is properly closed after each operation, preventing resource leaks.
++
++# 3. Validating email addresses before sending emails
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses the email_validator library to validate email addresses before sending emails. This is important to prevent sending emails to invalid addresses.
++
++# 4. Handling exceptions in the send_email_ses function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses the tenacity library to retry the send_email_ses function in case of failures. This is important to handle transient network errors or AWS SES throttling.
++
++# 5. Ensuring that the email body contains a tracking pixel
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code adds a tracking pixel to the email body to track email opens. This is important for email analytics.
++
++# 6. Validating URLs before processing them
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses the urllib.parse library to validate URLs before processing them. This is important to prevent processing invalid URLs.
++
++# 7. Handling exceptions in the openai_chat_completion function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses the tenacity library to retry the openai_chat_completion function in case of failures. This is important to handle transient network errors or OpenAI API throttling.
++
++# 8. Validating user input in the save_lead function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the save_lead function to prevent SQL injection attacks.
++
++# 9. Handling exceptions in the save_lead function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the save_lead function. This is important to prevent the application from crashing in case of errors.
++
++# 10. Validating user input in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_leads function to prevent SQL injection attacks.
++
++# 11. Handling exceptions in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_leads function. This is important to prevent the application from crashing in case of errors.
++
++# 12. Validating user input in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the create_or_update_email_template function to prevent SQL injection attacks.
++
++# 13. Handling exceptions in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the create_or_update_email_template function. This is important to prevent the application from crashing in case of errors.
++
++# 14. Validating user input in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_email_templates function to prevent SQL injection attacks.
++
++# 15. Handling exceptions in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_email_templates function. This is important to prevent the application from crashing in case of errors.
++
++# 16. Validating user input in the fetch_projects function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_projects function to prevent SQL injection attacks.
++
++# 17. Handling exceptions in the fetch_projects function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_projects function. This is important to prevent the application from crashing in case of errors.
++
++# 18. Validating user input in the fetch_campaigns function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_campaigns function to prevent SQL injection attacks.
++
++# 19. Handling exceptions in the fetch_campaigns function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_campaigns function. This is important to prevent the application from crashing in case of errors.
++
++# 20. Validating user input in the add_or_get_search_term function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the add_or_get_search_term function to prevent SQL injection attacks.
++
++# 21. Handling exceptions in the add_or_get_search_term function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the add_or_get_search_term function. This is important to prevent the application from crashing in case of errors.
++
++# 22. Validating user input in the safe_datetime_compare function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the safe_datetime_compare function to prevent SQL injection attacks.
++
++# 23. Handling exceptions in the safe_datetime_compare function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the safe_datetime_compare function. This is important to prevent the application from crashing in case of errors.
++
++# 24. Validating user input in the get_page_title function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the get_page_title function to prevent SQL injection attacks.
++
++# 25. Handling exceptions in the get_page_title function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the get_page_title function. This is important to prevent the application from crashing in case of errors.
++
++# 26. Validating user input in the extract_visible_text function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the extract_visible_text function to prevent SQL injection attacks.
++
++# 27. Handling exceptions in the extract_visible_text function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the extract_visible_text function. This is important to prevent the application from crashing in case of errors.
++
++# 28. Validating user input in the log_search_term_effectiveness function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the log_search_term_effectiveness function to prevent SQL injection attacks.
++
++# 29. Handling exceptions in the log_search_term_effectiveness function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the log_search_term_effectiveness function. This is important to prevent the application from crashing in case of errors.
++
++# 30. Validating user input in the save_lead_source function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the save_lead_source function to prevent SQL injection attacks.
++
++# 31. Handling exceptions in the save_lead_source function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the save_lead_source function. This is important to prevent the application from crashing in case of errors.
++
++# 32. Validating user input in the get_domain_from_url function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the get_domain_from_url function to prevent SQL injection attacks.
++
++# 33. Handling exceptions in the get_domain_from_url function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the get_domain_from_url function. This is important to prevent the application from crashing in case of errors.
++
++# 34. Validating user input in the update_display function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the update_display function to prevent SQL injection attacks.
++
++# 35. Handling exceptions in the update_display function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the update_display function. This is important to prevent the application from crashing in case of errors.
++
++# 36. Validating user input in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_leads function to prevent SQL injection attacks.
++
++# 37. Handling exceptions in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_leads function. This is important to prevent the application from crashing in case of errors.
++
++# 38. Validating user input in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the create_or_update_email_template function to prevent SQL injection attacks.
++
++# 39. Handling exceptions in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the create_or_update_email_template function. This is important to prevent the application from crashing in case of errors.
++
++# 40. Validating user input in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_email_templates function to prevent SQL injection attacks.
++
++# 41. Handling exceptions in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_email_templates function. This is important to prevent the application from crashing in case of errors.
++
++# 42. Validating user input in the fetch_projects function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_projects function to prevent SQL injection attacks.
++
++# 43. Handling exceptions in the fetch_projects function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_projects function. This is important to prevent the application from crashing in case of errors.
++
++# 44. Validating user input in the fetch_campaigns function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_campaigns function to prevent SQL injection attacks.
++
++# 45. Handling exceptions in the fetch_campaigns function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_campaigns function. This is important to prevent the application from crashing in case of errors.
++
++# 46. Validating user input in the add_or_get_search_term function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the add_or_get_search_term function to prevent SQL injection attacks.
++
++# 47. Handling exceptions in the add_or_get_search_term function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the add_or_get_search_term function. This is important to prevent the application from crashing in case of errors.
++
++# 48. Validating user input in the safe_datetime_compare function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the safe_datetime_compare function to prevent SQL injection attacks.
++
++# 49. Handling exceptions in the safe_datetime_compare function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the safe_datetime_compare function. This is important to prevent the application from crashing in case of errors.
++
++# 50. Validating user input in the get_page_title function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the get_page_title function to prevent SQL injection attacks.
++
++# 51. Handling exceptions in the get_page_title function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the get_page_title function. This is important to prevent the application from crashing in case of errors.
++
++# 52. Validating user input in the extract_visible_text function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the extract_visible_text function to prevent SQL injection attacks.
++
++# 53. Handling exceptions in the extract_visible_text function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the extract_visible_text function. This is important to prevent the application from crashing in case of errors.
++
++# 54. Validating user input in the log_search_term_effectiveness function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the log_search_term_effectiveness function to prevent SQL injection attacks.
++
++# 55. Handling exceptions in the log_search_term_effectiveness function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the log_search_term_effectiveness function. This is important to prevent the application from crashing in case of errors.
++
++# 56. Validating user input in the save_lead_source function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the save_lead_source function to prevent SQL injection attacks.
++
++# 57. Handling exceptions in the save_lead_source function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the save_lead_source function. This is important to prevent the application from crashing in case of errors.
++
++# 58. Validating user input in the get_domain_from_url function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the get_domain_from_url function to prevent SQL injection attacks.
++
++# 59. Handling exceptions in the get_domain_from_url function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the get_domain_from_url function. This is important to prevent the application from crashing in case of errors.
++
++# 60. Validating user input in the update_display function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the update_display function to prevent SQL injection attacks.
++
++# 61. Handling exceptions in the update_display function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the update_display function. This is important to prevent the application from crashing in case of errors.
++
++# 62. Validating user input in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_leads function to prevent SQL injection attacks.
++
++# 63. Handling exceptions in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_leads function. This is important to prevent the application from crashing in case of errors.
++
++# 64. Validating user input in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the create_or_update_email_template function to prevent SQL injection attacks.
++
++# 65. Handling exceptions in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the create_or_update_email_template function. This is important to prevent the application from crashing in case of errors.
++
++# 66. Validating user input in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_email_templates function to prevent SQL injection attacks.
++
++# 67. Handling exceptions in the fetch_email
++
+
+# 2024-12-09 16:37:30.387700
++# Analyzing the provided code in streamlit_app.py for fatal bugs and grouping them
++
++# 1. Checking for potential SQL injection vulnerabilities in the database queries
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses SQLAlchemy's text() function to execute raw SQL queries. This is generally safe, but it's important to ensure that any user input is properly sanitized to prevent SQL injection attacks.
++
++# 2. Ensuring that the database connection is properly closed after each operation
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a context manager to handle the database session. This ensures that the session is properly closed after each operation, preventing resource leaks.
++
++# 3. Validating email addresses before sending emails
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses the email_validator library to validate email addresses before sending emails. This is important to prevent sending emails to invalid addresses.
++
++# 4. Handling exceptions in the send_email_ses function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses the tenacity library to retry the send_email_ses function in case of failures. This is important to handle transient network errors or AWS SES throttling.
++
++# 5. Ensuring that the email body contains a tracking pixel
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code adds a tracking pixel to the email body to track email opens. This is important for email analytics.
++
++# 6. Validating URLs before processing them
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses the urllib.parse library to validate URLs before processing them. This is important to prevent processing invalid URLs.
++
++# 7. Handling exceptions in the openai_chat_completion function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses the tenacity library to retry the openai_chat_completion function in case of failures. This is important to handle transient network errors or OpenAI API throttling.
++
++# 8. Validating user input in the save_lead function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the save_lead function to prevent SQL injection attacks.
++
++# 9. Handling exceptions in the save_lead function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the save_lead function. This is important to prevent the application from crashing in case of errors.
++
++# 10. Validating user input in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_leads function to prevent SQL injection attacks.
++
++# 11. Handling exceptions in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_leads function. This is important to prevent the application from crashing in case of errors.
++
++# 12. Validating user input in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the create_or_update_email_template function to prevent SQL injection attacks.
++
++# 13. Handling exceptions in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the create_or_update_email_template function. This is important to prevent the application from crashing in case of errors.
++
++# 14. Validating user input in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_email_templates function to prevent SQL injection attacks.
++
++# 15. Handling exceptions in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_email_templates function. This is important to prevent the application from crashing in case of errors.
++
++# 16. Validating user input in the fetch_projects function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_projects function to prevent SQL injection attacks.
++
++# 17. Handling exceptions in the fetch_projects function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_projects function. This is important to prevent the application from crashing in case of errors.
++
++# 18. Validating user input in the fetch_campaigns function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_campaigns function to prevent SQL injection attacks.
++
++# 19. Handling exceptions in the fetch_campaigns function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_campaigns function. This is important to prevent the application from crashing in case of errors.
++
++# 20. Validating user input in the add_or_get_search_term function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the add_or_get_search_term function to prevent SQL injection attacks.
++
++# 21. Handling exceptions in the add_or_get_search_term function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the add_or_get_search_term function. This is important to prevent the application from crashing in case of errors.
++
++# 22. Validating user input in the safe_datetime_compare function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the safe_datetime_compare function to prevent SQL injection attacks.
++
++# 23. Handling exceptions in the safe_datetime_compare function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the safe_datetime_compare function. This is important to prevent the application from crashing in case of errors.
++
++# 24. Validating user input in the get_page_title function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the get_page_title function to prevent SQL injection attacks.
++
++# 25. Handling exceptions in the get_page_title function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the get_page_title function. This is important to prevent the application from crashing in case of errors.
++
++# 26. Validating user input in the extract_visible_text function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the extract_visible_text function to prevent SQL injection attacks.
++
++# 27. Handling exceptions in the extract_visible_text function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the extract_visible_text function. This is important to prevent the application from crashing in case of errors.
++
++# 28. Validating user input in the log_search_term_effectiveness function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the log_search_term_effectiveness function to prevent SQL injection attacks.
++
++# 29. Handling exceptions in the log_search_term_effectiveness function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the log_search_term_effectiveness function. This is important to prevent the application from crashing in case of errors.
++
++# 30. Validating user input in the save_lead_source function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the save_lead_source function to prevent SQL injection attacks.
++
++# 31. Handling exceptions in the save_lead_source function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the save_lead_source function. This is important to prevent the application from crashing in case of errors.
++
++# 32. Validating user input in the get_domain_from_url function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the get_domain_from_url function to prevent SQL injection attacks.
++
++# 33. Handling exceptions in the get_domain_from_url function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the get_domain_from_url function. This is important to prevent the application from crashing in case of errors.
++
++# 34. Validating user input in the update_display function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the update_display function to prevent SQL injection attacks.
++
++# 35. Handling exceptions in the update_display function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the update_display function. This is important to prevent the application from crashing in case of errors.
++
++# 36. Validating user input in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_leads function to prevent SQL injection attacks.
++
++# 37. Handling exceptions in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_leads function. This is important to prevent the application from crashing in case of errors.
++
++# 38. Validating user input in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the create_or_update_email_template function to prevent SQL injection attacks.
++
++# 39. Handling exceptions in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the create_or_update_email_template function. This is important to prevent the application from crashing in case of errors.
++
++# 40. Validating user input in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_email_templates function to prevent SQL injection attacks.
++
++# 41. Handling exceptions in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_email_templates function. This is important to prevent the application from crashing in case of errors.
++
++# 42. Validating user input in the fetch_projects function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_projects function to prevent SQL injection attacks.
++
++# 43. Handling exceptions in the fetch_projects function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_projects function. This is important to prevent the application from crashing in case of errors.
++
++# 44. Validating user input in the fetch_campaigns function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_campaigns function to prevent SQL injection attacks.
++
++# 45. Handling exceptions in the fetch_campaigns function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_campaigns function. This is important to prevent the application from crashing in case of errors.
++
++# 46. Validating user input in the add_or_get_search_term function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the add_or_get_search_term function to prevent SQL injection attacks.
++
++# 47. Handling exceptions in the add_or_get_search_term function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the add_or_get_search_term function. This is important to prevent the application from crashing in case of errors.
++
++# 48. Validating user input in the safe_datetime_compare function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the safe_datetime_compare function to prevent SQL injection attacks.
++
++# 49. Handling exceptions in the safe_datetime_compare function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the safe_datetime_compare function. This is important to prevent the application from crashing in case of errors.
++
++# 50. Validating user input in the get_page_title function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the get_page_title function to prevent SQL injection attacks.
++
++# 51. Handling exceptions in the get_page_title function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the get_page_title function. This is important to prevent the application from crashing in case of errors.
++
++# 52. Validating user input in the extract_visible_text function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the extract_visible_text function to prevent SQL injection attacks.
++
++# 53. Handling exceptions in the extract_visible_text function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the extract_visible_text function. This is important to prevent the application from crashing in case of errors.
++
++# 54. Validating user input in the log_search_term_effectiveness function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the log_search_term_effectiveness function to prevent SQL injection attacks.
++
++# 55. Handling exceptions in the log_search_term_effectiveness function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the log_search_term_effectiveness function. This is important to prevent the application from crashing in case of errors.
++
++# 56. Validating user input in the save_lead_source function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the save_lead_source function to prevent SQL injection attacks.
++
++# 57. Handling exceptions in the save_lead_source function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the save_lead_source function. This is important to prevent the application from crashing in case of errors.
++
++# 58. Validating user input in the get_domain_from_url function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the get_domain_from_url function to prevent SQL injection attacks.
++
++# 59. Handling exceptions in the get_domain_from_url function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the get_domain_from_url function. This is important to prevent the application from crashing in case of errors.
++
++# 60. Validating user input in the update_display function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the update_display function to prevent SQL injection attacks.
++
++# 61. Handling exceptions in the update_display function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the update_display function. This is important to prevent the application from crashing in case of errors.
++
++# 62. Validating user input in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_leads function to prevent SQL injection attacks.
++
++# 63. Handling exceptions in the fetch_leads function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the fetch_leads function. This is important to prevent the application from crashing in case of errors.
++
++# 64. Validating user input in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the create_or_update_email_template function to prevent SQL injection attacks.
++
++# 65. Handling exceptions in the create_or_update_email_template function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code uses a try-except block to handle exceptions in the create_or_update_email_template function. This is important to prevent the application from crashing in case of errors.
++
++# 66. Validating user input in the fetch_email_templates function
++# Code location: [streamlit_app.py](./streamlit_app.py#L123-L126)
++# The code validates user input in the fetch_email_templates function to prevent SQL injection attacks.
++
++# 67. Handling exceptions in the fetch_email
++
+
+# 2024-12-09 16:38:10.753750
++only ixi critical bugs . the msot critical 4 bgus
+
+# 2024-12-09 16:38:10.754241
++only ixi critical bugs . the msot critical 4 bgus
+
+# 2024-12-09 19:04:42.952964
++/add streamlit_app.py
+
+# 2024-12-09 19:04:44.278856
++# [Previous imports and code remain the same until the undefined functions]
++
++def validate_smtp_settings(host, port, username, password):
++    """Validate SMTP settings by attempting to establish a connection."""
++    try:
++        with smtplib.SMTP(host, port, timeout=5) as server:
++            server.starttls()
++            server.login(username, password)
++        return True
++    except Exception as e:
++        raise ValueError(f"Invalid SMTP settings: {str(e)}")
++
++def save_email_settings(session, settings):
++    """Save email settings to the database."""
++    try:
++        email_settings = EmailSettings(
++            name=settings.get('name', 'Default'),
++            email=settings.get('username'),
++            provider='smtp',
++            smtp_server=settings.get('host'),
++            smtp_port=settings.get('port'),
++            smtp_username=settings.get('username'),
++            smtp_password=settings.get('password'),
++            created_at=datetime.utcnow()
++        )
++        session.add(email_settings)
++        session.commit()
++        return True
++    except Exception as e:
++        session.rollback()
++        raise ValueError(f"Failed to save email settings: {str(e)}")
++
++def create_system_backup(session):
++    """Create a backup of the system data."""
++    try:
++        # Create a temporary directory for the backup
++        backup_dir = os.path.join(os.getcwd(), 'backup_temp')
++        os.makedirs(backup_dir, exist_ok=True)
++        
++        # Export all tables to CSV
++        tables = [
++            Lead, Campaign, EmailTemplate, SearchTerm, 
++            EmailCampaign, KnowledgeBase, Settings
++        ]
++        
++        for table in tables:
++            df = pd.read_sql(session.query(table).statement, session.bind)
++            df.to_csv(os.path.join(backup_dir, f"{table.__tablename__}.csv"), index=False)
++        
++        # Create zip file
++        zip_path = os.path.join(os.getcwd(), 'system_backup.zip')
++        with zipfile.ZipFile(zip_path, 'w') as zipf:
++            for file in os.listdir(backup_dir):
++                zipf.write(os.path.join(backup_dir, file), file)
++        
++        # Cleanup
++        import shutil
++        shutil.rmtree(backup_dir)
++        
++        with open(zip_path, 'rb') as f:
++            return f.read()
++    except Exception as e:
++        raise ValueError(f"Failed to create backup: {str(e)}")
++
++def restore_from_backup(session, backup_file):
++    """Restore system from a backup file."""
++    try:
++        # Create temporary directory
++        restore_dir = os.path.join(os.getcwd(), 'restore_temp')
++        os.makedirs(restore_dir, exist_ok=True)
++        
++        # Extract backup
++        with zipfile.ZipFile(backup_file, 'r') as zipf:
++            zipf.extractall(restore_dir)
++        
++        # Restore each table
++        table_map = {
++            'leads.csv': Lead,
++            'campaigns.csv': Campaign,
++            'email_templates.csv': EmailTemplate,
++            'search_terms.csv': SearchTerm,
++            'email_campaigns.csv': EmailCampaign,
++            'knowledge_base.csv': KnowledgeBase,
++            'settings.csv': Settings
++        }
++        
++        for file_name, table_class in table_map.items():
++            file_path = os.path.join(restore_dir, file_name)
++            if os.path.exists(file_path):
++                df = pd.read_csv(file_path)
++                for _, row in df.iterrows():
++                    session.merge(table_class(**row.to_dict()))
++        
++        session.commit()
++        
++        # Cleanup
++        import shutil
++        shutil.rmtree(restore_dir)
++        
++        return True
++    except Exception as e:
++        session.rollback()
++        raise ValueError(f"Failed to restore from backup: {str(e)}")
++
++def get_recent_search_terms(session):
++    """Get recently used search terms."""
++    try:
++        recent_terms = (
++            session.query(SearchTerm.term)
++            .order_by(SearchTerm.created_at.desc())
++            .limit(10)
++            .all()
++        )
++        return [term[0] for term in recent_terms]
++    except Exception as e:
++        logger.error(f"Error fetching recent search terms: {str(e)}")
++        return []
++
++def processes_tab():
++    """Display and manage active processes."""
++    st.subheader("Active Processes")
++    
++    with db_session() as session:
++        processes = fetch_active_processes(session)
++        
++        if not processes:
++            st.info("No active processes found")
++            return
++            
++        for process in processes:
++            with st.expander(f"Process {process.id} - {process.status}"):
++                st.text(f"Started: {process.created_at}")
++                st.text(f"Status: {process.status}")
++                
++                col1, col2 = st.columns(2)
++                with col1:
++                    if st.button("Pause/Resume", key=f"toggle_{process.id}"):
++                        new_status = "paused" if process.status == "running" else "running"
++                        toggle_process(session, process.id, new_status)
++                        st.rerun()
++                        
++                with col2:
++                    if st.button("Stop", key=f"stop_{process.id}"):
++                        toggle_process(session, process.id, "stopped")
++                        st.rerun()
++
++def fetch_active_processes(session):
++    """Fetch all active processes from the database."""
++    try:
++        return session.query(SearchProcess).filter(
++            SearchProcess.status.in_(['running', 'paused'])
++        ).all()
++    except Exception as e:
++        logger.error(f"Error fetching active processes: {str(e)}")
++        return []
++
++def toggle_process(session, process_id, new_status):
++    """Toggle the status of a process."""
++    try:
++        process = session.query(SearchProcess).get(process_id)
++        if not process:
++            raise ValueError(f"Process {process_id} not found")
++            
++        process.status = new_status
++        process.updated_at = datetime.utcnow()
++        session.commit()
++        
++        return True
++    except Exception as e:
++        session.rollback()
++        logger.error(f"Error toggling process {process_id}: {str(e)}")
++        return False
++
++# [Rest of the code remains the same]

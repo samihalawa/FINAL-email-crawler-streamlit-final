@@ -1,0 +1,17 @@
+Create a complete, fully working, production-ready UX/UI version of the script located in streamlit_app.py. The application should serve as a user-friendly interface for users to interact with the underlying functionality. 
+
+Key requirements:
+1. **Purpose**: The application should allow users to perform Google searches and display the results in an organized manner.
+2. **Features**:
+   - Input field for search queries.
+   - Display search results in a visually appealing format.
+   - Pagination for results if there are many entries.
+   - Option to filter results based on categories (e.g., images, news).
+3. **Design Preferences**:
+   - Use a clean and modern design with a light color scheme.
+   - Ensure the layout is responsive and works well on both desktop and mobile devices.
+   - Include intuitive navigation elements.
+4. **Technologies**: Utilize Streamlit for the frontend and ensure that the application is easy to deploy.
+5. **User Experience**: Focus on simplicity and ease of use, ensuring that users can quickly find what they are looking for without confusion.
+
+Please follow these instructions carefully to produce a polished and functional UX/UI version of the application.

@@ -1,4 +1,48 @@
+# Environment files
 .env
-.aider*
+.env.*
+!.env.example
 
-.codegpt
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env/
+.venv/
+.python-version
+
+# Logs
+*.log
+streamlit.log
+
+# Cursor specific
+.cursorrules
+.cursor/
+.cursor-*
+
+# Cache directories
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Backup files
+*.bak
+*.backup
+*~venv/

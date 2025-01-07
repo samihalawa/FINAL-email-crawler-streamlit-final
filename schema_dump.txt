@@ -1,0 +1,26 @@
+                                               List of relations
+ Schema |           Name            | Type  |  Owner   | Persistence | Access method |    Size    | Description 
+--------+---------------------------+-------+----------+-------------+---------------+------------+-------------
+ public | ai_request_logs           | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | automation_logs           | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | background_process_state  | table | postgres | permanent   | heap          | 16 kB      | 
+ public | campaign_leads            | table | postgres | permanent   | heap          | 16 kB      | 
+ public | campaign_metrics          | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | campaigns                 | table | postgres | permanent   | heap          | 16 kB      | 
+ public | email_campaigns           | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | email_settings            | table | postgres | permanent   | heap          | 16 kB      | 
+ public | email_templates           | table | postgres | permanent   | heap          | 16 kB      | 
+ public | error_events              | table | postgres | permanent   | heap          | 16 kB      | 
+ public | knowledge_base            | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | lead_sources              | table | postgres | permanent   | heap          | 16 kB      | 
+ public | leads                     | table | postgres | permanent   | heap          | 16 kB      | 
+ public | optimized_search_terms    | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | projects                  | table | postgres | permanent   | heap          | 16 kB      | 
+ public | search_groups             | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | search_logs               | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | search_term_effectiveness | table | postgres | permanent   | heap          | 0 bytes    | 
+ public | search_term_groups        | table | postgres | permanent   | heap          | 8192 bytes | 
+ public | search_terms              | table | postgres | permanent   | heap          | 16 kB      | 
+ public | settings                  | table | postgres | permanent   | heap          | 8192 bytes | 
+(21 rows)
+
