@@ -46,3 +46,4 @@ build/
 *.bak
 *.backup
 *~venv/
+.history/
