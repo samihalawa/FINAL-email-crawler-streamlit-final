@@ -21,8 +21,11 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+import traceback
 #database info
 load_dotenv()
+
+# Database configuration
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
 DB_USER = os.getenv("SUPABASE_DB_USER")
@@ -42,7 +45,14 @@ engine = create_engine(
     max_overflow=10,
     pool_timeout=30,
     pool_recycle=1800,
-    pool_pre_ping=True
+    pool_pre_ping=True,
+    connect_args={
+        'connect_timeout': 10,
+        'keepalives': 1,
+        'keepalives_idle': 30,
+        'keepalives_interval': 10,
+        'keepalives_count': 5
+    }
 )
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -105,10 +115,13 @@ class KnowledgeBase(Base):
 class Lead(Base):
     __tablename__ = 'leads'
     id = Column(BigInteger, primary_key=True)
-    email = Column(Text, unique=True)
-    phone, first_name, last_name, company, job_title = [Column(Text) for _ in range(5)]
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Remove the domain column
+    email = Column(Text, unique=True, index=True)
+    phone = Column(Text, index=True)
+    first_name = Column(Text)
+    last_name = Column(Text)
+    company = Column(Text, index=True)
+    job_title = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     campaign_leads = relationship("CampaignLead", back_populates="lead")
     lead_sources = relationship("LeadSource", back_populates="lead")
     email_campaigns = relationship("EmailCampaign", back_populates="lead")
@@ -127,18 +140,18 @@ class EmailTemplate(Base):
 class EmailCampaign(Base):
     __tablename__ = 'email_campaigns'
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
-    lead_id = Column(BigInteger, ForeignKey('leads.id'))
-    template_id = Column(BigInteger, ForeignKey('email_templates.id'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'), index=True)
+    lead_id = Column(BigInteger, ForeignKey('leads.id'), index=True)
+    template_id = Column(BigInteger, ForeignKey('email_templates.id'), index=True)
     customized_subject = Column(Text)
-    customized_content = Column(Text)  # Make sure this column exists
+    customized_content = Column(Text)
     original_subject = Column(Text)
     original_content = Column(Text)
-    status = Column(Text)
+    status = Column(Text, index=True)
     engagement_data = Column(JSON)
-    message_id = Column(Text)
-    tracking_id = Column(Text, unique=True)
-    sent_at = Column(DateTime(timezone=True))
+    message_id = Column(Text, index=True)
+    tracking_id = Column(Text, unique=True, index=True)
+    sent_at = Column(DateTime(timezone=True), index=True)
     ai_customized = Column(Boolean, default=False)
     opened_at = Column(DateTime(timezone=True))
     clicked_at = Column(DateTime(timezone=True))
@@ -242,31 +255,15 @@ class EmailSettings(Base):
     aws_access_key_id = Column(Text)
     aws_secret_access_key = Column(Text)
     aws_region = Column(Text)
-
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL not set")
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base.metadata.create_all(bind=engine)
+    daily_limit = Column(BigInteger, default=999999999)
+    hourly_limit = Column(BigInteger, default=999999999)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 @contextmanager
 def db_session():
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        logging.error(f"Database error: {str(e)}")
-        raise
-    finally:
-        session.close()
-
-@contextmanager
-def safe_db_session():
-    """Enhanced database session context manager with proper error handling"""
+    """Optimized database session context manager with proper error handling and connection pooling"""
     session = None
     try:
         session = SessionLocal()
@@ -275,11 +272,51 @@ def safe_db_session():
     except SQLAlchemyError as e:
         if session:
             session.rollback()
-        logging.error(f"Database error: {str(e)}")
+        error_msg = str(e)
+        logging.error(f"Database error: {error_msg}")
+        if "connection" in error_msg.lower():
+            st.error("Database connection error. Please try again.")
+        elif "deadlock" in error_msg.lower():
+            st.error("Database conflict detected. Please retry your operation.")
+        else:
+            st.error("A database error occurred. Please try again.")
+        raise
+    except Exception as e:
+        if session:
+            session.rollback()
+        logging.error(f"Unexpected error in database session: {str(e)}")
+        st.error("An unexpected error occurred. Please try again.")
         raise
     finally:
         if session:
-            session.close()
+            try:
+                session.close()
+            except Exception as e:
+                logging.error(f"Error closing database session: {str(e)}")
+
+@contextmanager
+def safe_db_session():
+    """Enhanced database session with retry logic for transient errors"""
+    max_retries = 3
+    retry_delay = 1
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            with db_session() as session:
+                yield session
+                return
+        except SQLAlchemyError as e:
+            last_error = e
+            if "connection" in str(e).lower() and attempt < max_retries - 1:
+                logging.warning(f"Database connection error, attempt {attempt + 1} of {max_retries}")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            raise last_error
+        except Exception as e:
+            logging.error(f"Critical database error: {str(e)}")
+            raise
 
 def check_required_settings(session):
     """Check if all required settings are present"""
@@ -327,61 +364,252 @@ def settings_page():
     st.title("Settings")
     with db_session() as session:
         try:
-            general_settings = session.query(Settings).filter_by(setting_type='general').first() or Settings(name='General Settings', setting_type='general', value={})
-            st.header("General Settings")
-            with st.form("general_settings_form"):
-                openai_api_key = st.text_input("OpenAI API Key", value=general_settings.value.get('openai_api_key', ''), type="password")
-                openai_api_base = st.text_input("OpenAI API Base URL", value=general_settings.value.get('openai_api_base', 'https://api.openai.com/v1'))
-                openai_model = st.text_input("OpenAI Model", value=general_settings.value.get('openai_model', 'gpt-4'))
-                if st.form_submit_button("Save General Settings"):
-                    general_settings.value = {'openai_api_key': openai_api_key, 'openai_api_base': openai_api_base, 'openai_model': openai_model}
-                    session.add(general_settings)
-                    st.success("General settings saved successfully!")
-
-            st.header("Email Settings")
+            # Email Settings
+            st.subheader("Email Settings")
+            
+            # Fetch existing settings
             email_settings = session.query(EmailSettings).all()
-            for setting in email_settings:
-                with st.expander(f"{setting.name} ({setting.email})"):
-                    st.write(f"Provider: {setting.provider}")
-                    st.write(f"{'SMTP Server: ' + setting.smtp_server if setting.provider == 'smtp' else 'AWS Region: ' + setting.aws_region}")
-                    if st.button(f"Delete {setting.name}", key=f"delete_{setting.id}"):
-                        session.delete(setting)
-                        st.success(f"Deleted {setting.name}")
-                        st.rerun()
+            
+            # Display existing settings
+            if email_settings:
+                settings_data = []
+                for setting in email_settings:
+                    settings_data.append({
+                        'ID': setting.id,
+                        'Name': setting.name,
+                        'Email': setting.email,
+                        'Provider': setting.provider,
+                        'Daily Limit': setting.daily_limit or 'No limit',
+                        'Hourly Limit': setting.hourly_limit or 'No limit',
+                        'Active': '✓' if setting.is_active else '✗'
+                    })
+                
+                df = pd.DataFrame(settings_data)
+                st.dataframe(
+                    df,
+                    hide_index=True,
+                    column_config={
+                        'ID': st.column_config.NumberColumn('ID'),
+                        'Name': st.column_config.TextColumn('Name'),
+                        'Email': st.column_config.TextColumn('Email'),
+                        'Provider': st.column_config.TextColumn('Provider'),
+                        'Daily Limit': st.column_config.TextColumn('Daily Limit'),
+                        'Hourly Limit': st.column_config.TextColumn('Hourly Limit'),
+                        'Active': st.column_config.TextColumn('Active')
+                    }
+                )
 
-            edit_id = st.selectbox("Edit existing setting", ["New Setting"] + [f"{s.id}: {s.name}" for s in email_settings])
-            edit_setting = session.query(EmailSettings).get(int(edit_id.split(":")[0])) if edit_id != "New Setting" else None
+            # Add new email setting
+            st.subheader("Add Email Setting")
             with st.form("email_setting_form"):
-                name = st.text_input("Name", value=edit_setting.name if edit_setting else "", placeholder="e.g., Company Gmail")
-                email = st.text_input("Email", value=edit_setting.email if edit_setting else "", placeholder="your.email@example.com")
-                provider = st.selectbox("Provider", ["smtp", "ses"], index=0 if edit_setting and edit_setting.provider == "smtp" else 1)
-                if provider == "smtp":
-                    smtp_server = st.text_input("SMTP Server", value=edit_setting.smtp_server if edit_setting else "", placeholder="smtp.gmail.com")
-                    smtp_port = st.number_input("SMTP Port", min_value=1, max_value=65535, value=edit_setting.smtp_port if edit_setting else 587)
-                    smtp_username = st.text_input("SMTP Username", value=edit_setting.smtp_username if edit_setting else "", placeholder="your.email@gmail.com")
-                    smtp_password = st.text_input("SMTP Password", type="password", value=edit_setting.smtp_password if edit_setting else "", placeholder="Your SMTP password")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    name = st.text_input("Setting Name")
+                    email = st.text_input("Email Address")
+                    provider = st.selectbox("Provider", ["AWS SES", "SMTP"])
+                    
+                with col2:
+                    daily_limit = st.number_input("Daily Email Limit", min_value=0, value=1000)
+                    hourly_limit = st.number_input("Hourly Email Limit", min_value=0, value=100)
+                    is_active = st.checkbox("Active", value=True)
+                
+                # Provider-specific settings
+                if provider == "AWS SES":
+                    aws_access_key = st.text_input("AWS Access Key ID")
+                    aws_secret_key = st.text_input("AWS Secret Access Key", type="password")
+                    aws_region = st.text_input("AWS Region", value="us-east-1")
                 else:
-                    aws_access_key_id = st.text_input("AWS Access Key ID", value=edit_setting.aws_access_key_id if edit_setting else "", placeholder="AKIAIOSFODNN7EXAMPLE")
-                    aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password", value=edit_setting.aws_secret_access_key if edit_setting else "", placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-                    aws_region = st.text_input("AWS Region", value=edit_setting.aws_region if edit_setting else "", placeholder="us-west-2")
-                if st.form_submit_button("Save Email Setting"):
-                    setting_data = {k: v for k, v in locals().items() if k in ['name', 'email', 'provider', 'smtp_server', 'smtp_port', 'smtp_username', 'smtp_password', 'aws_access_key_id', 'aws_secret_access_key', 'aws_region'] and v is not None}
+                    smtp_server = st.text_input("SMTP Server")
+                    smtp_port = st.number_input("SMTP Port", value=587)
+                    smtp_username = st.text_input("SMTP Username")
+                    smtp_password = st.text_input("SMTP Password", type="password")
+
+                if st.form_submit_button("Add Email Setting"):
                     try:
-                        if edit_setting:
-                            for k, v in setting_data.items():
-                                setattr(edit_setting, k, v)
+                        new_setting = EmailSettings(
+                            name=name,
+                            email=email,
+                            provider=provider,
+                            daily_limit=daily_limit,
+                            hourly_limit=hourly_limit,
+                            is_active=is_active,
+                            project_id=get_active_campaign_id()
+                        )
+                        
+                        if provider == "AWS SES":
+                            new_setting.aws_access_key_id = aws_access_key
+                            new_setting.aws_secret_access_key = aws_secret_key
+                            new_setting.aws_region = aws_region
                         else:
-                            new_setting = EmailSettings(**setting_data)
-                            session.add(new_setting)
+                            new_setting.smtp_server = smtp_server
+                            new_setting.smtp_port = smtp_port
+                            new_setting.smtp_username = smtp_username
+                            new_setting.smtp_password = smtp_password
+                        
+                        session.add(new_setting)
                         session.commit()
-                        st.success("Email setting saved successfully!")
+                        st.success("Email setting added successfully!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error saving email setting: {str(e)}")
+                        st.error(f"Error adding email setting: {str(e)}")
                         session.rollback()
+
+            # Application Settings
+            st.subheader("Application Settings")
+            
+            # Fetch current settings
+            app_settings = session.query(Settings).filter_by(setting_type='application').first()
+            current_settings = app_settings.value if app_settings else {}
+            
+            # General settings
+            with st.form("app_settings_form"):
+                enable_ai = st.checkbox(
+                    "Enable AI Features",
+                    value=current_settings.get('enable_ai', True)
+                )
+                
+                debug_mode = st.checkbox(
+                    "Debug Mode",
+                    value=current_settings.get('debug_mode', False)
+                )
+
+                default_language = st.selectbox(
+                    "Default Language",
+                    options=["ES", "EN"],
+                    index=0 if current_settings.get('default_language', 'ES') == 'ES' else 1
+                )
+                
+                max_search_results = st.number_input(
+                    "Max Search Results per Term",
+                    min_value=1,
+                    value=current_settings.get('max_search_results', 50)
+                )
+                
+                email_batch_size = st.number_input(
+                    "Email Batch Size",
+                    min_value=1,
+                    value=current_settings.get('email_batch_size', 10)
+                )
+                
+                if st.form_submit_button("Save Settings"):
+                    try:
+                        new_settings = {
+                            'enable_ai': enable_ai,
+                            'debug_mode': debug_mode,
+                            'default_language': default_language,
+                            'max_search_results': max_search_results,
+                            'email_batch_size': email_batch_size
+                        }
+                        
+                        if app_settings:
+                            app_settings.value = new_settings
+                        else:
+                            app_settings = Settings(
+                                name='application_settings',
+                                setting_type='application',
+                                value=new_settings
+                            )
+                            session.add(app_settings)
+                        
+                        session.commit()
+                        st.success("Application settings saved successfully!")
+                    except Exception as e:
+                        st.error(f"Error saving application settings: {str(e)}")
+
+            # AI Settings
+            st.subheader("AI Settings")
+            ai_settings = session.query(Settings).filter_by(setting_type='ai').first()
+            current_ai_settings = ai_settings.value if ai_settings else {}
+
+            with st.form("ai_settings_form"):
+                openai_api_key = st.text_input(
+                    "OpenAI API Key",
+                    value=current_ai_settings.get('openai_api_key', ''),
+                    type="password"
+                )
+
+                openai_api_base = st.text_input(
+                    "OpenAI API Base URL",
+                    value=current_ai_settings.get('api_base_url', 'https://api.openai.com/v1')
+                )
+
+                openai_model = st.selectbox(
+                    "OpenAI Model",
+                    options=["gpt-4", "gpt-3.5-turbo"],
+                    index=0 if current_ai_settings.get('model_name', 'gpt-4') == 'gpt-4' else 1
+                )
+
+                max_tokens = st.number_input(
+                    "Max Tokens per Request",
+                    min_value=100,
+                    max_value=4000,
+                    value=int(current_ai_settings.get('max_tokens', 1500))
+                )
+
+                if st.form_submit_button("Save AI Settings"):
+                    try:
+                        new_ai_settings = {
+                            'openai_api_key': openai_api_key,
+                            'api_base_url': openai_api_base,
+                            'model_name': openai_model,
+                            'max_tokens': max_tokens
+                        }
+
+                        if ai_settings:
+                            ai_settings.value = new_ai_settings
+                        else:
+                            ai_settings = Settings(
+                                name='ai_settings',
+                                setting_type='ai',
+                                value=new_ai_settings
+                            )
+                            session.add(ai_settings)
+
+                        session.commit()
+                        st.success("AI settings saved successfully!")
+                    except Exception as e:
+                        st.error(f"Error saving AI settings: {str(e)}")
+
+            # Database Information
+            st.subheader("Database Information")
+            
+            # Get table statistics
+            stats = {
+                'Projects': session.query(Project).count(),
+                'Campaigns': session.query(Campaign).count(),
+                'Leads': session.query(Lead).count(),
+                'Search Terms': session.query(SearchTerm).count(),
+                'Email Templates': session.query(EmailTemplate).count(),
+                'Email Campaigns': session.query(EmailCampaign).count()
+            }
+            
+            # Display statistics
+            col1, col2, col3 = st.columns(3)
+            for i, (table, count) in enumerate(stats.items()):
+                with [col1, col2, col3][i % 3]:
+                    st.metric(table, count)
+            
+            # Database maintenance
+            st.subheader("Database Maintenance")
+            
+            if st.button("Check Database Health"):
+                try:
+                    check_database_state()
+                    st.success("Database health check completed successfully!")
+                except Exception as e:
+                    st.error(f"Database health check failed: {str(e)}")
+            
+            if st.button("Create Default Settings"):
+                try:
+                    create_default_email_settings()
+                    st.success("Default settings created successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error creating default settings: {str(e)}")
+
         except Exception as e:
             st.error(f"Error loading settings: {str(e)}")
-            logging.exception("Error in settings page")
 
 def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
     email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
@@ -411,8 +639,8 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
     tracked_body = str(soup)
 
     try:
-        if email_settings.provider == 'ses':
-            if not ses_client:
+        if email_settings.provider == 'AWS SES':  # Changed from 'ses' to 'AWS SES'
+            if ses_client is None:
                 aws_session = boto3.Session(
                     aws_access_key_id=email_settings.aws_access_key_id,
                     aws_secret_access_key=email_settings.aws_secret_access_key,
@@ -798,7 +1026,7 @@ def ai_automation_loop(session, log_container, leads_container):
         return
         
     # Get email settings
-    email_settings = session.query(Settings).filter_by(setting_type='email_defaults').first()
+    email_settings = session.query(EmailSettings).first()
     if not email_settings:
         log_container.error("Email settings not found. Please check your configuration.")
         return
@@ -827,7 +1055,7 @@ def ai_automation_loop(session, log_container, leads_container):
                 time.sleep(cycle_interval)
                 continue
                 
-            base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
+            base_terms = [term.term for term in session.query(SearchTerm).filter_by(campaign_id=get_active_campaign_id()).all()]
             optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
             st.subheader("Optimized Search Terms")
             st.write(", ".join(optimized_terms))
@@ -888,19 +1116,37 @@ def ai_automation_loop(session, log_container, leads_container):
 
 def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_id=None, email_campaign_id=None):
     with db_session() as session:
+        # First try to get AI settings
         ai_settings = session.query(Settings).filter_by(setting_type='ai').first()
+        
+        # If AI settings don't exist, try to get general settings as fallback
         if not ai_settings:
-            st.error("AI settings not found. Please check your configuration.")
+            general_settings = session.query(Settings).filter_by(setting_type='general').first()
+            if general_settings and 'openai_api_key' in general_settings.value:
+                # Convert general settings to AI settings format
+                ai_settings = Settings(
+                    name='ai_settings',
+                    setting_type='ai',
+                    value={
+                        'openai_api_key': general_settings.value['openai_api_key'],
+                        'api_base_url': general_settings.value.get('openai_api_base', 'https://api.openai.com/v1'),
+                        'model_name': general_settings.value.get('openai_model', 'gpt-4'),
+                        'max_tokens': 1500
+                    }
+                )
+                session.add(ai_settings)
+                session.commit()
+        
+        if not ai_settings or 'openai_api_key' not in ai_settings.value:
+            st.error("OpenAI API key not set. Please configure it in the AI settings.")
             return None
 
         client = OpenAI(
-            api_key=ai_settings.value.get('openai_api_key'),
+            api_key=ai_settings.value['openai_api_key'],
             base_url=ai_settings.value.get('api_base_url', 'https://api.openai.com/v1')
         )
-        
         model = ai_settings.value.get('model_name', 'gpt-4')
         max_tokens = int(ai_settings.value.get('max_tokens', 1500))
-        temperature = float(ai_settings.value.get('temperature', temperature))
 
     try:
         response = client.chat.completions.create(
@@ -996,8 +1242,11 @@ def add_or_get_search_term(session, term, campaign_id, created_at=None):
         session.refresh(search_term)
     return search_term.id
 
-def fetch_campaigns(session):
-    return [f"{camp.id}: {camp.campaign_name}" for camp in session.query(Campaign).all()]
+def fetch_campaigns(session, project_id=None):
+    if project_id:
+        return [f"{c.id}: {c.campaign_name}" for c in session.query(Campaign).filter_by(project_id=project_id).all()]
+    else:
+        return [f"{c.id}: {c.campaign_name}" for c in session.query(Campaign).all()]
 
 def fetch_projects(session):
     return [f"{project.id}: {project.project_name}" for project in session.query(Project).all()]
@@ -1015,7 +1264,7 @@ def create_or_update_email_template(session, template_name, subject, body_conten
 
 safe_datetime_compare = lambda date1, date2: False if date1 is None or date2 is None else date1 > date2
 
-def fetch_leads(session, template_id, send_option, specific_email, selected_terms, exclude_previously_contacted):
+def fetch_leads(session, send_option, specific_email, selected_terms, exclude_previously_contacted, campaign_id):
     try:
         query = session.query(Lead)
         if send_option == "Specific Email":
@@ -1028,6 +1277,7 @@ def fetch_leads(session, template_id, send_option, specific_email, selected_term
             # Use a subquery to exclude previously contacted leads
             contacted_leads = session.query(EmailCampaign.lead_id)\
                 .filter(EmailCampaign.sent_at.isnot(None))\
+                .filter(EmailCampaign.campaign_id == campaign_id)\
                 .subquery()
             query = query.outerjoin(contacted_leads, Lead.id == contacted_leads.c.lead_id)\
                 .filter(contacted_leads.c.lead_id.is_(None))
@@ -1244,7 +1494,7 @@ def ai_automation_loop(session, log_container, leads_container):
         return
         
     # Get email settings
-    email_settings = session.query(Settings).filter_by(setting_type='email_defaults').first()
+    email_settings = session.query(EmailSettings).first()
     if not email_settings:
         log_container.error("Email settings not found. Please check your configuration.")
         return
@@ -1273,7 +1523,7 @@ def ai_automation_loop(session, log_container, leads_container):
                 time.sleep(cycle_interval)
                 continue
                 
-            base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
+            base_terms = [term.term for term in session.query(SearchTerm).filter_by(campaign_id=get_active_campaign_id()).all()]
             optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
             st.subheader("Optimized Search Terms")
             st.write(", ".join(optimized_terms))
@@ -1396,10 +1646,6 @@ def perform_quick_scan(session):
     return {"new_leads": len(res['results']), "terms_used": [term.term for term in terms]}
 
 def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress_bar=None, status_text=None, results=None, log_container=None):
-    MAX_EMAILS_PER_MINUTE = 30
-    email_count = 0
-    last_email_time = time.time()
-    total_leads = len(leads)
     sent_count = 0
     logs = []
     
@@ -1407,18 +1653,11 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
     if not template:
         if log_container:
             log_container.error("Email template not found")
-        return 0, logs
+        return [], 0
         
     wrapped_content = wrap_email_body(template.body_content)
     
     for index, lead in enumerate(leads):
-        if email_count >= MAX_EMAILS_PER_MINUTE:
-            sleep_time = 60 - (time.time() - last_email_time)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-            email_count = 0
-            last_email_time = time.time()
-            
         try:
             validate_email(lead['Email'])
             response, tracking_id = send_email_ses(session, from_email, lead['Email'], template.subject, wrapped_content, reply_to=reply_to)
@@ -1439,15 +1678,13 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
             logs.append(log_message)
 
             if progress_bar:
-                progress_bar.progress((index + 1) / total_leads)
+                progress_bar.progress((index + 1) / len(leads))
             if status_text:
-                status_text.text(f"Processed {index + 1}/{total_leads} leads ({sent_count} sent)")
+                status_text.text(f"Processed {index + 1}/{len(leads)} leads ({sent_count} sent)")
             if results is not None:
                 results.append({"Email": lead['Email'], "Status": status})
             if log_container:
                 log_container.text(log_message)
-
-            email_count += 1
             
         except EmailNotValidError:
             log_message = f"❌ Invalid email address: {lead['Email']}"
@@ -1985,12 +2222,102 @@ def email_templates_page():
         else:
             st.info("No email templates found. Create a new template to get started.")
 
+def wrap_email_body(body_content):
+    """Wrap email content in a properly structured HTML template with sanitization"""
+    try:
+        # Basic HTML sanitization
+        soup = BeautifulSoup(body_content, 'html.parser')
+        
+        # Remove potentially dangerous tags/attributes
+        for tag in soup.find_all(True):
+            if tag.name in ['script', 'iframe', 'object', 'embed']:
+                tag.decompose()
+            for attr in list(tag.attrs):
+                if attr.startswith('on') or attr in ['style', 'class']:
+                    del tag[attr]
+        
+        sanitized_content = str(soup)
+        
+        # Wrap in responsive template
+        template = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Email Preview</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 20px;
+                }}
+                img {{
+                    max-width: 100%;
+                    height: auto;
+                }}
+                @media only screen and (max-width: 600px) {{
+                    body {{
+                        padding: 10px;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            {sanitized_content}
+        </body>
+        </html>
+        """
+        return template
+    except Exception as e:
+        logging.error(f"Error wrapping email content: {str(e)}")
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <body>
+            <p style="color: red;">Error processing template: {str(e)}</p>
+            <hr>
+            <pre>{html.escape(body_content)}</pre>
+        </body>
+        </html>
+        """
+
 def get_email_preview(session, template_id, from_email, reply_to):
-    template = session.query(EmailTemplate).filter_by(id=template_id).first()
-    if template:
-        wrapped_content = wrap_email_body(template.body_content)
-        return wrapped_content
-    return "<p>Template not found</p>"
+    """Get a preview of the email template with proper error handling and sanitization"""
+    try:
+        template = session.query(EmailTemplate).filter_by(id=template_id).first()
+        if not template:
+            return "<p>Template not found</p>"
+        
+        if not template.body_content:
+            return "<p>Template content is empty</p>"
+            
+        try:
+            wrapped_content = wrap_email_body(template.body_content)
+            # Basic HTML validation
+            soup = BeautifulSoup(wrapped_content, 'html.parser')
+            if not soup.find('body'):
+                return "<p>Invalid HTML structure in template</p>"
+                
+            # Add preview info
+            info_div = soup.new_tag('div')
+            info_div['style'] = 'background-color: #f8f9fa; padding: 10px; margin-bottom: 20px; border-radius: 5px;'
+            info_div.string = f"From: {from_email}\nReply-To: {reply_to}\nSubject: {template.subject}"
+            soup.body.insert(0, info_div)
+            
+            return str(soup)
+        except Exception as e:
+            logging.error(f"Error wrapping email content: {str(e)}")
+            return f"<p>Error processing template: {str(e)}</p>"
+    except SQLAlchemyError as e:
+        logging.error(f"Database error in get_email_preview: {str(e)}")
+        return "<p>Error accessing template</p>"
+    except Exception as e:
+        logging.error(f"Unexpected error in get_email_preview: {str(e)}")
+        return "<p>Unexpected error occurred</p>"
 
 def fetch_all_search_terms(session):
     return session.query(SearchTerm).all()
@@ -2048,7 +2375,7 @@ def bulk_send_page():
             st.text(f"From: {from_email}\nReply-To: {reply_to}\nSubject: {subject}")
             st.components.v1.html(get_email_preview(session, template_id, from_email, reply_to), height=600, scrolling=True)
 
-            leads = fetch_leads(session, template_id, send_option, specific_email, selected_terms, exclude_previously_contacted)
+            leads = fetch_leads(session, send_option, specific_email, selected_terms, exclude_previously_contacted, template.campaign_id)
             total_leads = len(leads)
             eligible_leads = [lead for lead in leads if lead.get('language', template.language) == template.language]
             contactable_leads = [lead for lead in eligible_leads if not (exclude_previously_contacted and lead.get('domain_contacted', False))]
@@ -2073,7 +2400,7 @@ def bulk_send_page():
                 success_rate = (results_df['Status'] == 'sent').mean()
                 st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
 
-def fetch_leads(session, template_id, send_option, specific_email, selected_terms, exclude_previously_contacted):
+def fetch_leads(session, send_option, specific_email, selected_terms, exclude_previously_contacted, campaign_id):
     try:
         query = session.query(Lead)
         if send_option == "Specific Email":
@@ -2086,6 +2413,7 @@ def fetch_leads(session, template_id, send_option, specific_email, selected_term
             # Use a subquery to exclude previously contacted leads
             contacted_leads = session.query(EmailCampaign.lead_id)\
                 .filter(EmailCampaign.sent_at.isnot(None))\
+                .filter(EmailCampaign.campaign_id == campaign_id)\
                 .subquery()
             query = query.outerjoin(contacted_leads, Lead.id == contacted_leads.c.lead_id)\
                 .filter(contacted_leads.c.lead_id.is_(None))
@@ -2131,7 +2459,7 @@ def ai_automation_loop(session, log_container, leads_container):
                 log_container.warning("Knowledge Base not found. Skipping cycle.")
                 time.sleep(3600)
                 continue
-            base_terms = [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
+            base_terms = [term.term for term in session.query(SearchTerm).filter_by(campaign_id=get_active_campaign_id()).all()]
             optimized_terms = generate_optimized_search_terms(session, base_terms, kb_info)
             st.subheader("Optimized Search Terms")
             st.write(", ".join(optimized_terms))
@@ -2342,7 +2670,7 @@ def update_results_display(results_container, results):
     )
 
 def get_search_terms(session):
-    return [term.term for term in session.query(SearchTerm).filter_by(project_id=get_active_project_id()).all()]
+    return [term.term for term in session.query(SearchTerm).filter_by(campaign_id=get_active_campaign_id()).all()]
 
 def get_ai_response(prompt):
     with db_session() as session:
@@ -2382,7 +2710,7 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
     if not template:
         if log_container:
             log_container.error("Email template not found")
-        return 0, logs
+        return [], 0
         
     wrapped_content = wrap_email_body(template.body_content)
     
@@ -2437,31 +2765,6 @@ def bulk_send_emails(session, template_id, from_email, reply_to, leads, progress
                 log_container.error(error_message)
                 
     return logs, sent_count
-
-def wrap_email_body(body_content):
-    return f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Email Template</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                line-height: 1.6;
-                color: #333;
-                max-width: 600px;
-                margin: 0 auto;
-                padding: 20px;
-            }}
-        </style>
-    </head>
-    <body>
-        {body_content}
-    </body>
-    </html>
-    """
 
 def fetch_sent_email_campaigns(session):
     try:
@@ -2531,55 +2834,59 @@ def view_sent_email_campaigns():
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
 def initialize_settings():
-    """Initialize default settings in the database if they don't exist"""
-    with db_session() as session:
-        # Initialize AI settings
-        ai_settings = session.query(Settings).filter_by(setting_type='ai').first()
-        if not ai_settings:
-            ai_settings = Settings(
-                name='AI Settings',
-                setting_type='ai',
-                value={
+    """Initialize database and required settings."""
+    with safe_db_session() as session:
+        try:
+            # Create tables if they don't exist
+            Base.metadata.create_all(bind=engine)
+            
+            # Check and create default settings
+            check_required_settings(session)
+            
+            # Create default AI settings if they don't exist
+            ai_settings = session.query(Settings).filter_by(setting_type='ai').first()
+            if not ai_settings:
+                default_ai_settings = {
+                    'openai_api_key': '',
+                    'api_base_url': 'https://api.openai.com/v1',
                     'model_name': 'gpt-4',
                     'max_tokens': 1500,
-                    'temperature': 0.7,
-                    'api_base_url': 'https://api.openai.com/v1'
+                    'temperature': 0.7
                 }
-            )
-            session.add(ai_settings)
+                session.add(Settings(name='AI Settings', setting_type='ai', value=default_ai_settings))
+                session.commit()
             
-        # Initialize email defaults
-        email_defaults = session.query(Settings).filter_by(setting_type='email_defaults').first()
-        if not email_defaults:
-            email_defaults = Settings(
-                name='Email Defaults',
-                setting_type='email_defaults',
-                value={
-                    'default_from_email': 'noreply@yourdomain.com',
-                    'default_reply_to': 'support@yourdomain.com',
-                    'max_emails_per_minute': 30,
-                    'email_batch_size': 100
-                }
-            )
-            session.add(email_defaults)
-            
-        # Initialize automation settings
-        automation_settings = session.query(Settings).filter_by(setting_type='automation').first()
-        if not automation_settings:
-            automation_settings = Settings(
-                name='Automation Settings',
-                setting_type='automation',
-                value={
+            # Create default automation settings if they don't exist
+            automation_settings = session.query(Settings).filter_by(setting_type='automation').first()
+            if not automation_settings:
+                default_automation_settings = {
                     'max_runtime_hours': 24,
                     'cycle_interval_seconds': 3600,
                     'error_retry_seconds': 300,
                     'results_per_search': 10,
                     'max_leads_per_cycle': 500
                 }
-            )
-            session.add(automation_settings)
+                session.add(Settings(name='Automation Settings', setting_type='automation', value=default_automation_settings))
+                session.commit()
             
-        session.commit()
+            # Create default email settings if they don't exist
+            email_defaults_settings = session.query(Settings).filter_by(setting_type='email_defaults').first()
+            if not email_defaults_settings:
+                default_email_defaults_settings = {
+                    'default_from_email': '',
+                    'default_reply_to': '',
+                    'email_batch_size': 100
+                }
+                session.add(Settings(name='Email Defaults', setting_type='email_defaults', value=default_email_defaults_settings))
+                session.commit()
+            
+            # Verify database connection
+            session.execute(text("SELECT 1"))
+            session.commit()
+            
+        except Exception as e:
+            logging.error(f"Failed to initialize settings: {str(e)}")
+            raise
 
 def run_automation_cycle(session, settings, log_container=None):
     """Core automation logic separated from UI concerns"""
@@ -2669,13 +2976,16 @@ def run_automation_cycle(session, settings, log_container=None):
                     if settings.get('auto_email', True) and template and email_settings:
                         try:
                             wrapped_content = wrap_email_body(template.body_content)
+                            email_defaults = session.query(Settings).filter_by(setting_type='email_defaults').first()
+                            from_email = email_defaults.value.get('default_from_email') if email_defaults else email_settings.email
+                            reply_to = email_defaults.value.get('default_reply_to') if email_defaults else email_settings.email
                             response, tracking_id = send_email_ses(
                                 session, 
-                                email_settings.email, 
+                                from_email,
                                 lead.email, 
                                 template.subject, 
                                 wrapped_content, 
-                                reply_to=email_settings.email
+                                reply_to=reply_to
                             )
                             
                             if response:
@@ -2732,7 +3042,8 @@ def handle_automation_start():
             "automation_logs": [],
             "total_leads_found": 0,
             "total_emails_sent": 0,
-            "automation_start_time": datetime.utcnow()
+            "automation_start_time": datetime.utcnow(),
+            "automation_active": True
         })
         return True
 
@@ -2742,11 +3053,28 @@ def handle_automation_stop():
     st.session_state.automation_status = False
     if 'automation_thread' in st.session_state and st.session_state.automation_thread:
         st.session_state.automation_thread = None
+    st.session_state.automation_active = False
     return True
 
 def unified_automation_page():
     st.title("AI Automation Center")
     
+    # Initialize session state variables
+    if 'automation_logs' not in st.session_state:
+        st.session_state.automation_logs = []
+    if 'automation_status' not in st.session_state:
+        st.session_state.automation_status = False
+    if 'total_leads_found' not in st.session_state:
+        st.session_state.total_leads_found = 0
+    if 'total_emails_sent' not in st.session_state:
+        st.session_state.total_emails_sent = 0
+    if 'automation_start_time' not in st.session_state:
+        st.session_state.automation_start_time = None
+    if 'automation_active' not in st.session_state:
+        st.session_state.automation_active = False
+    if 'automation_pid' not in st.session_state:
+        st.session_state.automation_pid = None
+
     # Settings Panel
     with st.sidebar:
         st.subheader("Automation Settings")
@@ -2759,48 +3087,30 @@ def unified_automation_page():
             'optimize_spanish': st.checkbox("Optimize Spanish Terms", True),
             'language': st.selectbox("Search Language", ['ES', 'EN'], index=0)
         }
-        
-        st.markdown("---")
-        
-        # Project and Campaign Selection
-        with safe_db_session() as session:
-            projects = fetch_projects(session)
-            campaigns = fetch_campaigns(session)
-            
-            if not projects:
-                st.error("No projects found. Please create a project first.")
-                return
-                
-            selected_project = st.selectbox("Select Project", projects, format_func=lambda x: x.split(":")[1].strip())
-            if selected_project:
-                project_id = int(selected_project.split(":")[0])
-                set_active_project_id(project_id)
-                
-                # Filter campaigns by project
-                project_campaigns = [c for c in campaigns if session.query(Campaign).get(int(c.split(":")[0])).project_id == project_id]
-                if project_campaigns:
-                    selected_campaign = st.selectbox("Select Campaign", project_campaigns, format_func=lambda x: x.split(":")[1].strip())
-                    if selected_campaign:
-                        campaign_id = int(selected_campaign.split(":")[0])
-                        set_active_campaign_id(campaign_id)
-                else:
-                    st.warning("No campaigns found for selected project")
-    
-    # Main Content Area
+
+    # Control Buttons
     col1, col2 = st.columns(2)
     
-    # Control Buttons
     with col1:
-        if not st.session_state.get('automation_active', False):
+        if not st.session_state.automation_active:
             if st.button("▶️ Start Automation", use_container_width=True, key="start_auto"):
-                if handle_automation_start():
-                    st.rerun()
+                with st.spinner("Starting automation..."):
+                    if handle_automation_start():
+                        st.session_state.automation_pid = os.getpid()
+                        st.rerun()
                 
     with col2:
-        if st.session_state.get('automation_active', False):
+        if st.session_state.automation_active:
             if st.button("⏹️ Stop Automation", use_container_width=True, key="stop_auto"):
-                if handle_automation_stop():
-                    st.rerun()
+                with st.spinner("Stopping automation..."):
+                    if handle_automation_stop():
+                        if st.session_state.automation_pid:
+                            try:
+                                os.kill(st.session_state.automation_pid, 0)
+                                st.session_state.automation_pid = None
+                            except OSError:
+                                pass
+                        st.rerun()
 
     # Status and Progress
     status_container = st.empty()
@@ -2809,141 +3119,175 @@ def unified_automation_page():
     log_container = st.container()
     leads_container = st.container()
     
-    if st.session_state.get('automation_active', False):
+    if st.session_state.automation_active:
         status_container.success("🤖 Automation is running")
         
         # Display runtime
-        if 'automation_start_time' in st.session_state:
+        if st.session_state.automation_start_time:
             runtime = datetime.utcnow() - st.session_state.automation_start_time
             progress_container.info(f"Runtime: {runtime.seconds//3600}h {(runtime.seconds//60)%60}m {runtime.seconds%60}s")
         
-        while st.session_state.get('automation_active', False):
-            try:
-                with db_session() as session:
-                    with st.spinner("Running automation cycle..."):
-                        cycle_results = run_automation_cycle(session, automation_settings, log_container)
-                        
-                        # Update metrics
-                        with metrics_container:
-                            col1, col2, col3, col4 = st.columns(4)
-                            col1.metric("New Leads", len(cycle_results['new_leads']))
-                            col2.metric("Emails Sent", cycle_results['emails_sent'])
-                            success_rate = (cycle_results['emails_sent']/len(cycle_results['new_leads'])*100) if cycle_results['new_leads'] else 0
-                            col3.metric("Success Rate", f"{success_rate:.1f}%")
-                            col4.metric("Search Terms Used", len(cycle_results['search_terms_used']))
-                        
-                        # Display active configuration
-                        st.sidebar.markdown("### Active Configuration")
-                        st.sidebar.info(
-                            f"Project: {cycle_results['active_project']}\n"
-                            f"Campaign: {cycle_results['active_campaign']}\n"
-                            f"Template: {cycle_results['active_template']}"
-                        )
-                        
-                        # Display new leads
-                        with leads_container:
-                            if cycle_results['new_leads']:
-                                st.subheader(f"New Leads Found ({len(cycle_results['new_leads'])})")
-                                df = pd.DataFrame([
-                                    {
-                                        'Email': l.email,
-                                        'Company': l.company or 'N/A',
-                                        'Name': f"{l.first_name or ''} {l.last_name or ''}".strip() or 'N/A',
-                                        'Source': next((term for term in cycle_results['search_terms_used'] if term in l.email), 'Unknown')
-                                    } 
-                                    for l in cycle_results['new_leads']
-                                ])
-                                st.dataframe(df, use_container_width=True)
-                        
-                        # Display errors if any
-                        if cycle_results['errors']:
-                            st.error("Errors occurred during automation:")
-                            for error in cycle_results['errors']:
-                                st.warning(error)
+        try:
+            with db_session() as session:
+                cycle_results = run_automation_cycle(session, automation_settings, log_container)
                 
-                # Use cycle_interval from settings
-                cycle_interval = automation_settings.get('cycle_interval', 60)
-                time.sleep(cycle_interval * 60)
+                # Update metrics
+                with metrics_container:
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("New Leads", len(cycle_results.get('new_leads', [])))
+                    col2.metric("Emails Sent", cycle_results.get('emails_sent', 0))
+                    success_rate = (cycle_results.get('emails_sent', 0)/len(cycle_results.get('new_leads', [])) * 100) if cycle_results.get('new_leads') else 0
+                    col3.metric("Success Rate", f"{success_rate:.1f}%")
+                    col4.metric("Search Terms Used", len(cycle_results.get('search_terms_used', [])))
                 
-            except Exception as e:
-                st.error(f"Error in automation cycle: {str(e)}")
-                time.sleep(60)  # Wait before retrying
+                # Display active configuration
+                st.sidebar.markdown("### Active Configuration")
+                st.sidebar.info(
+                    f"Project: {cycle_results.get('active_project', 'N/A')}\n"
+                    f"Campaign: {cycle_results.get('active_campaign', 'N/A')}\n"
+                    f"Template: {cycle_results.get('active_template', 'N/A')}"
+                )
+                
+                # Display new leads
+                if cycle_results.get('new_leads'):
+                    with leads_container:
+                        st.subheader(f"New Leads Found ({len(cycle_results['new_leads'])})")
+                        df = pd.DataFrame([{
+                            'Email': l.email,
+                            'Company': l.company or 'N/A',
+                            'Name': f"{l.first_name or ''} {l.last_name or ''}".strip() or 'N/A',
+                            'Source': next((term for term in cycle_results.get('search_terms_used', []) if term in l.email), 'Unknown')
+                        } for l in cycle_results['new_leads']])
+                        st.dataframe(df, use_container_width=True)
+                
+                # Display errors if any
+                if cycle_results.get('errors'):
+                    st.error("Errors occurred during automation:")
+                    for error in cycle_results['errors']:
+                        st.warning(error)
+                        
+                time.sleep(automation_settings['cycle_interval'] * 60)
+                
+        except Exception as e:
+            st.error(f"Error in automation cycle: {str(e)}")
+            logging.exception("Automation cycle error")
+            time.sleep(60)  # Wait before retrying
+            
     else:
         status_container.info("⏸️ Automation is paused")
-        
-    # Quick Actions
-    st.markdown("---")
-    st.subheader("Quick Actions")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("🔄 Perform Quick Scan", use_container_width=True):
-            with st.spinner("Running quick scan..."):
-                with db_session() as session:
-                    quick_results = run_automation_cycle(session, {**automation_settings, 'max_leads_per_cycle': 10}, log_container=log_container)
-                    st.success(f"Quick scan complete! Found {len(quick_results['new_leads'])} leads")
-                    
-    with col2:
-        if st.button("📊 Generate Report", use_container_width=True):
-            with db_session() as session:
-                report_data = {
-                    'Total Leads': session.query(Lead).count(),
-                    'Emails Sent': session.query(EmailCampaign).filter(EmailCampaign.status == 'sent').count(),
-                    'Success Rate': f"{(session.query(EmailCampaign).filter(EmailCampaign.status == 'sent').count() / max(session.query(EmailCampaign).count(), 1)) * 100:.1f}%",
-                    'Active Campaigns': session.query(Campaign).filter_by(auto_send=True).count(),
-                    'Last Run': st.session_state.get('automation_start_time', 'Never').strftime('%Y-%m-%d %H:%M:%S') if isinstance(st.session_state.get('automation_start_time'), datetime) else 'Never'
-                }
-                st.json(report_data)
-                
-    with col3:
-        if st.button("🧹 Clear Logs", use_container_width=True):
-            if 'automation_logs' in st.session_state:
-                del st.session_state.automation_logs
-            st.success("Logs cleared")
 
 def main():
-    st.set_page_config(
-        page_title="Autoclient.ai | Lead Generation AI App",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        page_icon=""
-    )
-
-    st.sidebar.title("AutoclientAI")
-    st.sidebar.markdown("Select a page to navigate through the application.")
-
-    pages = {
-        "🔍 Manual Search": manual_search_page,
-        "📦 Bulk Send": bulk_send_page,
-        "👥 View Leads": view_leads_page,
-        "🔑 Search Terms": search_terms_page,
-        "✉️ Email Templates": email_templates_page,
-        "🚀 Projects & Campaigns": projects_campaigns_page,
-        "📚 Knowledge Base": knowledge_base_page,
-        "🤖 AI Automation": unified_automation_page,  # Replace the old pages with the unified one
-        "📨 Email Logs": view_campaign_logs,
-        "🔄 Settings": settings_page,
-        "📨 Sent Campaigns": view_sent_email_campaigns
-    }
-
-    with st.sidebar:
-        selected = option_menu(
-            menu_title="Navigation",
-            options=list(pages.keys()),
-            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "list-check", "gear", "envelope-open"],
-            menu_icon="cast",
-            default_index=0
+    """Main application entry point with enhanced error handling and state management"""
+    try:
+        # Configure page
+        st.set_page_config(
+            page_title="Autoclient.ai | Lead Generation AI App",
+            layout="wide",
+            initial_sidebar_state="expanded",
+            page_icon="🤖"
         )
 
-    try:
-        pages[selected]()
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        logging.exception("An error occurred in the main function")
-        st.write("Please try refreshing the page or contact support if the issue persists.")
+        # Initialize logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler('app.log')
+            ]
+        )
 
-    st.sidebar.markdown("---")
-    st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+        # Initialize session state
+        if 'initialized' not in st.session_state:
+            st.session_state.update({
+                'initialized': True,
+                'active_project_id': 1,
+                'active_campaign_id': 1,
+                'automation_status': False,
+                'automation_logs': [],
+                'total_leads_found': 0,
+                'total_emails_sent': 0,
+                'error_count': 0
+            })
+
+        # Verify database connection
+        with safe_db_session() as session:
+            session.execute(text("SELECT 1"))
+
+        st.sidebar.title("AutoclientAI")
+        st.sidebar.markdown("Select a page to navigate through the application.")
+
+        # Define available pages
+        pages = {
+            "🔍 Manual Search": manual_search_page,
+            "📦 Bulk Send": bulk_send_page,
+            "👥 View Leads": view_leads_page,
+            "🔑 Search Terms": search_terms_page,
+            "✉️ Email Templates": email_templates_page,
+            "🚀 Projects & Campaigns": projects_campaigns_page,
+            "📚 Knowledge Base": knowledge_base_page,
+            "🤖 AI Automation": unified_automation_page,
+            "📨 Email Logs": view_campaign_logs,
+            "🔄 Settings": settings_page,
+            "📨 Sent Campaigns": view_sent_email_campaigns
+        }
+
+        # Navigation
+        with st.sidebar:
+            try:
+                selected = option_menu(
+                    menu_title="Navigation",
+                    options=list(pages.keys()),
+                    icons=["search", "send", "people", "key", "envelope", "folder", 
+                          "book", "robot", "list-check", "gear", "envelope-open"],
+                    menu_icon="cast",
+                    default_index=0
+                )
+            except Exception as e:
+                logging.error(f"Navigation menu error: {str(e)}")
+                st.error("Error loading navigation menu. Please refresh the page.")
+                return
+
+        # Execute selected page
+        try:
+            if selected in pages:
+                with st.spinner(f"Loading {selected}..."):
+                    pages[selected]()
+            else:
+                st.error("Selected page not found")
+        except Exception as e:
+            st.error(f"An error occurred while loading the page: {str(e)}")
+            logging.exception("Page execution error")
+            
+            # Increment error count
+            st.session_state.error_count += 1
+            
+            if st.session_state.error_count > 3:
+                st.warning("Multiple errors detected. Consider refreshing the page or checking your connection.")
+            
+            # Show detailed error information in expander
+            with st.expander("Error Details"):
+                st.code(traceback.format_exc())
+                st.markdown("Please try the following:")
+                st.markdown("1. Refresh the page")
+                st.markdown("2. Check your internet connection")
+                st.markdown("3. Verify database connectivity")
+                st.markdown("4. Contact support if the issue persists")
+
+        # Footer
+        st.sidebar.markdown("---")
+        st.sidebar.info("© 2024 AutoclientAI. All rights reserved.")
+
+    except Exception as e:
+        st.error("Critical application error")
+        logging.critical(f"Application initialization failed: {str(e)}")
+        st.error("""
+        The application failed to initialize. Please ensure:
+        1. Database connection is available
+        2. Required environment variables are set
+        3. All dependencies are installed correctly
+        """)
+        raise
 
 if __name__ == "__main__":
     initialize_settings()
