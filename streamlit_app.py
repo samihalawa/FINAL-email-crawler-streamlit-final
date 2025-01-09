@@ -809,83 +809,22 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
         logging.error(f"Error saving email campaign: {str(e)}")
         return None
 
-def update_log(log_container, message, level='info', details=None):
-    """Enhanced log display with timestamps, icons, and collapsible details"""
-    # Icons and colors for different log levels
-    log_styles = {
-        'info': {'icon': '🔵', 'color': '#3498db'},
-        'success': {'icon': '🟢', 'color': '#2ecc71'},
-        'warning': {'icon': '🟠', 'color': '#f39c12'},
-        'error': {'icon': '🔴', 'color': '#e74c3c'},
-        'email_sent': {'icon': '📧', 'color': '#9b59b6'},
-        'lead_found': {'icon': '👤', 'color': '#27ae60'},
-        'search': {'icon': '🔍', 'color': '#3498db'},
-        'skip': {'icon': '⏭️', 'color': '#95a5a6'}
-    }
+def update_log(log_container, message, level='info'):
+    icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
+    log_entry = f"{icon} {message}"
     
-    style = log_styles.get(level, {'icon': '⚪', 'color': '#bdc3c7'})
-    timestamp = datetime.now().strftime('%H:%M:%S')
+    # Simple console logging without HTML
+    print(f"{icon} {message.split('<')[0]}")  # Only print the first part of the message before any HTML tags
     
-    # Format the main log message
-    log_entry = f"""
-    <div style='
-        padding: 5px 10px;
-        margin: 2px 0;
-        border-left: 3px solid {style['color']};
-        background-color: rgba(49, 51, 63, 0.1);
-        border-radius: 3px;
-    '>
-        <span style='color: {style['color']}; font-weight: bold;'>{style['icon']}</span>
-        <span style='color: #95a5a6; font-size: 0.8em;'>[{timestamp}]</span>
-        <span style='margin-left: 5px;'>{message}</span>
-    """
-    
-    # Add details in collapsible section if provided
-    if details:
-        log_entry += f"""
-        <details style='margin-left: 20px; margin-top: 5px;'>
-            <summary style='color: {style['color']}; cursor: pointer;'>Details</summary>
-            <div style='
-                padding: 5px;
-                margin-top: 5px;
-                background-color: rgba(49, 51, 63, 0.05);
-                border-radius: 3px;
-                font-family: monospace;
-                font-size: 0.9em;
-            '>
-                {details}
-            </div>
-        </details>
-        """
-    
-    log_entry += "</div>"
-    
-    # Initialize log entries in session state if not exists
     if 'log_entries' not in st.session_state:
         st.session_state.log_entries = []
     
-    # Add new log entry
-    st.session_state.log_entries.append(log_entry)
+    # HTML-formatted log entry for Streamlit display
+    html_log_entry = f"{icon} {message}"
+    st.session_state.log_entries.append(html_log_entry)
     
-    # Keep only last 100 logs to prevent memory issues
-    if len(st.session_state.log_entries) > 100:
-        st.session_state.log_entries = st.session_state.log_entries[-100:]
-    
-    # Update the display
-    log_html = f"""
-    <div style='
-        height: 400px;
-        overflow-y: auto;
-        font-family: system-ui;
-        font-size: 0.9em;
-        line-height: 1.3;
-        padding: 10px;
-        background-color: rgba(49, 51, 63, 0.05);
-        border-radius: 5px;
-    '>
-        {''.join(st.session_state.log_entries)}
-    </div>
-    """
+    # Update the Streamlit display with all logs
+    log_html = f"<div style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
     log_container.markdown(log_html, unsafe_allow_html=True)
 
 def optimize_search_term(search_term, language):
@@ -1476,20 +1415,17 @@ def update_display(container, items, title, item_key):
 def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
-    """Manual search page with enhanced logging"""
+    """Manual search page with domain reset between terms"""
     st.title("Manual Search")
-    
-    # Create log container at the top
-    log_container = st.empty()
     
     # Initialize session state
     if 'domains_processed' not in st.session_state:
         st.session_state.domains_processed = set()
     
-    # Reset domains button with logging
+    # Reset domains button
     if st.button("Reset Processed Domains"):
         st.session_state.domains_processed = set()
-        update_log(log_container, "Domain list reset", "success")
+        st.success("Domain list reset successfully!")
     
     with db_session() as session:
         recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
@@ -1497,11 +1433,7 @@ def manual_search_page():
         
         email_templates = fetch_email_templates(session)
         email_settings = fetch_email_settings(session)
-        
-        # Log available templates and settings
-        template_details = "\n".join([f"- {t.template_name}" for t in email_templates])
-        update_log(log_container, f"Loaded {len(email_templates)} email templates", "info", template_details)
-    
+
     col1, col2 = st.columns([2, 1])
     
     # Initialize email variables
@@ -3388,12 +3320,8 @@ def main():
             })
 
         # Verify database connection
-        try:
-            with safe_db_session() as session:
-                session.execute(text("SELECT 1"))
-        except Exception as e:
-            st.error("Database connection failed. Please check your configuration.")
-            return
+        with safe_db_session() as session:
+            session.execute(text("SELECT 1"))
 
         st.sidebar.title("AutoclientAI")
         st.sidebar.markdown("Select a page to navigate through the application.")
@@ -3526,7 +3454,7 @@ def extract_company_name(soup, url):
     return 'Unknown'
 
 def save_lead(session, url, search_term, **kwargs):
-    """Save lead with enhanced logging"""
+    """Save lead with improved extraction"""
     try:
         # Get page content
         if not url.startswith(('http://', 'https://')):
@@ -3543,16 +3471,6 @@ def save_lead(session, url, search_term, **kwargs):
         emails = extract_emails_from_html(html_content)
         name, _, job_title = extract_info_from_page(soup)
         company = extract_company_name(soup, url)
-        
-        # Log extraction details
-        details = f"""
-        URL: {url}
-        Company: {company}
-        Found Emails: {len(emails)}
-        Response Time: {response.elapsed.total_seconds():.2f}s
-        Status Code: {response.status_code}
-        """
-        update_log(st.session_state.get('log_container'), f"Processing {url}", "info", details)
         
         # Track processed emails to avoid duplicates
         processed_emails = set()
