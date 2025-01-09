@@ -2,7 +2,7 @@ import os, json, re, logging, asyncio, time, requests, pandas as pd, streamlit a
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-from googlesearch import search as google_search
+from googlesearch import search
 from fake_useragent import UserAgent
 from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
@@ -22,6 +22,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
 import traceback
+from logging.handlers import RotatingFileHandler
 #database info
 load_dotenv()
 
@@ -611,70 +612,167 @@ def settings_page():
         except Exception as e:
             st.error(f"Error loading settings: {str(e)}")
 
-def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
-    email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
-    if not email_settings:
-        logging.error(f"No email settings found for {from_email}")
-        return None, None
+def get_random_user_agent():
+    """Get a random user agent to avoid blocking"""
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/91.0.864.59'
+    ]
+    return random.choice(user_agents)
 
-    tracking_id = str(uuid.uuid4())
-    tracking_pixel_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'open'})}"
-    
-    soup = BeautifulSoup(wrap_email_body(body), 'html.parser')
-    
-    img_tag = soup.new_tag('img', src=tracking_pixel_url, width="1", height="1", style="display:none;")
-    if soup.body:
-        soup.body.append(img_tag)
-    else:
-        body_tag = soup.new_tag('body')
-        body_tag.append(img_tag)
-        soup.append(body_tag)
-    
-    for a in soup.find_all('a', href=True):
-        original_url = a['href']
-        if original_url.startswith(('http://', 'https://', 'mailto:', 'tel:', 'whatsapp:')):
-            tracked_url = f"https://autoclient-email-analytics.trigox.workers.dev/track?{urlencode({'id': tracking_id, 'type': 'click', 'url': original_url})}"
-            a['href'] = tracked_url
-    
-    tracked_body = str(soup)
+def should_skip_domain(domain):
+    """Check if domain should be skipped"""
+    skip_domains = {
+        'www.airbnb.es', 'www.airbnb.com',  # Skip Airbnb as they block scraping
+        'www.linkedin.com', 'es.linkedin.com',  # Skip LinkedIn as they block scraping
+        'www.idealista.com',  # Skip Idealista as they block scraping
+        'www.facebook.com', 'www.instagram.com',  # Skip social media
+        'www.youtube.com', 'youtu.be',  # Skip video platforms
+    }
+    return domain in skip_domains
 
+def google_search(query, num_results=10, lang='es'):
+    """Perform a Google search and return results"""
     try:
-        if email_settings.provider == 'AWS SES':  # Changed from 'ses' to 'AWS SES'
-            if ses_client is None:
-                aws_session = boto3.Session(
-                    aws_access_key_id=email_settings.aws_access_key_id,
-                    aws_secret_access_key=email_settings.aws_secret_access_key,
-                    region_name=email_settings.aws_region
-                )
-                ses_client = aws_session.client('ses')
-            
-            response = ses_client.send_email(
-                Source=from_email,
-                Destination={'ToAddresses': [to_email]},
-                Message={
-                    'Subject': {'Data': subject, 'Charset': charset},
-                    'Body': {'Html': {'Data': tracked_body, 'Charset': charset}}
-                },
-                ReplyToAddresses=[reply_to] if reply_to else []
-            )
-            return response, tracking_id
-        elif email_settings.provider == 'smtp':
-            msg = MIMEMultipart()
-            msg['From'] = from_email
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            if reply_to:
-                msg['Reply-To'] = reply_to
-            msg.attach(MIMEText(tracked_body, 'html'))
+        # Get more results to account for skipped domains
+        results = list(search(query, stop=num_results*3, lang=lang))
+        
+        # Filter out unwanted domains
+        filtered_results = []
+        for url in results:
+            domain = get_domain_from_url(url)
+            if not should_skip_domain(domain):
+                filtered_results.append(url)
+        
+        # Reset domain list if too many skipped
+        if len(filtered_results) < num_results/2:
+            st.session_state.domains_processed = set()
+            logging.info("Reset domain list due to too many skipped results")
+        
+        # Shuffle and return requested number
+        random.shuffle(filtered_results)
+        return filtered_results[:num_results]
+    except Exception as e:
+        logging.error(f"Google search error: {str(e)}")
+        return []
 
-            with smtplib.SMTP(email_settings.smtp_server, email_settings.smtp_port) as server:
-                server.starttls()
-                server.login(email_settings.smtp_username, email_settings.smtp_password)
-                server.send_message(msg)
-            return {'MessageId': f'smtp-{uuid.uuid4()}'}, tracking_id
+def save_lead(session, url, search_term, **kwargs):
+    """Save lead with improved extraction"""
+    try:
+        # Get page content
+        if not url.startswith(('http://', 'https://')):
+            url = 'http://' + url
+            
+        headers = {'User-Agent': get_random_user_agent()}
+        response = requests.get(url, timeout=10, verify=False, headers=headers)
+        response.raise_for_status()
+        
+        html_content = response.text
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Extract information
+        emails = extract_emails_from_html(html_content)
+        name, _, job_title = extract_info_from_page(soup)
+        company = extract_company_name(soup, url)
+        
+        # Track processed emails to avoid duplicates
+        processed_emails = set()
+        leads = []
+        
+        for email in emails:
+            if email in processed_emails:
+                continue
+                
+            if is_valid_email(email) and is_valid_contact_email(email):
+                processed_emails.add(email)
+                
+                # Check if lead already exists
+                lead = session.query(Lead).filter_by(email=email).first()
+                if not lead:
+                    lead = Lead(
+                        email=email,
+                        first_name=name,
+                        company=company,
+                        job_title=job_title
+                    )
+                    session.add(lead)
+                    session.flush()
+                
+                # Save lead source
+                save_lead_source(
+                    session,
+                    lead_id=lead.id,
+                    search_term_id=None,
+                    url=url,
+                    http_status=response.status_code,
+                    scrape_duration=str(response.elapsed.total_seconds()),
+                    page_title=soup.title.string if soup.title else None,
+                    meta_description=soup.find('meta', {'name': 'description'}).get('content') if soup.find('meta', {'name': 'description'}) else None,
+                    content=str(soup)[:1000],
+                    tags=None,
+                    phone_numbers=None
+                )
+                leads.append(lead)
+        
+        session.commit()
+        return leads[0] if leads else None
+        
+    except requests.exceptions.RequestException as e:
+        if '403' in str(e):
+            logging.warning(f"Access forbidden for {url} - site may be blocking scraping")
+        elif '429' in str(e):
+            logging.warning(f"Rate limited by {url} - too many requests")
         else:
-            logging.error(f"Unknown email provider: {email_settings.provider}")
-            return None, None
+            logging.error(f"Error saving lead from {url}: {str(e)}")
+        return None
+    except Exception as e:
+        logging.error(f"Error saving lead from {url}: {str(e)}")
+        return None
+
+def send_email_ses(session, from_email, to_email, subject, body, reply_to=None):
+    """Send email with better error handling"""
+    try:
+        # Get email settings
+        settings = session.query(EmailSettings).first()
+        if not settings or not settings.provider or settings.provider.lower() != 'ses':
+            raise ValueError("SES email settings not configured")
+            
+        # Configure SES client
+        ses_client = boto3.client(
+            'ses',
+            aws_access_key_id=settings.aws_access_key_id,  # Fixed field name
+            aws_secret_access_key=settings.aws_secret_access_key,  # Fixed field name
+            region_name=settings.aws_region or 'eu-west-1'
+        )
+        
+        # Prepare email
+        email_data = {
+            'Source': from_email,
+            'Destination': {'ToAddresses': [to_email]},
+            'Message': {
+                'Subject': {'Data': subject},
+                'Body': {'Text': {'Data': body}}
+            }
+        }
+        if reply_to:
+            email_data['ReplyToAddresses'] = [reply_to]
+            
+        # Send email
+        response = ses_client.send_email(**email_data)
+        return response, response.get('MessageId')
+        
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'MessageRejected':
+            logging.error(f"Email rejected: {str(e)}")
+        elif error_code == 'InvalidParameterValue':
+            logging.error(f"Invalid email parameter: {str(e)}")
+        else:
+            logging.error(f"SES error: {str(e)}")
+        return None, None
     except Exception as e:
         logging.error(f"Error sending email: {str(e)}")
         return None, None
@@ -711,22 +809,83 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
         logging.error(f"Error saving email campaign: {str(e)}")
         return None
 
-def update_log(log_container, message, level='info'):
-    icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
-    log_entry = f"{icon} {message}"
+def update_log(log_container, message, level='info', details=None):
+    """Enhanced log display with timestamps, icons, and collapsible details"""
+    # Icons and colors for different log levels
+    log_styles = {
+        'info': {'icon': '🔵', 'color': '#3498db'},
+        'success': {'icon': '🟢', 'color': '#2ecc71'},
+        'warning': {'icon': '🟠', 'color': '#f39c12'},
+        'error': {'icon': '🔴', 'color': '#e74c3c'},
+        'email_sent': {'icon': '📧', 'color': '#9b59b6'},
+        'lead_found': {'icon': '👤', 'color': '#27ae60'},
+        'search': {'icon': '🔍', 'color': '#3498db'},
+        'skip': {'icon': '⏭️', 'color': '#95a5a6'}
+    }
     
-    # Simple console logging without HTML
-    print(f"{icon} {message.split('<')[0]}")  # Only print the first part of the message before any HTML tags
+    style = log_styles.get(level, {'icon': '⚪', 'color': '#bdc3c7'})
+    timestamp = datetime.now().strftime('%H:%M:%S')
     
+    # Format the main log message
+    log_entry = f"""
+    <div style='
+        padding: 5px 10px;
+        margin: 2px 0;
+        border-left: 3px solid {style['color']};
+        background-color: rgba(49, 51, 63, 0.1);
+        border-radius: 3px;
+    '>
+        <span style='color: {style['color']}; font-weight: bold;'>{style['icon']}</span>
+        <span style='color: #95a5a6; font-size: 0.8em;'>[{timestamp}]</span>
+        <span style='margin-left: 5px;'>{message}</span>
+    """
+    
+    # Add details in collapsible section if provided
+    if details:
+        log_entry += f"""
+        <details style='margin-left: 20px; margin-top: 5px;'>
+            <summary style='color: {style['color']}; cursor: pointer;'>Details</summary>
+            <div style='
+                padding: 5px;
+                margin-top: 5px;
+                background-color: rgba(49, 51, 63, 0.05);
+                border-radius: 3px;
+                font-family: monospace;
+                font-size: 0.9em;
+            '>
+                {details}
+            </div>
+        </details>
+        """
+    
+    log_entry += "</div>"
+    
+    # Initialize log entries in session state if not exists
     if 'log_entries' not in st.session_state:
         st.session_state.log_entries = []
     
-    # HTML-formatted log entry for Streamlit display
-    html_log_entry = f"{icon} {message}"
-    st.session_state.log_entries.append(html_log_entry)
+    # Add new log entry
+    st.session_state.log_entries.append(log_entry)
     
-    # Update the Streamlit display with all logs
-    log_html = f"<div style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
+    # Keep only last 100 logs to prevent memory issues
+    if len(st.session_state.log_entries) > 100:
+        st.session_state.log_entries = st.session_state.log_entries[-100:]
+    
+    # Update the display
+    log_html = f"""
+    <div style='
+        height: 400px;
+        overflow-y: auto;
+        font-family: system-ui;
+        font-size: 0.9em;
+        line-height: 1.3;
+        padding: 10px;
+        background-color: rgba(49, 51, 63, 0.05);
+        border-radius: 5px;
+    '>
+        {''.join(st.session_state.log_entries)}
+    </div>
+    """
     log_container.markdown(log_html, unsafe_allow_html=True)
 
 def optimize_search_term(search_term, language):
@@ -1317,7 +1476,20 @@ def update_display(container, items, title, item_key):
 def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
+    """Manual search page with enhanced logging"""
     st.title("Manual Search")
+    
+    # Create log container at the top
+    log_container = st.empty()
+    
+    # Initialize session state
+    if 'domains_processed' not in st.session_state:
+        st.session_state.domains_processed = set()
+    
+    # Reset domains button with logging
+    if st.button("Reset Processed Domains"):
+        st.session_state.domains_processed = set()
+        update_log(log_container, "Domain list reset", "success")
     
     with db_session() as session:
         recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
@@ -1325,7 +1497,11 @@ def manual_search_page():
         
         email_templates = fetch_email_templates(session)
         email_settings = fetch_email_settings(session)
-
+        
+        # Log available templates and settings
+        template_details = "\n".join([f"- {t.template_name}" for t in email_templates])
+        update_log(log_container, f"Loaded {len(email_templates)} email templates", "info", template_details)
+    
     col1, col2 = st.columns([2, 1])
     
     # Initialize email variables
@@ -3187,14 +3363,15 @@ def main():
             page_icon="🤖"
         )
 
-        # Initialize logging
+        # Initialize logging with rotation
+        handlers = [
+            logging.StreamHandler(),
+            RotatingFileHandler('app.log', maxBytes=10*1024*1024, backupCount=5)
+        ]
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler('app.log')
-            ]
+            handlers=handlers
         )
 
         # Initialize session state
@@ -3211,8 +3388,12 @@ def main():
             })
 
         # Verify database connection
-        with safe_db_session() as session:
-            session.execute(text("SELECT 1"))
+        try:
+            with safe_db_session() as session:
+                session.execute(text("SELECT 1"))
+        except Exception as e:
+            st.error("Database connection failed. Please check your configuration.")
+            return
 
         st.sidebar.title("AutoclientAI")
         st.sidebar.markdown("Select a page to navigate through the application.")
@@ -3288,6 +3469,144 @@ def main():
         3. All dependencies are installed correctly
         """)
         raise
+
+def google_search(query, num_results=10, lang='es'):
+    """Perform a Google search and return results"""
+    try:
+        # Shuffle results to avoid domain skipping
+        results = list(search(query, stop=num_results*2, lang=lang))  # Get more results to account for skipped domains
+        random.shuffle(results)
+        return results[:num_results]
+    except Exception as e:
+        logging.error(f"Google search error: {str(e)}")
+        return []
+
+def is_valid_contact_email(email):
+    """Check if email is a valid contact email (not system/error/noreply)"""
+    email = email.lower()
+    
+    # Common non-contact patterns
+    invalid_patterns = [
+        'sentry', 'noreply', 'no-reply', 'donotreply', 'do-not-reply',
+        'automated', 'notification', 'alert', 'system', 'admin@',
+        'postmaster', 'mailer-daemon', 'webmaster', 'hostmaster',
+        'support@', 'info@', 'contact@', 'error@', 'report@',
+        'urgent@', 'help@', 'user@', 'test@', 'example@', 'sample@',
+        'office@', 'mail@', 'email@', 'web@', 'domain@'
+    ]
+    
+    # Check for invalid patterns
+    if any(pattern in email for pattern in invalid_patterns):
+        return False
+        
+    # Check for common test/example domains
+    invalid_domains = [
+        'domain.com', 'example.com', 'test.com', 'sample.com',
+        'email.com', 'mail.com', 'website.com', 'site.com'
+    ]
+    domain = email.split('@')[1].lower()
+    if domain in invalid_domains:
+        return False
+        
+    return True
+
+def extract_company_name(soup, url):
+    """Extract company name from page"""
+    # Try meta tags first
+    company = soup.find('meta', {'property': 'og:site_name'})
+    if company:
+        return company['content']
+    
+    # Try domain name
+    domain = get_domain_from_url(url)
+    if domain:
+        domain = domain.replace('www.', '').split('.')[0].upper()
+        return domain
+    
+    return 'Unknown'
+
+def save_lead(session, url, search_term, **kwargs):
+    """Save lead with enhanced logging"""
+    try:
+        # Get page content
+        if not url.startswith(('http://', 'https://')):
+            url = 'http://' + url
+            
+        headers = {'User-Agent': get_random_user_agent()}
+        response = requests.get(url, timeout=10, verify=False, headers=headers)
+        response.raise_for_status()
+        
+        html_content = response.text
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Extract information
+        emails = extract_emails_from_html(html_content)
+        name, _, job_title = extract_info_from_page(soup)
+        company = extract_company_name(soup, url)
+        
+        # Log extraction details
+        details = f"""
+        URL: {url}
+        Company: {company}
+        Found Emails: {len(emails)}
+        Response Time: {response.elapsed.total_seconds():.2f}s
+        Status Code: {response.status_code}
+        """
+        update_log(st.session_state.get('log_container'), f"Processing {url}", "info", details)
+        
+        # Track processed emails to avoid duplicates
+        processed_emails = set()
+        leads = []
+        
+        for email in emails:
+            if email in processed_emails:
+                continue
+                
+            if is_valid_email(email) and is_valid_contact_email(email):
+                processed_emails.add(email)
+                
+                # Check if lead already exists
+                lead = session.query(Lead).filter_by(email=email).first()
+                if not lead:
+                    lead = Lead(
+                        email=email,
+                        first_name=name,
+                        company=company,
+                        job_title=job_title
+                    )
+                    session.add(lead)
+                    session.flush()
+                
+                # Save lead source
+                save_lead_source(
+                    session,
+                    lead_id=lead.id,
+                    search_term_id=None,
+                    url=url,
+                    http_status=response.status_code,
+                    scrape_duration=str(response.elapsed.total_seconds()),
+                    page_title=soup.title.string if soup.title else None,
+                    meta_description=soup.find('meta', {'name': 'description'}).get('content') if soup.find('meta', {'name': 'description'}) else None,
+                    content=str(soup)[:1000],
+                    tags=None,
+                    phone_numbers=None
+                )
+                leads.append(lead)
+        
+        session.commit()
+        return leads[0] if leads else None
+        
+    except requests.exceptions.RequestException as e:
+        if '403' in str(e):
+            logging.warning(f"Access forbidden for {url} - site may be blocking scraping")
+        elif '429' in str(e):
+            logging.warning(f"Rate limited by {url} - too many requests")
+        else:
+            logging.error(f"Error saving lead from {url}: {str(e)}")
+        return None
+    except Exception as e:
+        logging.error(f"Error saving lead from {url}: {str(e)}")
+        return None
 
 if __name__ == "__main__":
     initialize_settings()
