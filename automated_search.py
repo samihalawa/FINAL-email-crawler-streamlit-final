@@ -1,23 +1,23 @@
-import os
 from datetime import datetime
-from dotenv import load_dotenv
 from streamlit_app import (
-    Base, SessionLocal, engine,
-    EmailTemplate, EmailSettings,
     db_session,
+    EmailTemplate,
+    EmailSettings,
     google_search,
-    is_valid_email,
     save_lead,
-    save_lead_source,
     send_email_ses,
-    save_email_campaign,
-    get_domain_from_url,
-    extract_emails_from_html,
-    extract_info_from_page,
-    is_valid_contact_email
+    get_domain_from_url
 )
 
-load_dotenv()
+# Global variables
+log_messages = []
+all_results = []
+domains_processed = set()
+
+def log_update(message, level='info'):
+    """Log a message and add it to the log messages list"""
+    log_messages.append(f"[{level.upper()}] {message}")
+    print(f"[{level.upper()}] {message}")
 
 if __name__ == "__main__":
     with db_session() as session:
@@ -29,9 +29,9 @@ if __name__ == "__main__":
             print("No template found with 'telefonillo' in subject")
             exit(1)
         
-        settings = session.query(EmailSettings).first()
+        settings = session.query(EmailSettings).filter_by(is_active=True).first()
         if not settings:
-            print("No email settings found")
+            print("No active email settings found")
             exit(1)
         
         # Store needed values
@@ -40,28 +40,19 @@ if __name__ == "__main__":
         template_body = template.body_content
         from_email = settings.email
     
-    # Airbnb related search terms
-    search_terms = [
-        "airbnb host barcelona email",
-        "propietario apartamento turistico madrid correo",
-        "alquiler vacacional malaga contacto",
-        "anfitrion airbnb valencia email",
-        "gestor pisos turisticos sevilla",
-        "administrador apartamentos airbnb barcelona",
-        "alquiler temporada costa brava propietario",
-        "vacation rental owner mallorca email",
-        "holiday apartment manager ibiza contact"
-    ]
-    
-    log_messages = []
-    all_results = []
-    domains_processed = set()
-    
-    def log_update(message, level='info'):
-        log_messages.append(f"[{level.upper()}] {message}")
-        print(f"[{level.upper()}] {message}")
-    
-    with db_session() as session:
+        # Airbnb related search terms
+        search_terms = [
+            "airbnb host barcelona email",
+            "propietario apartamento turistico madrid correo",
+            "alquiler vacacional malaga contacto",
+            "anfitrion airbnb valencia email",
+            "gestor pisos turisticos sevilla",
+            "administrador apartamentos airbnb barcelona",
+            "alquiler temporada costa brava propietario",
+            "vacation rental owner mallorca email",
+            "holiday apartment manager ibiza contact"
+        ]
+        
         for term in search_terms:
             log_update(f"Searching for term: {term}")
             
@@ -111,12 +102,12 @@ if __name__ == "__main__":
                 log_update(f"Error processing term {term}: {str(e)}", level='error')
                 continue
     
-    # Print logs
-    print("\nSearch Logs:")
-    for log in log_messages:
-        print(log)
-        
-    # Print results
-    print("\nSearch Results:")
-    for result in all_results:
-        print(f"Found: {result.get('Email')} from {result.get('Company')}") 
+        # Print logs
+        print("\nSearch Logs:")
+        for log in log_messages:
+            print(log)
+            
+        # Print results
+        print("\nSearch Results:")
+        for result in all_results:
+            print(f"Found: {result.get('Email')} from {result.get('Company')}") 

@@ -12,7 +12,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fi
 from email_validator import validate_email, EmailNotValidError
 from streamlit_option_menu import option_menu
 from openai import OpenAI 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from urllib.parse import urlparse, urlencode
 from streamlit_tags import st_tags
 import plotly.express as px
@@ -27,11 +27,11 @@ from logging.handlers import RotatingFileHandler
 load_dotenv()
 
 # Database configuration
-DB_HOST = os.getenv("SUPABASE_DB_HOST")
-DB_NAME = os.getenv("SUPABASE_DB_NAME")
-DB_USER = os.getenv("SUPABASE_DB_USER")
-DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD")
-DB_PORT = os.getenv("SUPABASE_DB_PORT")
+DB_HOST = os.environ.get("SUPABASE_DB_HOST")
+DB_NAME = os.environ.get("SUPABASE_DB_NAME")
+DB_USER = os.environ.get("SUPABASE_DB_USER")
+DB_PASSWORD = os.environ.get("SUPABASE_DB_PASSWORD")
+DB_PORT = os.environ.get("SUPABASE_DB_PORT")
 
 if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT]):
     raise ValueError("One or more required database environment variables are not set")
@@ -435,7 +435,7 @@ def settings_page():
                             daily_limit=daily_limit,
                             hourly_limit=hourly_limit,
                             is_active=is_active,
-                            project_id=get_active_campaign_id()
+                            project_id=get_active_project_id()
                         )
                         
                         if provider == "AWS SES":
@@ -603,7 +603,7 @@ def settings_page():
             
             if st.button("Create Default Settings"):
                 try:
-                    create_default_email_settings()
+                    initialize_settings()
                     st.success("Default settings created successfully!")
                     st.rerun()
                 except Exception as e:
@@ -638,7 +638,8 @@ def google_search(query, num_results=10, lang='es'):
     """Perform a Google search and return results"""
     try:
         # Get more results to account for skipped domains
-        results = list(search(query, stop=num_results*3, lang=lang))
+        from googlesearch import search
+        results = list(search(query, num_results=num_results*3, lang=lang))
         
         # Filter out unwanted domains
         filtered_results = []
@@ -649,7 +650,6 @@ def google_search(query, num_results=10, lang='es'):
         
         # Reset domain list if too many skipped
         if len(filtered_results) < num_results/2:
-            st.session_state.domains_processed = set()
             logging.info("Reset domain list due to too many skipped results")
         
         # Shuffle and return requested number
@@ -659,10 +659,10 @@ def google_search(query, num_results=10, lang='es'):
         logging.error(f"Google search error: {str(e)}")
         return []
 
-def save_lead(session, url, search_term, **kwargs):
+def save_lead(session, url, search_term):
     """Save lead with improved extraction"""
     try:
-        # Get page content
+        # Get page content with retries
         if not url.startswith(('http://', 'https://')):
             url = 'http://' + url
             
@@ -673,39 +673,50 @@ def save_lead(session, url, search_term, **kwargs):
         html_content = response.text
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # Extract information
-        emails = extract_emails_from_html(html_content)
-        name, _, job_title = extract_info_from_page(soup)
-        company = extract_company_name(soup, url)
+        # Extract emails and company
+        emails = set(re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', html_content))
+        company = extract_company_name(soup, url)  # Reuse existing function
         
         # Track processed emails to avoid duplicates
         processed_emails = set()
         leads = []
         
+        # Get or create search term object if string was passed
+        search_term_obj = None
+        if isinstance(search_term, str):
+            search_term_obj = session.query(SearchTerm).filter_by(term=search_term).first()
+            if not search_term_obj:
+                search_term_obj = SearchTerm(
+                    term=search_term,
+                    campaign_id=get_active_campaign_id()
+                )
+                session.add(search_term_obj)
+                session.flush()
+        else:
+            search_term_obj = search_term
+        
         for email in emails:
             if email in processed_emails:
                 continue
                 
-            if is_valid_email(email) and is_valid_contact_email(email):
+            try:
+                validate_email(email, check_deliverability=False)  # Basic format check
+                if not is_valid_contact_email(email):
+                    continue
                 processed_emails.add(email)
                 
                 # Check if lead already exists
-                lead = session.query(Lead).filter_by(email=email).first()
-                if not lead:
-                    lead = Lead(
-                        email=email,
-                        first_name=name,
-                        company=company,
-                        job_title=job_title
-                    )
-                    session.add(lead)
-                    session.flush()
+                lead = session.query(Lead).filter_by(email=email).first() or Lead(email=email,
+                    company=company,
+                    job_title=job_title
+                )
+                leads.append(lead)
                 
                 # Save lead source
                 save_lead_source(
                     session,
                     lead_id=lead.id,
-                    search_term_id=None,
+                    search_term_id=search_term_obj.id if search_term_obj else None,
                     url=url,
                     http_status=response.status_code,
                     scrape_duration=str(response.elapsed.total_seconds()),
@@ -715,10 +726,12 @@ def save_lead(session, url, search_term, **kwargs):
                     tags=None,
                     phone_numbers=None
                 )
-                leads.append(lead)
+                
+            except EmailNotValidError:
+                continue
         
         session.commit()
-        return leads[0] if leads else None
+        return leads
         
     except requests.exceptions.RequestException as e:
         if '403' in str(e):
@@ -951,19 +964,22 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                             update_log(log_container, f"Saved lead: {email}", 'success')
 
                             if enable_email_sending and from_email and email_template:
-                                template_id = int(email_template.split(":")[0])
-                                template = session.query(EmailTemplate).filter_by(id=template_id).first()
-                                if template:
-                                    wrapped_content = wrap_email_body(template.body_content)
-                                    response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
-                                    if response:
-                                        update_log(log_container, f"Sent email to: {email}", 'email_sent')
-                                        save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
+                                try:
+                                    template_id = int(email_template.split(":")[0])
+                                    template = session.query(EmailTemplate).filter_by(id=template_id).first()
+                                    if template:
+                                        wrapped_content = wrap_email_body(template.body_content)
+                                        response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
+                                        if response:
+                                            update_log(log_container, f"Sent email to: {email}", 'email_sent')
+                                            save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
+                                        else:
+                                            update_log(log_container, f"Failed to send email to: {email}", 'error')
+                                            save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
                                     else:
-                                        update_log(log_container, f"Failed to send email to: {email}", 'error')
-                                        save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
-                                else:
-                                    update_log(log_container, "Email template not found", 'error')
+                                        update_log(log_container, "Email template not found", 'error')
+                                except (ValueError, AttributeError) as e:
+                                    update_log(log_container, f"Error parsing or finding email template: {e}", 'error')
                     
                     domains_processed.add(domain)
                     
@@ -1245,7 +1261,7 @@ def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_i
         )
         model = ai_settings.value.get('model_name', 'gpt-4')
         max_tokens = int(ai_settings.value.get('max_tokens', 1500))
-
+        
     try:
         response = client.chat.completions.create(
             model=model,
@@ -1254,6 +1270,7 @@ def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_i
             max_tokens=max_tokens
         )
         result = response.choices[0].message.content
+        
         with db_session() as session:
             log_ai_request(session, function_name, messages, result, lead_id, email_campaign_id, model)
         
@@ -1261,6 +1278,7 @@ def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_i
             return json.loads(result)
         except json.JSONDecodeError:
             return result
+            
     except Exception as e:
         st.error(f"Error in OpenAI API call: {str(e)}")
         with db_session() as session:
@@ -1301,8 +1319,25 @@ def save_lead(session, email, first_name=None, last_name=None, company=None, job
         return None
 
 def save_lead_source(session, lead_id, search_term_id, url, http_status, scrape_duration, page_title=None, meta_description=None, content=None, tags=None, phone_numbers=None):
-    session.add(LeadSource(lead_id=lead_id, search_term_id=search_term_id, url=url, http_status=http_status, scrape_duration=scrape_duration, page_title=page_title or get_page_title(url), meta_description=meta_description or get_page_description(url), content=content or extract_visible_text(BeautifulSoup(requests.get(url).text, 'html.parser')), tags=tags, phone_numbers=phone_numbers))
-    session.commit()
+    """Save lead source with error handling"""
+    try:
+        lead_source = LeadSource(
+            lead_id=lead_id,
+            search_term_id=search_term_id if search_term_id is not None else None,
+            url=url,
+            http_status=http_status,
+            scrape_duration=scrape_duration,
+            page_title=page_title or get_page_title(url),
+            meta_description=meta_description or get_page_description(url),
+            content=content or extract_visible_text(BeautifulSoup(requests.get(url).text, 'html.parser')),
+            tags=tags,
+            phone_numbers=phone_numbers
+        )
+        session.add(lead_source)
+        session.commit()
+    except Exception as e:
+        logging.error(f"Error saving lead source: {str(e)}")
+        session.rollback()
 
 def get_page_title(url):
     try:
@@ -1415,9 +1450,129 @@ def update_display(container, items, title, item_key):
 def get_domain_from_url(url): return urlparse(url).netloc
 
 def manual_search_page():
-    """Manual search page with domain reset between terms"""
     st.title("Manual Search")
     
+    # Create main log container
+    log_container = st.empty()
+    
+    # Initialize session state for logs if not exists
+    if 'log_entries' not in st.session_state:
+        st.session_state.log_entries = []
+    
+    def update_logs():
+        # Format all logs with colors and emojis
+        formatted_logs = []
+        for log in st.session_state.log_entries[-100:]:  # Keep last 100 logs
+            level = log.get('level', 'info')
+            msg = log.get('message', '')
+            timestamp = log.get('timestamp', datetime.now().strftime('%H:%M:%S'))
+            
+            # Color coding and icons
+            icon = {
+                'info': '🔵',
+                'success': '🟢',
+                'warning': '🟠',
+                'error': '🔴',
+                'email_sent': '🟣'
+            }.get(level, '⚪')
+            
+            # Add log entry with monospace font and proper spacing
+            formatted_logs.append(
+                f'<div style="font-family: monospace; padding: 2px 0;">{icon} [{timestamp}] {msg}</div>'
+            )
+        
+        # Create scrollable container with auto-scroll
+        log_html = f"""
+        <div style='
+            background: rgba(0,0,0,0.05);
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 10px;
+        '>
+            <div id="log-container" style='
+                height: 300px;
+                overflow-y: auto;
+                font-family: monospace;
+                font-size: 0.9em;
+                line-height: 1.4;
+                padding: 10px;
+                background: rgba(255,255,255,0.8);
+                border-radius: 3px;
+            '>
+                {''.join(formatted_logs)}
+            </div>
+        </div>
+        <script>
+            function scrollToBottom() {{
+                var container = document.getElementById('log-container');
+                if (container) {{
+                    container.scrollTop = container.scrollHeight;
+                }}
+            }}
+            // Initial scroll
+            scrollToBottom();
+            // Set up a mutation observer to watch for changes
+            var observer = new MutationObserver(scrollToBottom);
+            var container = document.getElementById('log-container');
+            if (container) {{
+                observer.observe(container, {{ childList: true, subtree: true }});
+            }}
+        </script>
+        """
+        log_container.markdown(log_html, unsafe_allow_html=True)
+    
+    def custom_log_update(message, level='info'):
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        st.session_state.log_entries.append({
+            'timestamp': timestamp,
+            'level': level,
+            'message': message
+        })
+        update_logs()
+    
+    with st.form("search_form"):
+        terms = st.text_area("Search Terms (one per line)", height=100)
+        col1, col2 = st.columns(2)
+        with col1:
+            num_results = st.number_input("Number of results per term", min_value=1, value=10)
+            ignore_previous = st.checkbox("Ignore previously fetched URLs", value=True)
+        with col2:
+            enable_email = st.checkbox("Enable email sending", value=True)
+            optimize_terms = st.checkbox("Optimize search terms", value=True)
+        
+        submitted = st.form_submit_button("Start Search")
+        
+        if submitted and terms:
+            search_terms = [term.strip() for term in terms.split('\n') if term.strip()]
+            
+            with safe_db_session() as session:
+                for term in search_terms:
+                    custom_log_update(f"Searching for term: {term}")
+                    try:
+                        urls = google_search(term, num_results=num_results, lang='ES')
+                        custom_log_update(f"Found {len(urls)} URLs for: {term}", level='success')
+                        
+                        for url in urls:
+                            try:
+                                lead = save_lead(session, url=url, search_term=term)
+                                if lead:
+                                    custom_log_update(f"Found lead: {lead.email} ({lead.company})", level='success')
+                                    
+                                    if enable_email:
+                                        try:
+                                            # Email sending logic here
+                                            custom_log_update(f"Email sent to: {lead.email}", level='email_sent')
+                                        except Exception as e:
+                                            custom_log_update(f"Email error ({lead.email}): {str(e)}", level='error')
+                                            
+                            except Exception as e:
+                                custom_log_update(f"URL error ({url}): {str(e)}", level='error')
+                                
+                    except Exception as e:
+                        custom_log_update(f"Search error ({term}): {str(e)}", level='error')
+                        
+                custom_log_update("Search completed!", level='success')
+
     # Initialize session state
     if 'domains_processed' not in st.session_state:
         st.session_state.domains_processed = set()
@@ -2104,9 +2259,13 @@ def search_terms_page():
             
             if st.form_submit_button("Add Term"):
                 if new_term.strip():
-                    add_new_search_term(session, new_term, get_active_campaign_id(), group_for_new_term)
-                    st.success(f"Term '{new_term}' added successfully!")
-                    st.rerun()
+                    sanitized_term = re.sub(r'[^\w\s]', '', new_term)  # Remove special characters
+                    if sanitized_term and sanitized_term not in st.session_state.search_terms:
+                        add_new_search_term(session, new_term, get_active_campaign_id(), group_for_new_term)
+                        st.success(f"Term '{new_term}' added successfully!")
+                        st.rerun()
+                    else:
+                        st.warning("Invalid or duplicate search term.")
                 else:
                     st.warning("Please enter a search term")
 
@@ -2622,9 +2781,9 @@ def generate_optimized_search_terms(session, base_terms, kb_info):
     try:
         prompt = f"""Generate 5 optimized search terms based on:
         Base terms: {', '.join(base_terms)}
-        Company: {kb_info.get('company_description', '')}
-        Target Market: {kb_info.get('company_target_market', '')}
-        Product: {kb_info.get('product_description', '')}
+        Company: {str(kb_info.get('company_description', ''))}
+        Target Market: {str(kb_info.get('company_target_market', ''))}
+        Product: {str(kb_info.get('product_description', ''))}
         
         Format: Return only the terms, one per line, no numbering or extra text.
         Example:
@@ -2782,7 +2941,7 @@ def get_search_terms(session):
 
 def get_ai_response(prompt):
     with db_session() as session:
-        general_settings = session.query(Settings).filter_by(setting_type='general').first()
+        general_settings = session.query(Settings).filter_by(setting_type='ai').first()
         if not general_settings or 'openai_api_key' not in general_settings.value:
             return ""
         
@@ -2996,6 +3155,15 @@ def initialize_settings():
             logging.error(f"Failed to initialize settings: {str(e)}")
             raise
 
+def get_openai_settings():
+    """Get OpenAI settings from database"""
+    with safe_db_session() as session:
+        settings = session.query(Settings).filter_by(setting_type='openai').first()
+        if not settings:
+            initialize_settings()
+            settings = session.query(Settings).filter_by(setting_type='openai').first()
+        return settings.value
+
 def run_automation_cycle(session, settings, log_container=None):
     """Core automation logic separated from UI concerns"""
     results = {
@@ -3117,9 +3285,10 @@ def run_automation_cycle(session, settings, log_container=None):
                             results['errors'].append(f"Email error: {str(e)}")
                             
             # Save automation log
+            current_search_term = session.query(SearchTerm).filter_by(term=term).first()
             session.add(AutomationLog(
                 campaign_id=campaign.id,
-                search_term_id=session.query(SearchTerm).filter_by(term=term).first().id,
+                search_term_id=current_search_term.id if current_search_term else None,
                 leads_gathered=len(results['new_leads']),
                 emails_sent=results['emails_sent'],
                 start_time=datetime.utcnow(),
@@ -3401,10 +3570,24 @@ def main():
 def google_search(query, num_results=10, lang='es'):
     """Perform a Google search and return results"""
     try:
-        # Shuffle results to avoid domain skipping
-        results = list(search(query, stop=num_results*2, lang=lang))  # Get more results to account for skipped domains
-        random.shuffle(results)
-        return results[:num_results]
+        # Get more results to account for skipped domains
+        from googlesearch import search
+        results = list(search(query, num_results=num_results*3, lang=lang))
+        
+        # Filter out unwanted domains
+        filtered_results = []
+        for url in results:
+            domain = get_domain_from_url(url)
+            if not should_skip_domain(domain):
+                filtered_results.append(url)
+        
+        # Reset domain list if too many skipped
+        if len(filtered_results) < num_results/2:
+            logging.info("Reset domain list due to too many skipped results")
+        
+        # Shuffle and return requested number
+        random.shuffle(filtered_results)
+        return filtered_results[:num_results]
     except Exception as e:
         logging.error(f"Google search error: {str(e)}")
         return []
@@ -3453,10 +3636,10 @@ def extract_company_name(soup, url):
     
     return 'Unknown'
 
-def save_lead(session, url, search_term, **kwargs):
+def save_lead(session, url, search_term):
     """Save lead with improved extraction"""
     try:
-        # Get page content
+        # Get page content with retries
         if not url.startswith(('http://', 'https://')):
             url = 'http://' + url
             
@@ -3475,6 +3658,20 @@ def save_lead(session, url, search_term, **kwargs):
         # Track processed emails to avoid duplicates
         processed_emails = set()
         leads = []
+        
+        # Get or create search term object if string was passed
+        search_term_obj = None
+        if isinstance(search_term, str):
+            search_term_obj = session.query(SearchTerm).filter_by(term=search_term).first()
+            if not search_term_obj:
+                search_term_obj = SearchTerm(
+                    term=search_term,
+                    campaign_id=get_active_campaign_id()
+                )
+                session.add(search_term_obj)
+                session.flush()
+        else:
+            search_term_obj = search_term
         
         for email in emails:
             if email in processed_emails:
@@ -3499,7 +3696,7 @@ def save_lead(session, url, search_term, **kwargs):
                 save_lead_source(
                     session,
                     lead_id=lead.id,
-                    search_term_id=None,
+                    search_term_id=search_term_obj.id if search_term_obj else None,
                     url=url,
                     http_status=response.status_code,
                     scrape_duration=str(response.elapsed.total_seconds()),
