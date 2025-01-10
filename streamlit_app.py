@@ -319,25 +319,25 @@ def safe_db_session():
 
 def check_required_settings(session):
     """Check if all required settings are present in the database."""
-    # Check database connection first
     try:
+        # Check database connection first
         session.execute(text('SELECT 1'))
+        
+        # Get settings from database
+        settings = {
+            'ai': session.query(Settings).filter_by(setting_type='ai').first(),
+            'automation': session.query(Settings).filter_by(setting_type='automation').first(),
+            'email_defaults': session.query(Settings).filter_by(setting_type='email_defaults').first()
+        }
+        
+        # Check if all required settings exist
+        missing_settings = [setting_type for setting_type, setting in settings.items() if not setting]
+        if missing_settings:
+            raise ValueError(f"Missing required settings: {', '.join(missing_settings)}")
+        
+        return True
     except Exception as e:
         raise ValueError(f"Database connection failed: {str(e)}")
-    
-    # Get settings from database
-    settings = {
-        'ai': session.query(Settings).filter_by(setting_type='ai').first(),
-        'automation': session.query(Settings).filter_by(setting_type='automation').first(),
-        'email_defaults': session.query(Settings).filter_by(setting_type='email_defaults').first()
-    }
-    
-    # Check if all required settings exist
-    missing_settings = [setting_type for setting_type, setting in settings.items() if not setting]
-    if missing_settings:
-        raise ValueError(f"Missing required settings: {', '.join(missing_settings)}")
-    
-    return True
 
 def initialize_settings():
     """Initialize database and required settings."""
@@ -369,7 +369,7 @@ def initialize_settings():
                 }
                 session.add(Settings(name='Database Settings', setting_type='database', value=default_db_settings))
                 session.commit()
-
+            
             # Create default automation settings if they don't exist
             automation_settings = session.query(Settings).filter_by(setting_type='automation').first()
             if not automation_settings:
@@ -382,7 +382,7 @@ def initialize_settings():
                 }
                 session.add(Settings(name='Automation Settings', setting_type='automation', value=default_automation_settings))
                 session.commit()
-
+            
             # Create default AI settings if they don't exist
             ai_settings = session.query(Settings).filter_by(setting_type='ai').first()
             if not ai_settings:
@@ -395,7 +395,7 @@ def initialize_settings():
                 }
                 session.add(Settings(name='AI Settings', setting_type='ai', value=default_ai_settings))
                 session.commit()
-
+            
             # Create default email settings if they don't exist
             email_settings = session.query(Settings).filter_by(setting_type='email_defaults').first()
             if not email_settings:
@@ -409,7 +409,7 @@ def initialize_settings():
                 }
                 session.add(Settings(name='Email Default Settings', setting_type='email_defaults', value=default_email_settings))
                 session.commit()
-
+            
             return True
         except Exception as e:
             st.error(f"Failed to initialize settings: {str(e)}")
