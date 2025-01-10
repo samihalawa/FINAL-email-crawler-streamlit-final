@@ -562,8 +562,8 @@ def unified_automation_page():
             campaigns = fetch_campaigns(session, selected_project[0])
             if not campaigns:
                 st.warning("No campaigns found for this project. Please create a campaign first.")
-            return
-
+                return
+            
             selected_campaign = st.selectbox(
                 "Select Campaign",
                 options=[(c.id, c.campaign_name) for c in campaigns],
@@ -580,11 +580,11 @@ def unified_automation_page():
                 if st.session_state.get('automation_running', False):
                     if st.button("Stop Automation", type="secondary"):
                         handle_automation_stop()
-                    else:
+                else:
                     if st.button("Start Automation", type="primary"):
                         handle_automation_start()
-
-        with col2:
+            
+            with col2:
                 st.write("Status:", "Running" if st.session_state.get('automation_running', False) else "Stopped")
             
             # Logs and Results
@@ -595,8 +595,7 @@ def unified_automation_page():
             # Start automation if running
             if st.session_state.get('automation_running', False):
                 ai_automation_loop(session, log_container, leads_container)
-                
-    except Exception as e:
+        except Exception as e:
             st.error(f"Error in automation page: {str(e)}")
 
 def main():
@@ -610,16 +609,16 @@ def main():
     # Initialize settings if needed
     try:
         initialize_settings()
-            except Exception as e:
+    except Exception as e:
         st.error(f"Failed to initialize settings: {str(e)}")
         return
 
     # Navigation
-        selected = option_menu(
+    selected = option_menu(
         menu_title=None,
         options=["Dashboard", "Search Terms", "Email Templates", "Leads", "Settings"],
         icons=["house", "search", "envelope", "person", "gear"],
-            menu_icon="cast",
+        menu_icon="cast",
         default_index=0,
         orientation="horizontal"
     )
