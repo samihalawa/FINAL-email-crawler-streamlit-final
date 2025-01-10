@@ -98,7 +98,7 @@ class Lead(Base):
     email = Column(Text, unique=True)
     phone, first_name, last_name, company, job_title = [Column(Text) for _ in range(5)]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # Remove the domain column
+    is_processed = Column(Boolean, default=False)
     campaign_leads = relationship("CampaignLead", back_populates="lead")
     lead_sources = relationship("LeadSource", back_populates="lead")
     email_campaigns = relationship("EmailCampaign", back_populates="lead")
@@ -166,6 +166,7 @@ class SearchTerm(Base):
     id = Column(BigInteger, primary_key=True)
     group_id = Column(BigInteger, ForeignKey('search_term_groups.id'))
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
+    project_id = Column(BigInteger, ForeignKey('projects.id'))
     term, category = Column(Text), Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     language = Column(Text, default='ES')  # Add language column
@@ -232,6 +233,9 @@ class EmailSettings(Base):
     aws_access_key_id = Column(Text)
     aws_secret_access_key = Column(Text)
     aws_region = Column(Text)
+    daily_limit = Column(BigInteger)
+    hourly_limit = Column(BigInteger)
+    is_active = Column(Boolean, default=True)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
@@ -1130,7 +1134,13 @@ def manual_search_page():
             maxtags=10,
             key='search_terms_input'
         )
-        num_results = st.slider("Results per term", 1, 50000, 10)
+        num_results = st.slider(
+            "Results per term", 
+            min_value=1,
+            max_value=50000,
+            value=10,
+            help="Number of results to fetch per search term"
+        )
 
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
@@ -1907,49 +1917,73 @@ def get_email_template_by_name(session, template_name):
 
 def bulk_send_page():
     st.title("Bulk Email Sending")
+    
     with db_session() as session:
+        # Fetch templates and settings
         templates = fetch_email_templates(session)
         email_settings = fetch_email_settings(session)
+        
         if not templates or not email_settings:
             st.error("No email templates or settings available. Please set them up first.")
             return
 
-        template_option = st.selectbox("Email Template", options=templates, format_func=lambda x: x.split(":")[1].strip())
-        template_id = int(template_option.split(":")[0])
-        template = session.query(EmailTemplate).filter_by(id=template_id).first()
-
+        # Template selection
         col1, col2 = st.columns(2)
         with col1:
-            subject = st.text_input("Subject", value=template.subject if template else "")
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})")
-            if email_setting_option:
-                from_email = email_setting_option['email']
-                reply_to = st.text_input("Reply To", email_setting_option['email'])
-            else:
-                st.error("Selected email setting not found. Please choose a valid email setting.")
-                return
+            template_option = st.selectbox(
+                "Email Template", 
+                options=[f"{t.id}: {t.template_name}" for t in templates],
+                format_func=lambda x: x.split(":")[1].strip()
+            )
+            template_id = int(template_option.split(":")[0])
+            template = session.query(EmailTemplate).filter_by(id=template_id).first()
 
+        # Email settings
         with col2:
-            send_option = st.radio("Send to:", ["All Leads", "Specific Email", "Leads from Chosen Search Terms", "Leads from Search Term Groups"])
-            specific_email = None
-            selected_terms = None
-            if send_option == "Specific Email":
-                specific_email = st.text_input("Enter email")
-            elif send_option == "Leads from Chosen Search Terms":
-                search_terms_with_counts = fetch_search_terms_with_lead_count(session)
-                selected_terms = st.multiselect("Select Search Terms", options=search_terms_with_counts['Term'].tolist())
-                selected_terms = [term.split(" (")[0] for term in selected_terms]
-            elif send_option == "Leads from Search Term Groups":
-                groups = fetch_search_term_groups(session)
-                selected_groups = st.multiselect("Select Search Term Groups", options=groups)
-                if selected_groups:
-                    group_ids = [int(group.split(':')[0]) for group in selected_groups]
-                    selected_terms = fetch_search_terms_for_groups(session, group_ids)
+            email_setting = st.selectbox(
+                "From Email", 
+                options=[f"{s.id}: {s.email}" for s in email_settings],
+                format_func=lambda x: f"{x.split(':')[1].strip()}"
+            )
+            if email_setting:
+                setting_id = int(email_setting.split(":")[0])
+                setting = next((s for s in email_settings if s.id == setting_id), None)
+                if setting:
+                    from_email = setting.email
+                    reply_to = st.text_input("Reply To", value=setting.email)
+
+        # Send options
+        send_option = st.radio(
+            "Send to:", 
+            ["All Leads", "Specific Email", "Leads from Chosen Search Terms", "Leads from Search Term Groups"]
+        )
+        
+        specific_email = None
+        selected_terms = None
+        
+        if send_option == "Specific Email":
+            specific_email = st.text_input("Enter email")
+        elif send_option == "Leads from Chosen Search Terms":
+            search_terms_with_counts = fetch_search_terms_with_lead_count(session)
+            selected_terms = st.multiselect(
+                "Select Search Terms",
+                options=search_terms_with_counts['Term'].tolist()
+            )
+            selected_terms = [term.split(" (")[0] for term in selected_terms]
+        elif send_option == "Leads from Search Term Groups":
+            groups = session.query(SearchTermGroup).all()
+            selected_groups = st.multiselect(
+                "Select Search Term Groups",
+                options=[f"{g.id}: {g.name}" for g in groups]
+            )
+            if selected_groups:
+                group_ids = [int(group.split(':')[0]) for group in selected_groups]
+                selected_terms = [t.term for t in session.query(SearchTerm).filter(SearchTerm.group_id.in_(group_ids)).all()]
 
         exclude_previously_contacted = st.checkbox("Exclude Previously Contacted Domains", value=True)
 
         st.markdown("### Email Preview")
-        st.text(f"From: {from_email}\nReply-To: {reply_to}\nSubject: {subject}")
+        st.text(f"From: {from_email}\nReply-To: {reply_to}\nSubject: {template.subject}")
         st.components.v1.html(get_email_preview(session, template_id, from_email, reply_to), height=600, scrolling=True)
 
         leads = fetch_leads(session, template_id, send_option, specific_email, selected_terms, exclude_previously_contacted)
@@ -1965,17 +1999,82 @@ def bulk_send_page():
             if not contactable_leads:
                 st.warning("No leads found matching the selected criteria.")
                 return
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+
+            # Create containers for progress tracking
+            progress_container = st.container()
+            status_container = st.container()
+            results_container = st.container()
+
+            with progress_container:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                current_lead = st.empty()
+                stats = st.empty()
+
             results = []
-            log_container = st.empty()
-            logs, sent_count = bulk_send_emails(session, template_id, from_email, reply_to, contactable_leads, progress_bar, status_text, results, log_container)
-            st.success(f"Emails sent successfully to {sent_count} leads.")
-            st.subheader("Sending Results")
-            results_df = pd.DataFrame(results)
-            st.dataframe(results_df)
-            success_rate = (results_df['Status'] == 'sent').mean()
-            st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
+            sent_count = 0
+            error_count = 0
+
+            for idx, lead in enumerate(contactable_leads):
+                try:
+                    # Update progress
+                    progress = (idx + 1) / len(contactable_leads)
+                    progress_bar.progress(progress)
+                    current_lead.text(f"Processing: {lead['Email']}")
+                    stats.text(f"Progress: {idx + 1}/{len(contactable_leads)} | Sent: {sent_count} | Errors: {error_count}")
+
+                    # Send email
+                    response = send_email_ses(
+                        session,
+                        from_email,
+                        lead['Email'],
+                        template.subject,
+                        template.body_content,
+                        reply_to=reply_to
+                    )
+
+                    if response and response.get('MessageId'):
+                        status = 'sent'
+                        sent_count += 1
+                        save_email_campaign(
+                            session,
+                            lead['Email'],
+                            template_id,
+                            status,
+                            datetime.utcnow(),
+                            template.subject,
+                            response['MessageId'],
+                            template.body_content
+                        )
+                    else:
+                        status = 'failed'
+                        error_count += 1
+
+                    results.append({
+                        'Email': lead['Email'],
+                        'Status': status,
+                        'Message ID': response.get('MessageId', 'N/A') if response else 'N/A'
+                    })
+
+                except Exception as e:
+                    error_count += 1
+                    results.append({
+                        'Email': lead['Email'],
+                        'Status': 'error',
+                        'Message ID': 'N/A'
+                    })
+
+            # Final status update
+            status_text.success(f"Email sending completed!")
+            stats.text(f"Final Results: Total: {len(contactable_leads)} | Sent: {sent_count} | Errors: {error_count}")
+
+            # Display results
+            with results_container:
+                st.subheader("Sending Results")
+                results_df = pd.DataFrame(results)
+                st.dataframe(results_df)
+                success_rate = (results_df['Status'] == 'sent').mean()
+                st.metric("Email Sending Success Rate", f"{success_rate:.2%}")
 
 def fetch_leads(session, template_id, send_option, specific_email, selected_terms, exclude_previously_contacted):
     try:
