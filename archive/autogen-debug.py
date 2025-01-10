@@ -9,9 +9,19 @@ from typing_extensions import Annotated
 from PIL import ImageGrab
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
-
-config_list = [{"model": "gpt-4o-mini", "api_key": os.environ.get("OPENAI_API_KEY")}]
-llm_config = {"temperature": 0.1, "config_list": config_list, "max_tokens": 4000}
+config_list = [
+    {
+        "model": "Qwen/Qwen2.5-72B-Instruct",
+        "inference_api": True,
+        "api_key": "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",
+        "base_url": "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-72B-Instruct"
+    }
+]
+llm_config = {
+    "temperature": 0.5,
+    "config_list": config_list,
+    "max_tokens": 4000
+}
 
 try:
     engineer = autogen.AssistantAgent(name="engineer", llm_config=llm_config, 
@@ -83,6 +93,8 @@ Steps:
 5. Verify fixes
 
 Begin debugging.""")
+    except autogen.Exceptions.AgentTerminatedError as e:
+        logging.info(f"Debug session terminated by agent: {str(e)}")
     except Exception as e:
         logging.error(f"Debug session failed: {str(e)}")
         sys.exit(1)
