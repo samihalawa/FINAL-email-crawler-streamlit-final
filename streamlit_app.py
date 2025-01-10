@@ -465,7 +465,7 @@ def settings_page():
                             'aws_region': aws_region,
                             'aws_ses_enabled': aws_ses_enabled
                         })
-            session.commit()
+                        session.commit()
                         st.success("AWS settings saved successfully!")
             
             # Email Settings
@@ -490,7 +490,7 @@ def settings_page():
                             'batch_size': batch_size,
                             'delay_seconds': delay_seconds
                         })
-        session.commit()
+                        session.commit()
                         st.success("Email settings saved successfully!")
             
             # AI Settings
@@ -513,12 +513,12 @@ def settings_page():
                             'presence_penalty': presence_penalty,
                             'frequency_penalty': frequency_penalty
                         })
-        session.commit()
+                        session.commit()
                         st.success("AI settings saved successfully!")
             
             # Automation Settings
             st.header("Automation Settings")
-        automation_settings = session.query(Settings).filter_by(setting_type='automation').first()
+            automation_settings = session.query(Settings).filter_by(setting_type='automation').first()
             if automation_settings:
                 automation_form = st.form("automation_settings")
                 with automation_form:
@@ -536,9 +536,8 @@ def settings_page():
                             'max_retries': max_retries,
                             'timeout_seconds': timeout
                         })
-                    session.commit()
+                        session.commit()
                         st.success("Automation settings saved successfully!")
-                        
         except Exception as e:
             st.error(f"Error loading settings: {str(e)}")
 
