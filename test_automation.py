@@ -12,8 +12,13 @@ def initialize_ai_settings():
                 name='openai_settings',
                 setting_type='ai',
                 value={
+<<<<<<< HEAD
                     'model': os.getenv('OPENAI_MODEL'),
                     'api_base': os.getenv('OPENAI_API_BASE')
+=======
+                    'model': 'Qwen/Qwen2.5-Coder-32B-Instruct',
+                    'api_base': 'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-Coder-32B-Instruct/v1'
+>>>>>>> d95791f (Remove secret from test_automation.py)
                 }
             )
             session.add(ai_settings)
