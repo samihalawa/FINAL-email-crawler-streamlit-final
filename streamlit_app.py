@@ -256,60 +256,265 @@ def db_session():
 def settings_page():
     st.title("Settings")
     with db_session() as session:
-        general_settings = session.query(Settings).filter_by(setting_type='general').first() or Settings(name='General Settings', setting_type='general', value={})
-        st.header("General Settings")
-        with st.form("general_settings_form"):
-            openai_api_key = st.text_input("OpenAI API Key", value=general_settings.value.get('openai_api_key', ''), type="password")
-            openai_api_base = st.text_input("OpenAI API Base URL", value=general_settings.value.get('openai_api_base', 'https://api.openai.com/v1'))
-            openai_model = st.text_input("OpenAI Model", value=general_settings.value.get('openai_model', 'gpt-4o-mini'))
-            if st.form_submit_button("Save General Settings"):
-                general_settings.value = {'openai_api_key': openai_api_key, 'openai_api_base': openai_api_base, 'openai_model': openai_model}
-                session.add(general_settings)
-                session.commit()
-                st.success("General settings saved successfully!")
+        try:
+            # Email Settings
+            st.subheader("Email Settings")
+            
+            # Fetch existing settings
+            email_settings = session.query(EmailSettings).all()
+            
+            # Display existing settings
+            if email_settings:
+                settings_data = []
+                for setting in email_settings:
+                    settings_data.append({
+                        'ID': setting.id,
+                        'Name': setting.name,
+                        'Email': setting.email,
+                        'Provider': setting.provider,
+                        'Daily Limit': setting.daily_limit or 'No limit',
+                        'Hourly Limit': setting.hourly_limit or 'No limit',
+                        'Active': '✓' if setting.is_active else '✗'
+                    })
+                
+                df = pd.DataFrame(settings_data)
+                st.dataframe(
+                    df,
+                    hide_index=True,
+                    column_config={
+                        'ID': st.column_config.NumberColumn('ID'),
+                        'Name': st.column_config.TextColumn('Name'),
+                        'Email': st.column_config.TextColumn('Email'),
+                        'Provider': st.column_config.TextColumn('Provider'),
+                        'Daily Limit': st.column_config.TextColumn('Daily Limit'),
+                        'Hourly Limit': st.column_config.TextColumn('Hourly Limit'),
+                        'Active': st.column_config.TextColumn('Active')
+                    }
+                )
 
-        st.header("Email Settings")
-        email_settings = session.query(EmailSettings).all()
-        for setting in email_settings:
-            with st.expander(f"{setting.name} ({setting.email})"):
-                st.write(f"Provider: {setting.provider}")
-                st.write(f"{'SMTP Server: ' + setting.smtp_server if setting.provider == 'smtp' else 'AWS Region: ' + setting.aws_region}")
-                if st.button(f"Delete {setting.name}", key=f"delete_{setting.id}"):
-                    session.delete(setting)
-                    session.commit()
-                    st.success(f"Deleted {setting.name}")
-                    st.rerun()
+            # Add new email setting
+            st.subheader("Add Email Setting")
+            with st.form("email_setting_form"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    name = st.text_input("Setting Name")
+                    email = st.text_input("Email Address")
+                    provider = st.selectbox("Provider", ["AWS SES", "SMTP"])
+                    
+                with col2:
+                    daily_limit = st.number_input("Daily Email Limit", min_value=0, value=1000)
+                    hourly_limit = st.number_input("Hourly Email Limit", min_value=0, value=100)
+                    is_active = st.checkbox("Active", value=True)
+                
+                # Provider-specific settings
+                if provider == "AWS SES":
+                    aws_access_key = st.text_input("AWS Access Key ID")
+                    aws_secret_key = st.text_input("AWS Secret Access Key", type="password")
+                    aws_region = st.text_input("AWS Region", value="us-east-1")
+                else:
+                    smtp_server = st.text_input("SMTP Server")
+                    smtp_port = st.number_input("SMTP Port", value=587)
+                    smtp_username = st.text_input("SMTP Username")
+                    smtp_password = st.text_input("SMTP Password", type="password")
 
-        edit_id = st.selectbox("Edit existing setting", ["New Setting"] + [f"{s.id}: {s.name}" for s in email_settings])
-        edit_setting = session.query(EmailSettings).get(int(edit_id.split(":")[0])) if edit_id != "New Setting" else None
-        with st.form("email_setting_form"):
-            name = st.text_input("Name", value=edit_setting.name if edit_setting else "", placeholder="e.g., Company Gmail")
-            email = st.text_input("Email", value=edit_setting.email if edit_setting else "", placeholder="your.email@example.com")
-            provider = st.selectbox("Provider", ["smtp", "ses"], index=0 if edit_setting and edit_setting.provider == "smtp" else 1)
-            if provider == "smtp":
-                smtp_server = st.text_input("SMTP Server", value=edit_setting.smtp_server if edit_setting else "", placeholder="smtp.gmail.com")
-                smtp_port = st.number_input("SMTP Port", min_value=1, max_value=65535, value=edit_setting.smtp_port if edit_setting else 587)
-                smtp_username = st.text_input("SMTP Username", value=edit_setting.smtp_username if edit_setting else "", placeholder="your.email@gmail.com")
-                smtp_password = st.text_input("SMTP Password", type="password", value=edit_setting.smtp_password if edit_setting else "", placeholder="Your SMTP password")
-            else:
-                aws_access_key_id = st.text_input("AWS Access Key ID", value=edit_setting.aws_access_key_id if edit_setting else "", placeholder="AKIAIOSFODNN7EXAMPLE")
-                aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password", value=edit_setting.aws_secret_access_key if edit_setting else "", placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-                aws_region = st.text_input("AWS Region", value=edit_setting.aws_region if edit_setting else "", placeholder="us-west-2")
-            if st.form_submit_button("Save Email Setting"):
-                setting_data = {k: v for k, v in locals().items() if k in ['name', 'email', 'provider', 'smtp_server', 'smtp_port', 'smtp_username', 'smtp_password', 'aws_access_key_id', 'aws_secret_access_key', 'aws_region'] and v is not None}
-                try:
-                    if edit_setting:
-                        for k, v in setting_data.items():
-                            setattr(edit_setting, k, v)
-                    else:
-                        new_setting = EmailSettings(**setting_data)
+                if st.form_submit_button("Add Email Setting"):
+                    try:
+                        new_setting = EmailSettings(
+                            name=name,
+                            email=email,
+                            provider=provider,
+                            daily_limit=daily_limit,
+                            hourly_limit=hourly_limit,
+                            is_active=is_active,
+                            project_id=get_active_project_id()
+                        )
+                        
+                        if provider == "AWS SES":
+                            new_setting.aws_access_key_id = aws_access_key
+                            new_setting.aws_secret_access_key = aws_secret_key
+                            new_setting.aws_region = aws_region
+                        else:
+                            new_setting.smtp_server = smtp_server
+                            new_setting.smtp_port = smtp_port
+                            new_setting.smtp_username = smtp_username
+                            new_setting.smtp_password = smtp_password
+                        
                         session.add(new_setting)
-                    session.commit()
-                    st.success("Email setting saved successfully!")
+                        session.commit()
+                        st.success("Email setting added successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error adding email setting: {str(e)}")
+                        session.rollback()
+
+            # Application Settings
+            st.subheader("Application Settings")
+            
+            # Fetch current settings
+            app_settings = session.query(Settings).filter_by(setting_type='application').first()
+            current_settings = app_settings.value if app_settings else {}
+            
+            # General settings
+            with st.form("app_settings_form"):
+                enable_ai = st.checkbox(
+                    "Enable AI Features",
+                    value=current_settings.get('enable_ai', True)
+                )
+                
+                debug_mode = st.checkbox(
+                    "Debug Mode",
+                    value=current_settings.get('debug_mode', False)
+                )
+
+                default_language = st.selectbox(
+                    "Default Language",
+                    options=["ES", "EN"],
+                    index=0 if current_settings.get('default_language', 'ES') == 'ES' else 1
+                )
+                
+                max_search_results = st.number_input(
+                    "Max Search Results per Term",
+                    min_value=1,
+                    value=current_settings.get('max_search_results', 50)
+                )
+                
+                email_batch_size = st.number_input(
+                    "Email Batch Size",
+                    min_value=1,
+                    value=current_settings.get('email_batch_size', 10)
+                )
+                
+                if st.form_submit_button("Save Settings"):
+                    try:
+                        new_settings = {
+                            'enable_ai': enable_ai,
+                            'debug_mode': debug_mode,
+                            'default_language': default_language,
+                            'max_search_results': max_search_results,
+                            'email_batch_size': email_batch_size
+                        }
+                        
+                        if app_settings:
+                            app_settings.value = new_settings
+                        else:
+                            app_settings = Settings(
+                                name='application_settings',
+                                setting_type='application',
+                                value=new_settings
+                            )
+                            session.add(app_settings)
+                        
+                        session.commit()
+                        st.success("Application settings saved successfully!")
+                    except Exception as e:
+                        st.error(f"Error saving application settings: {str(e)}")
+
+            # AI Settings
+            st.subheader("AI Settings")
+            ai_settings = session.query(Settings).filter_by(setting_type='ai').first()
+            current_ai_settings = ai_settings.value if ai_settings else {}
+
+            with st.form("ai_settings_form"):
+                api_key = st.text_input(
+                    "API Key",
+                    value=current_ai_settings.get('api_key', ''),
+                    type="password"
+                )
+
+                api_base_url = st.text_input(
+                    "API Base URL",
+                    value=current_ai_settings.get('api_base_url', 'https://api.openai.com/v1')
+                )
+
+                model = st.selectbox(
+                    "Model",
+                    options=["gpt-4", "gpt-3.5-turbo", "Qwen/Qwen2.5-72B-Instruct"],
+                    index=0 if current_ai_settings.get('model_name', 'gpt-4') == 'gpt-4' else 
+                          (1 if current_ai_settings.get('model_name') == 'gpt-3.5-turbo' else 2)
+                )
+
+                max_tokens = st.number_input(
+                    "Max Tokens per Request",
+                    min_value=100,
+                    max_value=4000,
+                    value=int(current_ai_settings.get('max_tokens', 1500))
+                )
+
+                temperature = st.slider(
+                    "Temperature",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(current_ai_settings.get('temperature', 0.7)),
+                    step=0.1
+                )
+
+                if st.form_submit_button("Save AI Settings"):
+                    try:
+                        new_ai_settings = {
+                            'api_key': api_key,
+                            'api_base_url': api_base_url,
+                            'model_name': model,
+                            'max_tokens': max_tokens,
+                            'temperature': temperature,
+                            'inference_api': model.startswith('Qwen/')
+                        }
+
+                        if ai_settings:
+                            ai_settings.value = new_ai_settings
+                        else:
+                            ai_settings = Settings(
+                                name='ai_settings',
+                                setting_type='ai',
+                                value=new_ai_settings
+                            )
+                            session.add(ai_settings)
+
+                        session.commit()
+                        st.success("AI settings saved successfully!")
+                    except Exception as e:
+                        st.error(f"Error saving AI settings: {str(e)}")
+                        session.rollback()
+
+            # Database Information
+            st.subheader("Database Information")
+            
+            # Get table statistics
+            stats = {
+                'Projects': session.query(Project).count(),
+                'Campaigns': session.query(Campaign).count(),
+                'Leads': session.query(Lead).count(),
+                'Search Terms': session.query(SearchTerm).count(),
+                'Email Templates': session.query(EmailTemplate).count(),
+                'Email Campaigns': session.query(EmailCampaign).count()
+            }
+            
+            # Display statistics
+            col1, col2, col3 = st.columns(3)
+            for i, (table, count) in enumerate(stats.items()):
+                with [col1, col2, col3][i % 3]:
+                    st.metric(table, count)
+            
+            # Database maintenance
+            st.subheader("Database Maintenance")
+            
+            if st.button("Check Database Health"):
+                try:
+                    check_database_state()
+                    st.success("Database health check completed successfully!")
+                except Exception as e:
+                    st.error(f"Database health check failed: {str(e)}")
+            
+            if st.button("Create Default Settings"):
+                try:
+                    initialize_settings()
+                    st.success("Default settings created successfully!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error saving email setting: {str(e)}")
-                    session.rollback()
+                    st.error(f"Error creating default settings: {str(e)}")
+
+        except Exception as e:
+            st.error(f"Error loading settings: {str(e)}")
 
 def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8', reply_to=None, ses_client=None):
     email_settings = session.query(EmailSettings).filter_by(email=from_email).first()
@@ -409,9 +614,7 @@ def update_log(log_container, message, level='info'):
     icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
     log_entry = f"{icon} {message}"
     
-    # Simple console logging without HTML
-    print(f"{icon} {message.split('<')[0]}")  # Only print the first part of the message before any HTML tags
-    
+    # Initialize log entries in session state if not present
     if 'log_entries' not in st.session_state:
         st.session_state.log_entries = []
     
@@ -424,10 +627,13 @@ def update_log(log_container, message, level='info'):
     log_container.markdown(log_html, unsafe_allow_html=True)
 
 def optimize_search_term(search_term, language):
+    """Optimizes search term based on language."""
     if language == 'english':
-        return f'"{search_term}" email OR contact OR "get in touch" site:.com'
+        # Remove site restriction and add more contact-related terms
+        return f'"{search_term}" (email OR contact OR "get in touch" OR "reach out" OR "contact us" OR "contact form" OR "send message" OR "send us a message" OR "write to us" OR "get in contact")'
     elif language == 'spanish':
-        return f'"{search_term}" correo OR contacto OR "ponte en contacto" site:.es'
+        # Remove site restriction and add more contact-related terms
+        return f'"{search_term}" (correo OR contacto OR email OR "ponte en contacto" OR "formulario de contacto" OR "enviar mensaje" OR "envíanos un mensaje" OR "escríbenos" OR "contacta con nosotros")'
     return search_term
 
 def shuffle_keywords(term):
@@ -466,36 +672,35 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
         try:
             search_term_id = add_or_get_search_term(session, original_term, get_active_campaign_id())
             search_term = shuffle_keywords(original_term) if shuffle_keywords_option else original_term
-            search_term = optimize_search_term(search_term, 'english' if optimize_english else 'spanish') if optimize_english or optimize_spanish else search_term
+            search_term = optimize_search_term(search_term, 'english' if optimize_english else ('spanish' if optimize_spanish else None)) if optimize_english or optimize_spanish else search_term
             update_log(log_container, f"Searching for '{original_term}' (Used '{search_term}')")
             
             for url in google_search(search_term, num_results, lang=language):
                 domain = get_domain_from_url(url)
                 if ignore_previously_fetched and domain in domains_processed:
-                    update_log(log_container, f"Skipping Previously Fetched: {domain}", 'warning')
+                    # update_log(log_container, f"Skipping Previously Fetched: {domain}", 'warning')
                     continue
                 
-                update_log(log_container, f"Fetching: {url}")
+                # update_log(log_container, f"Fetching: {url}") # Remove verbose logging
                 try:
                     if not url.startswith(('http://', 'https://')):
                         url = 'http://' + url
                     
                     response = requests.get(url, timeout=10, verify=False, headers={'User-Agent': ua.random})
                     response.raise_for_status()
-                    html_content, soup = response.text, BeautifulSoup(response.text, 'html.parser')
+                    soup = BeautifulSoup(response.text, 'html.parser')
                     
                     # Extract all emails from the page
-                    emails = extract_emails_from_html(html_content)
-                    valid_emails = [email for email in emails if is_valid_email(email)]
-                    update_log(log_container, f"Found {len(valid_emails)} valid email(s) on {url}", 'success')
+                    valid_emails = [email for email in extract_emails_from_html(response.text) if is_valid_email(email)]
+                    # update_log(log_container, f"Found {len(valid_emails)} valid email(s) on {url}", 'success') # Remove verbose logging
                     
                     if not valid_emails:
                         continue
                         
                     # Extract page info once for all leads from this URL
                     name, company, job_title = extract_info_from_page(soup)
-                    page_title = get_page_title(html_content)
-                    page_description = get_page_description(html_content)
+                    page_title = get_page_title(response.text)
+                    page_description = get_page_description(response.text)
                     
                     # Initialize set for this domain if not exists
                     if domain not in processed_emails_per_domain:
@@ -562,7 +767,7 @@ def generate_or_adjust_email_template(prompt, kb_info=None, current_template=Non
         {"role": "user", "content": f"""{'Adjust the following email template based on the given instructions:' if current_template else 'Create an email template based on the following prompt:'} {prompt}
 
         {'Current Template:' if current_template else 'Guidelines:'}
-        {current_template if current_template else '1. Focus on benefits to the reader, address potential customer doubts, include clear CTAs, use a natural tone, and be concise.'}
+                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), wrapped_content)
 
         Respond with a JSON object containing 'subject' and 'body' keys. The 'body' should contain HTML formatted content suitable for insertion into an email body.
 
@@ -725,19 +930,30 @@ def ai_automation_loop(session, log_container, leads_container):
 
 def openai_chat_completion(messages, temperature=0.7, function_name=None, lead_id=None, email_campaign_id=None):
     with db_session() as session:
-        general_settings = session.query(Settings).filter_by(setting_type='general').first()
-        if not general_settings or 'openai_api_key' not in general_settings.value:
-            st.error("OpenAI API key not set. Please configure it in the settings.")
-            return None
+        # Try to get AI settings first, fall back to general settings if needed
+        ai_settings = session.query(Settings).filter_by(setting_type='ai').first()
+        if ai_settings and ai_settings.value:
+            settings = ai_settings.value
+        else:
+            general_settings = session.query(Settings).filter_by(setting_type='general').first()
+            if not general_settings or 'openai_api_key' not in general_settings.value:
+                st.error("AI settings not configured. Please configure them in the settings page.")
+                return None
+            settings = general_settings.value
 
-        client = OpenAI(api_key=general_settings.value['openai_api_key'])
-        model = general_settings.value.get('openai_model', "gpt-4o-mini")
+        # Initialize OpenAI client with proper settings
+        client = OpenAI(
+            api_key=settings.get('api_key') or settings.get('openai_api_key'),
+            base_url=settings.get('api_base_url', 'https://api.openai.com/v1')
+        )
+        model = settings.get('model_name') or settings.get('openai_model', "gpt-4")
 
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=settings.get('max_tokens', 1500)
         )
         result = response.choices[0].message.content
         with db_session() as session:
@@ -919,7 +1135,7 @@ def manual_search_page():
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
         ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True)
-        shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=True)
+        shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=False)  # Set default to False
         optimize_english = st.checkbox("Optimize (English)", value=False)
         optimize_spanish = st.checkbox("Optimize (Spanish)", value=False)
         language = st.selectbox("Select Language", options=["ES", "EN"], index=0)
@@ -977,7 +1193,7 @@ def manual_search_page():
                         wrapped_content = wrap_email_body(template.body_content)
                         response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
                         if response:
-                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), template.body_content)
+                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), wrapped_content)
                             emails_sent.append(f"✅ {result['Email']}")
                             status_text.text(f"Email sent to: {result['Email']}")
                         else:
