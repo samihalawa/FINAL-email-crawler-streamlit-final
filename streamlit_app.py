@@ -2796,6 +2796,78 @@ def display_logs(log_container, logs, selected_filter='all', auto_scroll=True):
                     background-color: rgba(49, 51, 63, 0.1);
                     font-family: monospace;
                     font-size: 0.9em;
+                }
+                .log-entry {
+                    padding: 0.5rem;
+                    margin-bottom: 0.5rem;
+                    border-radius: 0.25rem;
+                    background-color: rgba(255, 255, 255, 0.8);
+                    border-left: 3px solid #1c83e1;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .log-icon {
+                    flex-shrink: 0;
+                }
+                .log-timestamp {
+                    color: #666;
+                    flex-shrink: 0;
+                }
+                .log-message {
+                    flex-grow: 1;
+                    margin: 0 0.5rem;
+                }
+                .copy-button {
+                    opacity: 0;
+                    transition: opacity 0.2s;
+                    padding: 0.2rem 0.5rem;
+                    border: 1px solid #ddd;
+                    border-radius: 0.25rem;
+                    background: white;
+                    cursor: pointer;
+                }
+                .log-entry:hover .copy-button {
+                    opacity: 1;
+                }
+                .log-error { border-left-color: #ff4b4b; }
+                .log-success { border-left-color: #00c853; }
+                .log-warning { border-left-color: #ffd700; }
+                .log-email { border-left-color: #9c27b0; }
+                .log-search { border-left-color: #2196f3; }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # Display logs with auto-scroll
+            log_container.markdown(
+                f"""
+                <div class="log-container" id="log-container">
+                    {''.join(formatted_logs)}
+                </div>
+                <script>
+                    function scrollToBottom() {{
+                        var container = document.getElementById('log-container');
+                        if (container && {str(auto_scroll).lower()}) {{
+                            container.scrollTop = container.scrollHeight;
+                        }}
+                    }}
+                    scrollToBottom();
+                    var observer = new MutationObserver(scrollToBottom);
+                    var container = document.getElementById('log-container');
+                    if (container) {{
+                        observer.observe(container, {{ childList: true, subtree: true }});
+                    }}
+                </script>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # Update state
+            st.session_state.log_state['last_update'] = current_time
+            st.session_state.log_state['update_counter'] += 1
+
 def main():
     st.set_page_config(
         page_title="Autoclient.ai | Lead Generation AI App",
