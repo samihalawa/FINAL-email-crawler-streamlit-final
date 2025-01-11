@@ -1,7 +1,3 @@
 #!/bin/bash
-
-# Reset database schema first
-python reset_db.py
-
-# Start the Streamlit app
+source venv/bin/activate  # Or the path to your virtual environment
 streamlit run streamlit_app.py

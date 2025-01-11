@@ -21,6 +21,8 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+import subprocess
+import threading
 
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -1193,11 +1195,11 @@ def manual_search_page():
                         wrapped_content = wrap_email_body(template.body_content)
                         response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
                         if response:
-                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), wrapped_content)
+                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
                             emails_sent.append(f"✅ {result['Email']}")
                             status_text.text(f"Email sent to: {result['Email']}")
                         else:
-                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, template.body_content)
+                            save_email_campaign(session, result['Email'], template.id, 'failed', datetime.utcnow(), template.subject, None, wrapped_content)
                             emails_sent.append(f"❌ {result['Email']}")
                             status_text.text(f"Failed to send email to: {result['Email']}")
 
@@ -2464,34 +2466,87 @@ def fetch_sent_email_campaigns(session):
         logging.error(f"Database error in fetch_sent_email_campaigns: {str(e)}")
         return pd.DataFrame()
 
-def display_logs(log_container, logs):
+def display_logs(log_container, logs, selected_filter='all', auto_scroll=True):
+    """
+    Display logs with filtering and auto-scroll support.
+    """
     if not logs:
         log_container.info("No logs to display yet.")
         return
 
-    log_container.markdown(
+    # Filter logs
+    filtered_logs = []
+    for log in logs:
+        if selected_filter != 'all':
+            if selected_filter == 'error' and 'error' not in log['message'].lower():
+                continue
+            if selected_filter == 'success' and 'success' not in log['message'].lower():
+                continue
+            if selected_filter == 'email' and 'email' not in log['message'].lower():
+                continue
+            if selected_filter == 'search' and 'search' not in log['message'].lower():
+                continue
+        
+        # Format log entry with timestamp and level-based icon
+        icon = {
+            'info': '🔵',
+            'success': '🟢',
+            'warning': '🟠',
+            'error': '🔴',
+            'email_sent': '🟣'
+        }.get(log.get('level', 'info'), '⚪')
+        
+        formatted_log = f"""
+        <div class="log-entry {log.get('level', 'info')}">
+            {icon} [{log['timestamp']}] {log['message']}
+        </div>
         """
+        filtered_logs.append(formatted_log)
+
+    # Create HTML with styling and auto-scroll
+    log_container.markdown(
+        f"""
         <style>
-        .log-container {
-            max-height: 300px;
+        .log-container {{
+            height: 400px;
             overflow-y: auto;
             border: 1px solid rgba(49, 51, 63, 0.2);
             border-radius: 0.25rem;
             padding: 1rem;
-        }
-        .log-entry {
+            background-color: rgba(49, 51, 63, 0.1);
+            font-family: monospace;
+            font-size: 0.9em;
+        }}
+        .log-entry {{
             margin-bottom: 0.5rem;
             padding: 0.5rem;
             border-radius: 0.25rem;
-            background-color: rgba(28, 131, 225, 0.1);
-        }
+            background-color: rgba(255, 255, 255, 0.1);
+        }}
+        .error {{ background-color: rgba(255, 0, 0, 0.1); }}
+        .success {{ background-color: rgba(0, 255, 0, 0.1); }}
+        .warning {{ background-color: rgba(255, 165, 0, 0.1); }}
         </style>
+        <div class="log-container" id="log-container">
+            {''.join(filtered_logs[-1000:])}  
+        </div>
+        <script>
+            function scrollToBottom() {{
+                var container = document.getElementById('log-container');
+                if (container && {str(auto_scroll).lower()}) {{
+                    container.scrollTop = container.scrollHeight;
+                }}
+            }}
+            scrollToBottom();
+            var observer = new MutationObserver(scrollToBottom);
+            var container = document.getElementById('log-container');
+            if (container) {{
+                observer.observe(container, {{ childList: true, subtree: true }});
+            }}
+        </script>
         """,
         unsafe_allow_html=True
     )
-
-    log_entries = "".join(f'<div class="log-entry">{log}</div>' for log in logs[-20:])
-    log_container.markdown(f'<div class="log-container">{log_entries}</div>', unsafe_allow_html=True)
 
 def view_sent_email_campaigns():
     st.header("Sent Email Campaigns")
@@ -2510,6 +2565,175 @@ def view_sent_email_campaigns():
     except Exception as e:
         st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
+
+def fetch_logs_for_automation_log(session, automation_log_id):
+    automation_log = session.query(AutomationLog).get(automation_log_id)
+    if automation_log and automation_log.logs:
+        return automation_log.logs
+    else:
+        return []
+
+def run_automated_search(automation_log_id):
+    """Runs the automated_search.py script."""
+    subprocess.run(["python", "automated_search.py", str(automation_log_id)])
+
+def manual_search_worker_page():
+    st.title("Manual Search Worker")
+
+    # Initialize session state for logs if not exists
+    if 'worker_log_state' not in st.session_state:
+        st.session_state.worker_log_state = {
+            'buffer': [],
+            'last_count': 0,
+            'last_update': time.time(),
+            'update_counter': 0,
+            'auto_scroll': True
+        }
+
+    with db_session() as session:
+        # Fetch recent searches within the session
+        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
+        recent_search_terms = [term.term for term in recent_searches]
+        
+        email_templates = fetch_email_templates(session)
+        email_settings = fetch_email_settings(session)
+
+        # Check if there's an active automation
+        if 'automation_log_id' in st.session_state:
+            automation_log = session.query(AutomationLog).get(st.session_state.automation_log_id)
+            if automation_log and automation_log.status == 'running':
+                st.info("A search is currently running...")
+
+    # UI elements - exactly like manual_search_page
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        search_terms = st_tags(
+            label='Enter search terms:',
+            text='Press enter to add more',
+            value=recent_search_terms,
+            suggestions=['software engineer', 'data scientist', 'product manager'],
+            maxtags=10,
+            key='search_terms_worker_input'
+        )
+        num_results = st.slider("Results per term", 1, 50000, 10, key="num_results_worker")
+
+    with col2:
+        enable_email_sending = st.checkbox("Enable email sending", value=True, key="enable_email_worker")
+        ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True, key="ignore_fetched_worker")
+        shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=False, key="shuffle_keywords_worker")
+        optimize_english = st.checkbox("Optimize (English)", value=False, key="optimize_english_worker")
+        optimize_spanish = st.checkbox("Optimize (Spanish)", value=False, key="optimize_spanish_worker")
+        language = st.selectbox("Select Language", options=["ES", "EN"], index=0, key="language_worker")
+
+    if enable_email_sending:
+        if not email_templates:
+            st.error("No email templates available. Please create a template first.")
+            return
+        if not email_settings:
+            st.error("No email settings available. Please add email settings first.")
+            return
+
+        col3, col4 = st.columns(2)
+        with col3:
+            email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip(), key="email_template_worker")
+        with col4:
+            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})", key="from_email_worker")
+            if email_setting_option:
+                from_email = email_setting_option['email']
+                reply_to = st.text_input("Reply To", email_setting_option['email'], key="reply_to_worker")
+            else:
+                st.error("No email setting selected. Please select an email setting.")
+                return
+
+    if st.button("Search", key="search_worker"):
+        if not search_terms:
+            return st.warning("Enter at least one search term.")
+
+        # Create containers for progress and results display - like manual_search_page
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        email_status = st.empty()
+        results = []
+        leads_container = st.empty()
+        log_container = st.empty()
+
+        with db_session() as session:
+            # Create a new AutomationLog entry
+            automation_log = AutomationLog(
+                campaign_id=get_active_campaign_id(),
+                start_time=datetime.utcnow(),
+                status='running',
+                logs=[],
+                search_terms=search_terms,
+                settings={
+                    'num_results': num_results,
+                    'enable_email_sending': enable_email_sending,
+                    'ignore_previously_fetched': ignore_previously_fetched,
+                    'shuffle_keywords_option': shuffle_keywords_option,
+                    'optimize_english': optimize_english,
+                    'optimize_spanish': optimize_spanish,
+                    'language': language,
+                    'email_template': email_template if enable_email_sending else None,
+                    'from_email': from_email if enable_email_sending else None,
+                    'reply_to': reply_to if enable_email_sending else None
+                }
+            )
+            session.add(automation_log)
+            session.commit()
+            st.session_state.automation_log_id = automation_log.id
+
+            # Start automated_search.py in a separate process
+            subprocess.Popen(["python", "automated_search.py", str(automation_log.id)])
+            st.success("Search started in the background!")
+
+    # Display automation status and logs
+    if 'automation_log_id' in st.session_state:
+        with db_session() as session:
+            automation_log = session.query(AutomationLog).get(st.session_state.automation_log_id)
+            if automation_log:
+                # Add log controls
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    log_filter = st.selectbox(
+                        "Filter logs",
+                        ["all", "error", "success", "email", "search"],
+                        key="worker_log_filter"
+                    )
+                with col2:
+                    st.checkbox("Auto-scroll", value=True, key="worker_auto_scroll")
+
+                # Update status and progress
+                if automation_log.status == 'running':
+                    st.info("Search in progress...")
+                    if automation_log.leads_gathered:
+                        progress = min(automation_log.leads_gathered / (len(search_terms) * num_results), 1.0)
+                        st.progress(progress)
+
+                # Display metrics
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Leads Found", automation_log.leads_gathered or 0)
+                col2.metric("Emails Sent", automation_log.emails_sent or 0)
+                col3.metric("Success Rate", f"{(automation_log.emails_sent/automation_log.leads_gathered*100 if automation_log.leads_gathered else 0):.1f}%")
+
+                # Update logs with improved display
+                display_logs(
+                    log_container=st.empty(),  # Use a new container for logs
+                    logs=automation_log.logs,
+                    selected_filter=st.session_state.get('worker_log_filter', 'all'),
+                    auto_scroll=st.session_state.get('worker_auto_scroll', True)
+                )
+
+                # Show results in a dataframe if available
+                if automation_log.leads_gathered:
+                    st.subheader("Search Results")
+                    results_df = pd.DataFrame(automation_log.results) if hasattr(automation_log, 'results') else pd.DataFrame()
+                    st.dataframe(results_df)
+
+                # Rerun page every few seconds if automation is running
+                if automation_log.status == 'running':
+                    time.sleep(2)
+                    st.rerun()
 
 def main():
     st.set_page_config(
@@ -2534,14 +2758,15 @@ def main():
         "⚙️ Automation Control": automation_control_panel_page,
         "📨 Email Logs": view_campaign_logs,
         "🔄 Settings": settings_page,
-        "📨 Sent Campaigns": view_sent_email_campaigns
+        "📨 Sent Campaigns": view_sent_email_campaigns,
+        "🔍 Manual Search Worker": manual_search_worker_page,
     }
 
     with st.sidebar:
         selected = option_menu(
             menu_title="Navigation",
             options=list(pages.keys()),
-            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open"],
+            icons=["search", "send", "people", "key", "envelope", "folder", "book", "robot", "gear", "list-check", "gear", "envelope-open", "gear", "list-check"],
             menu_icon="cast",
             default_index=0
         )
