@@ -2580,7 +2580,10 @@ def run_automated_search(automation_log_id):
 def manual_search_worker_page():
     st.title("Manual Search Worker")
 
-    # Initialize session state for logs if not exists
+    # Cleanup old searches on page load
+    cleanup_search_state()
+
+    # Initialize session state
     if 'worker_log_state' not in st.session_state:
         st.session_state.worker_log_state = {
             'buffer': [],
@@ -2591,107 +2594,12 @@ def manual_search_worker_page():
         }
 
     with db_session() as session:
-        # Fetch recent searches within the session
-        recent_searches = session.query(SearchTerm).order_by(SearchTerm.created_at.desc()).limit(5).all()
-        recent_search_terms = [term.term for term in recent_searches]
-        
-        email_templates = fetch_email_templates(session)
-        email_settings = fetch_email_settings(session)
-
-        # Check if there's an active automation
+        # Check for active automation
         if 'automation_log_id' in st.session_state:
             automation_log = session.query(AutomationLog).get(st.session_state.automation_log_id)
-            if automation_log and automation_log.status == 'running':
-                st.info("A search is currently running...")
-
-    # UI elements - exactly like manual_search_page
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        search_terms = st_tags(
-            label='Enter search terms:',
-            text='Press enter to add more',
-            value=recent_search_terms,
-            suggestions=['software engineer', 'data scientist', 'product manager'],
-            maxtags=10,
-            key='search_terms_worker_input'
-        )
-        num_results = st.slider("Results per term", 1, 50000, 10, key="num_results_worker")
-
-    with col2:
-        enable_email_sending = st.checkbox("Enable email sending", value=True, key="enable_email_worker")
-        ignore_previously_fetched = st.checkbox("Ignore fetched domains", value=True, key="ignore_fetched_worker")
-        shuffle_keywords_option = st.checkbox("Shuffle Keywords", value=False, key="shuffle_keywords_worker")
-        optimize_english = st.checkbox("Optimize (English)", value=False, key="optimize_english_worker")
-        optimize_spanish = st.checkbox("Optimize (Spanish)", value=False, key="optimize_spanish_worker")
-        language = st.selectbox("Select Language", options=["ES", "EN"], index=0, key="language_worker")
-
-    if enable_email_sending:
-        if not email_templates:
-            st.error("No email templates available. Please create a template first.")
-            return
-        if not email_settings:
-            st.error("No email settings available. Please add email settings first.")
-            return
-
-        col3, col4 = st.columns(2)
-        with col3:
-            email_template = st.selectbox("Email template", options=email_templates, format_func=lambda x: x.split(":")[1].strip(), key="email_template_worker")
-        with col4:
-            email_setting_option = st.selectbox("From Email", options=email_settings, format_func=lambda x: f"{x['name']} ({x['email']})", key="from_email_worker")
-            if email_setting_option:
-                from_email = email_setting_option['email']
-                reply_to = st.text_input("Reply To", email_setting_option['email'], key="reply_to_worker")
-            else:
-                st.error("No email setting selected. Please select an email setting.")
-                return
-
-    if st.button("Search", key="search_worker"):
-        if not search_terms:
-            return st.warning("Enter at least one search term.")
-
-        # Create containers for progress and results display - like manual_search_page
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        email_status = st.empty()
-        results = []
-        leads_container = st.empty()
-        log_container = st.empty()
-
-        with db_session() as session:
-            # Create a new AutomationLog entry
-            automation_log = AutomationLog(
-                campaign_id=get_active_campaign_id(),
-                start_time=datetime.utcnow(),
-                status='running',
-                logs=[],
-                search_terms=search_terms,
-                settings={
-                    'num_results': num_results,
-                    'enable_email_sending': enable_email_sending,
-                    'ignore_previously_fetched': ignore_previously_fetched,
-                    'shuffle_keywords_option': shuffle_keywords_option,
-                    'optimize_english': optimize_english,
-                    'optimize_spanish': optimize_spanish,
-                    'language': language,
-                    'email_template': email_template if enable_email_sending else None,
-                    'from_email': from_email if enable_email_sending else None,
-                    'reply_to': reply_to if enable_email_sending else None
-                }
-            )
-            session.add(automation_log)
-            session.commit()
-            st.session_state.automation_log_id = automation_log.id
-
-            # Start automated_search.py in a separate process
-            subprocess.Popen(["python", "automated_search.py", str(automation_log.id)])
-            st.success("Search started in the background!")
-
-    # Display automation status and logs
-    if 'automation_log_id' in st.session_state:
-        with db_session() as session:
-            automation_log = session.query(AutomationLog).get(st.session_state.automation_log_id)
             if automation_log:
+                display_search_controls(automation_log)
+                
                 # Add log controls
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -2703,13 +2611,6 @@ def manual_search_worker_page():
                 with col2:
                     st.checkbox("Auto-scroll", value=True, key="worker_auto_scroll")
 
-                # Update status and progress
-                if automation_log.status == 'running':
-                    st.info("Search in progress...")
-                    if automation_log.leads_gathered:
-                        progress = min(automation_log.leads_gathered / (len(search_terms) * num_results), 1.0)
-                        st.progress(progress)
-
                 # Display metrics
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Leads Found", automation_log.leads_gathered or 0)
@@ -2718,23 +2619,183 @@ def manual_search_worker_page():
 
                 # Update logs with improved display
                 display_logs(
-                    log_container=st.empty(),  # Use a new container for logs
+                    log_container=st.empty(),
                     logs=automation_log.logs,
                     selected_filter=st.session_state.get('worker_log_filter', 'all'),
                     auto_scroll=st.session_state.get('worker_auto_scroll', True)
                 )
 
-                # Show results in a dataframe if available
-                if automation_log.leads_gathered:
-                    st.subheader("Search Results")
-                    results_df = pd.DataFrame(automation_log.results) if hasattr(automation_log, 'results') else pd.DataFrame()
-                    st.dataframe(results_df)
+def display_search_controls(automation_log):
+    """Display search controls and status in a clear way"""
+    
+    # Create a status container at the top
+    status_container = st.empty()
+    
+    # Show different controls based on status
+    if automation_log.status == 'running':
+        status_container.warning("🔄 Search Active - Processing URLs...")
+        if st.button("⏸️ Pause Search", type="secondary"):
+            automation_log.status = 'paused'
+            automation_log.logs.append({
+                'timestamp': datetime.utcnow().isoformat(),
+                'level': 'info',
+                'message': 'Search paused by user'
+            })
+            st.session_state.update_needed = True
+            
+    elif automation_log.status == 'paused':
+        status_container.info("⏸️ Search Paused")
+        if st.button("▶️ Resume Search", type="primary"):
+            automation_log.status = 'running'
+            automation_log.logs.append({
+                'timestamp': datetime.utcnow().isoformat(),
+                'level': 'info',
+                'message': 'Search resumed by user'
+            })
+            st.session_state.update_needed = True
+            
+    elif automation_log.status == 'completed':
+        status_container.success("✅ Search Completed")
+        if st.button("🔄 New Search", type="primary"):
+            # Clear session state
+            for key in ['automation_log_id', 'worker_log_state']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+            
+    # Add clear/reset button
+    if st.button("🗑️ Clear Search", type="secondary"):
+        cleanup_search_state()
+        st.rerun()
 
-                # Rerun page every few seconds if automation is running
-                if automation_log.status == 'running':
-                    time.sleep(2)
-                    st.rerun()
+def cleanup_search_state():
+    """Clean up old automation logs and reset state"""
+    with db_session() as session:
+        # Clean up old logs (older than 24 hours)
+        old_logs = session.query(AutomationLog).filter(
+            AutomationLog.start_time < datetime.utcnow() - timedelta(hours=24)
+        ).all()
+        
+        for log in old_logs:
+            log.status = 'expired'
+            log.logs = log.logs[-100:]  # Keep only last 100 log entries
+        
+        # Mark hanging processes as error
+        hanging_logs = session.query(AutomationLog).filter(
+            AutomationLog.status == 'running',
+            AutomationLog.start_time < datetime.utcnow() - timedelta(minutes=30)
+        ).all()
+        
+        for log in hanging_logs:
+            log.status = 'error'
+            log.logs.append({
+                'timestamp': datetime.utcnow().isoformat(),
+                'level': 'error',
+                'message': 'Search process hung and was terminated'
+            })
+        
+        session.commit()
 
+    # Clear session state
+    if 'automation_log_id' in st.session_state:
+        del st.session_state.automation_log_id
+    if 'worker_log_state' in st.session_state:
+        del st.session_state.worker_log_state
+
+def display_logs(log_container, logs, selected_filter='all', auto_scroll=True):
+    """Display logs with styling and filtering"""
+    if not logs:
+        log_container.info("No logs to display yet.")
+        return
+
+    # Initialize log state if not exists
+    if 'log_state' not in st.session_state:
+        st.session_state.log_state = {
+            'buffer': [],
+            'last_count': 0,
+            'last_update': time.time(),
+            'update_counter': 0
+        }
+
+    # Get current state
+    current_count = len(logs)
+    current_time = time.time()
+
+    # Only update if conditions are met
+    should_update = (
+        current_count - st.session_state.log_state['last_count'] >= 5 or
+        current_time - st.session_state.log_state['last_update'] > 2 or
+        st.session_state.log_state['update_counter'] < 5
+    )
+
+    if should_update:
+        # Get new logs
+        new_logs = logs[st.session_state.log_state['last_count']:]
+        if new_logs:
+            # Update buffer with new logs
+            st.session_state.log_state['buffer'].extend(new_logs)
+            st.session_state.log_state['last_count'] = current_count
+            
+            # Keep buffer size in check
+            MAX_LOGS = 100
+            if len(st.session_state.log_state['buffer']) > MAX_LOGS:
+                st.session_state.log_state['buffer'] = st.session_state.log_state['buffer'][-MAX_LOGS:]
+
+            # Format logs with icons and classes
+            formatted_logs = []
+            for log in st.session_state.log_state['buffer']:
+                # Skip if filtered
+                if selected_filter != 'all':
+                    if selected_filter == 'error' and 'error' not in log.lower():
+                        continue
+                    if selected_filter == 'success' and 'success' not in log.lower():
+                        continue
+                    if selected_filter == 'email' and 'email' not in log.lower():
+                        continue
+                    if selected_filter == 'search' and 'search' not in log.lower():
+                        continue
+
+                log_class = 'log-entry'
+                if 'error' in log.lower():
+                    icon, log_class = '🔴', 'log-entry log-error'
+                elif 'success' in log.lower() or 'completed' in log.lower():
+                    icon, log_class = '🟢', 'log-entry log-success'
+                elif 'warning' in log.lower():
+                    icon, log_class = '🟡', 'log-entry log-warning'
+                elif 'email' in log.lower():
+                    icon, log_class = '📧', 'log-entry log-email'
+                elif 'search' in log.lower():
+                    icon, log_class = '🔍', 'log-entry log-search'
+                else:
+                    icon = '🔵'
+                
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                formatted_logs.append(
+                    f"""
+                    <div class="{log_class}">
+                        <span class="log-icon">{icon}</span>
+                        <span class="log-timestamp">[{timestamp}]</span>
+                        <span class="log-message">{log}</span>
+                        <button class="copy-button" onclick="navigator.clipboard.writeText('{timestamp} {log}')">
+                            Copy
+                        </button>
+                    </div>
+                    """
+                )
+
+            # Add CSS styles
+            log_container.markdown(
+                """
+                <style>
+                .log-container {
+                    height: 400px;
+                    overflow-y: auto;
+                    border: 1px solid rgba(49, 51, 63, 0.2);
+                    border-radius: 0.25rem;
+                    padding: 1rem;
+                    background-color: rgba(49, 51, 63, 0.1);
+                    font-family: monospace;
+                    font-size: 0.9em;
 def main():
     st.set_page_config(
         page_title="Autoclient.ai | Lead Generation AI App",
