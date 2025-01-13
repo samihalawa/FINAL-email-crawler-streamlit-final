@@ -1,312 +1,198 @@
-import os
-import sys
-import json
-import logging
-import asyncio
-import pandas as pd
+import logging, uuid, json, argparse, os, signal
 from datetime import datetime
-from bs4 import BeautifulSoup
-import aiohttp
-import re
-from fake_useragent import UserAgent
-from urllib.parse import urlparse, quote
-import random
-import time
+from streamlit_app import db_session, manual_search, get_active_campaign_id, get_active_project_id, EmailTemplate, EmailSettings, AutomationLog, SearchTerm
+from typing import Optional, Dict
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def generate_search_urls(term, num_results=10):
-    """Generate URLs based on common patterns without using search engines"""
-    term_encoded = quote(term)
-    base_urls = [
-        f"https://www.infojobs.net/jobsearch/search-results/list.xhtml?keyword={term_encoded}",
-        f"https://www.tecnoempleo.com/busqueda-empleo.php?te={term_encoded}",
-        f"https://www.talent.com/jobs?k={term_encoded}&l=Spain",
-        f"https://es.trabajo.org/empleo-{term_encoded}",
-        f"https://www.welcometothejungle.com/es/jobs?query={term_encoded}",
-        f"https://www.jobfluent.com/jobs-{term_encoded}"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
     ]
-    
-    return base_urls[:num_results]
+)
 
-async def fetch_url(session, url, ua):
+def save_pid():
+    """Save current process ID to file"""
+    pid = os.getpid()
+    logging.info(f"Saving PID: {pid}")
+    print(f"Saving PID: {pid}")
+    
+    with open('.search_pid', 'w') as f:
+        f.write(str(os.getpid()))
+
+def cleanup_pid():
+    """Clean up PID file"""
     try:
-        headers = {
-            'User-Agent': ua.random,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
+        os.remove('.search_pid')
+    except:
+        logging.error("Error removing .search_pid file")
+
+def signal_handler(signum, frame):
+    """Handle termination signals"""
+    logging.info(f"Signal {signum} received. Cleaning up...")
+    print(f"Signal {signum} received. Cleaning up...")
+    
+    cleanup_pid()
+    
+    exit(0)
+
+class LogContainer:
+    def __init__(self, session, automation_log_id):
+        self.session = session
+        self.automation_log_id = automation_log_id
+
+    def markdown(self, text, unsafe_allow_html=False):
+        print(text.replace('<br>', '\n'))
+        
+        logging.info(text.replace('<br>', '\n'))
+        # Log to database
+        log_entry = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'level': 'info',
+            'message': text
         }
-        
-        async with session.get(url, headers=headers, ssl=False, timeout=30) as response:
-            if response.status != 200:
-                logging.warning(f"Failed to fetch {url} - Status: {response.status}")
-                return None
-            content = await response.text()
-            logging.info(f"Successfully fetched {url} - Content length: {len(content)}")
-            return content
-    except Exception as e:
-        logging.error(f"Error fetching {url}: {str(e)}")
-        return None
-
-def extract_emails(html_content):
-    if not html_content:
-        return []
-    # More comprehensive email pattern
-    email_pattern = r'[a-zA-Z0-9._%+-]+@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}'
-    emails = re.findall(email_pattern, html_content, re.IGNORECASE)
-    # Additional cleaning
-    cleaned_emails = []
-    for email in emails:
-        email = email.lower().strip()
-        if email.endswith('.'):
-            email = email[:-1]
-        cleaned_emails.append(email)
-    return list(set(cleaned_emails))
-
-def is_valid_email(email):
-    if not email or '@' not in email:
-        return False
-    
-    # Quick pattern match before more expensive checks
-    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-        return False
-        
-    # Common exclusions using fast string operations
-    invalid_patterns = ['.png@', '.jpg@', '.jpeg@', '.gif@', '.css@', '.js@',
-                       '@example.com', '@test.com', '@sample.com',
-                       'noreply@', 'no-reply@', 'donotreply@']
-    
-    email_lower = email.lower()
-    return not any(pattern in email_lower for pattern in invalid_patterns)
-
-def extract_company_info(soup, url):
-    if not soup:
-        return {}
-    
-    info = {
-        'title': '',
-        'description': '',
-        'company': '',
-        'phones': []
-    }
-    
-    # Extract title
-    if soup.title:
-        info['title'] = soup.title.string.strip() if soup.title.string else ''
-    
-    # Extract meta description
-    meta_desc = soup.find('meta', {'name': ['description', 'Description']})
-    if meta_desc and 'content' in meta_desc.attrs:
-        info['description'] = meta_desc['content'].strip()
-    
-    # Try multiple methods to get company name
-    company_selectors = [
-        {'property': 'og:site_name'},
-        {'name': 'author'},
-        {'class': 'company-name'},
-        {'class': 'employer'},
-        {'class': 'organization'}
-    ]
-    
-    for selector in company_selectors:
-        element = soup.find(attrs=selector)
-        if element:
-            if 'content' in element.attrs:
-                info['company'] = element['content'].strip()
+        automation_log = self.session.query(AutomationLog).get(self.automation_log_id)
+        if automation_log:
+            if automation_log.logs:
+                automation_log.logs.append(log_entry)
             else:
-                info['company'] = element.text.strip()
-            break
-    
-    if not info['company']:
-        domain = urlparse(url).netloc.split('.')[-2]
-        info['company'] = domain.capitalize()
-    
-    # Extract phone numbers - Spanish format included
-    phone_pattern = r'\b(?:\+?34[-.]?)?\s*(?:\d{3}[-.]?\s*\d{3}[-.]?\s*\d{3}|\d{9})\b'
-    text_content = ' '.join([text for text in soup.stripped_strings])
-    info['phones'] = list(set(re.findall(phone_pattern, text_content)))
-    
-    return info
+                automation_log.logs = [log_entry]
+            self.session.commit()
 
-def parse_infojobs(soup, url):
-    """Extract job listings from InfoJobs search results"""
-    jobs = []
-    try:
-        # Find all job listing containers - updated selectors
-        job_items = soup.find_all('li', class_='ij-List-item')
-        
-        for item in job_items:
-            job = {}
-            
-            # Get job title and URL
-            title_elem = item.find('a', class_='ij-OfferCard-titleLink')
-            if title_elem:
-                job['title'] = title_elem.text.strip()
-                job['url'] = 'https://www.infojobs.net' + title_elem.get('href', '')
-            
-            # Get company name
-            company_elem = item.find('a', class_='ij-OfferCard-companyLogo')
-            if company_elem:
-                job['company'] = company_elem.get('title', '').strip()
-            
-            # Get location
-            location_elem = item.find('span', class_='ij-OfferCard-location')
-            if location_elem:
-                job['location'] = location_elem.text.strip()
-            
-            # Get salary if available
-            salary_elem = item.find('span', class_='ij-OfferCard-salaryPeriod')
-            if salary_elem:
-                job['salary'] = salary_elem.text.strip()
-            
-            # Get contract type
-            contract_elem = item.find('span', class_='ij-OfferCard-contractType')
-            if contract_elem:
-                job['contract_type'] = contract_elem.text.strip()
-            
-            # Get experience
-            exp_elem = item.find('span', class_='ij-OfferCard-experienceMin')
-            if exp_elem:
-                job['experience'] = exp_elem.text.strip()
-            
-            if job.get('title'):  # Only add if we at least got a title
-                jobs.append(job)
-                logging.info(f"Found job: {job['title']} at {job.get('company', 'Unknown Company')}")
-                
-        return jobs
-    except Exception as e:
-        logging.error(f"Error parsing InfoJobs page: {str(e)}")
-        return []
+class SearchState:
+    def __init__(self, automation_log_id: int):
+        self.automation_log_id = automation_log_id
+        self.current_term_index: int = 0
+        self.current_url_index: Dict[str, int] = {}  # term -> last processed URL index
+        self.processed_urls: set = set()
 
-async def process_search_results(search_terms, max_results=10):
-    ua = UserAgent()
-    results = []
-    jobs = []  # New list to store job listings
-    domains_processed = set()
-    
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-        for term in search_terms:
-            logging.info(f"Processing search term: {term}")
-            try:
-                urls = generate_search_urls(term, max_results)
-                
-                if not urls:
-                    continue
-                
-                # Process all URLs at once
-                tasks = []
-                for url in urls:
-                    domain = urlparse(url).netloc
-                    if domain not in domains_processed:
-                        domains_processed.add(domain)
-                        tasks.append(fetch_url(session, url, ua))
-                
-                if tasks:
-                    responses = await asyncio.gather(*tasks, return_exceptions=True)
-                    
-                    for url, response in zip(urls, responses):
-                        if isinstance(response, Exception) or not response:
-                            continue
-                            
-                        soup = BeautifulSoup(response, 'html.parser')
-                        
-                        # Special handling for InfoJobs
-                        if 'infojobs.net' in url:
-                            job_listings = parse_infojobs(soup, url)
-                            for job in job_listings:
-                                job['search_term'] = term
-                                jobs.append(job)
-                            continue
-                            
-                        # Regular email extraction for other sites
-                        emails = extract_emails(response)
-                        valid_emails = [email for email in emails if is_valid_email(email)]
-                        
-                        if valid_emails:
-                            info = extract_company_info(soup, url)
-                            for email in valid_emails:
-                                result = {
-                                    'search_term': term,
-                                    'url': url,
-                                    'email': email,
-                                    'company': info.get('company', ''),
-                                    'title': info.get('title', ''),
-                                    'description': info.get('description', ''),
-                                    'phones': info.get('phones', [])
-                                }
-                                results.append(result)
-                                logging.info(f"Found valid email: {email} from {url}")
-                
-                # Add a small delay between search terms to avoid overwhelming servers
-                await asyncio.sleep(1)
-            
-            except Exception as e:
-                logging.error(f"Error processing term '{term}': {str(e)}")
-                continue
-    
-    # Save job listings to a separate file
-    if jobs:
-        df_jobs = pd.DataFrame(jobs)
-        df_jobs.to_csv('job_listings.csv', index=False)
-        logging.info(f"Saved {len(jobs)} job listings to job_listings.csv")
-    
-    return results
+    @classmethod
+    def load_from_db(cls, session, automation_log_id: int) -> 'SearchState':
+        automation_log = session.query(AutomationLog).get(automation_log_id)
+        state = cls(automation_log_id)
+        if automation_log.logs:
+            # Look for the most recent search_settings entry
+            for log in reversed(automation_log.logs):
+                if isinstance(log, dict) and 'search_settings' in log:
+                    saved_state = log['search_settings']
+                    state.current_term_index = saved_state.get('term_index', 0)
+                    state.current_url_index = saved_state.get('url_index', {})
+                    state.processed_urls = set(saved_state.get('processed_urls', []))
+                    break
+        return state
 
-def save_results(results, filename='search_results.csv'):
-    df = pd.DataFrame(results)
-    df.to_csv(filename, index=False)
-    logging.info(f"Results saved to {filename}")
-    return df
+    def save_to_db(self, session):
+        automation_log = session.query(AutomationLog).get(self.automation_log_id)
+        if not automation_log.logs:
+            automation_log.logs = []
+        automation_log.logs.append({
+            'timestamp': datetime.utcnow().isoformat(),
+            'level': 'info',
+            'message': 'Search state updated',
+            'search_settings': {
+                'term_index': self.current_term_index,
+                'url_index': self.current_url_index,
+                'processed_urls': list(self.processed_urls)
+            }
+        })
+        session.commit()
 
 def main():
-    # Test search terms
-    search_terms = [
-        "software engineer spain",
-        "data scientist barcelona",
-        "tech startup madrid",
-        "CTO spain startup",
-        "developer spain remote"
-    ]
-    
-    # Run the search
-    logging.info("Starting automated search test...")
-    results = asyncio.run(process_search_results(search_terms, max_results=6))
-    
-    # Save and analyze results
-    if results:
-        df = save_results(results)
-        
-        print("\nSearch Results Summary:")
-        print(f"Total results found: {len(results)}")
-        
-        print("\nResults by search term:")
-        term_counts = df['search_term'].value_counts()
-        print(term_counts)
-        
-        print("\nTop domains found:")
-        domains = df['url'].apply(lambda x: urlparse(x).netloc)
-        print(domains.value_counts().head())
-        
-        # Try to load and display job listings
-        try:
-            df_jobs = pd.read_csv('job_listings.csv')
-            print("\nJob Listings Summary:")
-            print(f"Total jobs found: {len(df_jobs)}")
-            print("\nSample Jobs:")
-            for _, job in df_jobs.head().iterrows():
-                print(f"\nTitle: {job['title']}")
-                print(f"Company: {job['company']}")
-                print(f"Location: {job.get('location', 'N/A')}")
-                print(f"URL: {job.get('url', 'N/A')}")
-                print("-" * 50)
-        except Exception as e:
-            print("No job listings file found")
-        
-    else:
-        print("No results found.")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("automation_log_id", type=int)
+    parser.add_argument("--resume", action="store_true")
+    args = parser.parse_args()
+
+    # Set up signal handlers
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Save PID
+    save_pid()
+
+    try:
+        with db_session() as session:
+            automation_log = session.query(AutomationLog).get(args.automation_log_id)
+            if automation_log is None:
+                logging.error("Automation log is None")
+                return
+            
+            if not automation_log:
+                logging.error(f"No automation log found with ID {args.automation_log_id}")
+                return
+
+            search_state = SearchState.load_from_db(session, args.automation_log_id)
+            log_container = LogContainer(session, args.automation_log_id)
+            
+            try:
+                # Get search settings from logs
+                search_settings = {}
+                if automation_log.logs:
+                    for log in reversed(automation_log.logs):
+                        if isinstance(log, dict) and 'search_settings' in log:
+                            search_settings = log['search_settings']
+                            break
+                
+                search_terms = search_settings.get('search_terms', [])
+                if not search_terms:
+                    logging.warning("No search terms found in search settings.")
+                    return
+                
+                for i, term in enumerate(search_terms[search_state.current_term_index:], search_state.current_term_index):
+                    if automation_log.status != 'running':
+                        logging.info("Search paused or stopped")
+                        break
+
+                    search_state.current_term_index = i
+                    log_container.markdown(f"Processing search term: {term}")
+                    
+                    # Perform the actual search
+                    results = manual_search(
+                        session=session,
+                        terms=[term],
+                        num_results=search_settings.get('num_results', 10),
+                        ignore_previously_fetched=search_settings.get('ignore_previously_fetched', True),
+                        optimize_english=search_settings.get('optimize_english', False),
+                        optimize_spanish=search_settings.get('optimize_spanish', False),
+                        shuffle_keywords_option=search_settings.get('shuffle_keywords_option', False),
+                        language=search_settings.get('language', 'ES'),
+                        enable_email_sending=search_settings.get('enable_email_sending', False),
+                        log_container=log_container,
+                        from_email=search_settings.get('from_email'),
+                        reply_to=search_settings.get('reply_to'),
+                        email_template=search_settings.get('email_template')
+                    )
+                    
+                    # Update metrics
+                    if results and 'results' in results:
+                        automation_log.leads_gathered = (automation_log.leads_gathered or 0) + len(results['results'])
+                        session.commit()
+                    
+                    # Save state after each term
+                    search_state.save_to_db(session)
+
+                if automation_log.status == 'running':
+                    automation_log.status = 'completed'
+                    automation_log.end_time = datetime.utcnow()
+                    automation_log.logs.append({
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'level': 'success',
+                        'message': 'Search completed successfully'
+                    })
+                    session.commit()
+
+            except Exception as e:
+                logging.error(f"Error in search process: {str(e)}")
+                automation_log.status = 'error'
+                automation_log.logs.append({
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'level': 'error',
+                    'message': f"Error: {str(e)}"
+                })
+                session.commit()
+    finally:
+        cleanup_pid()
 
 if __name__ == "__main__":
     main() 
