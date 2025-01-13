@@ -3,10 +3,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 # Replace the google search import with a more reliable version
-try:
 from googlesearch import search as google_search
-except ImportError:
-    from googlesearch.googlesearch import search as google_search
 from fake_useragent import UserAgent
 from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
@@ -537,6 +534,8 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                     update_log(log_container, f"Found {len(emails)} email(s) on {url}", 'success')
                     for email in filter(is_valid_email, emails):
                         if domain not in domains_processed:
+                            try:
+                                name, company, job_title = extract_info_from_page(soup)
                             name, company, job_title = extract_info_from_page(soup)
                             lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
                             if lead:
@@ -2331,10 +2330,7 @@ def manual_search_worker_page():
     
     # Periodic cleanup of dead processes (every 30 seconds)
     if time.time() - st.session_state.last_cleanup > 30:
-        for automation_log_id in list(st.session_state.active_searches.keys()):
-            process_info = st.session_state.active_searches[automation_log_id]
-            if not is_process_running(process_info.get('pid')):
-                del st.session_state.active_searches[automation_log_id]
+        cleanup_dead_processes()  # Move cleanup logic to a separate function
         st.session_state.last_cleanup = time.time()
     
     # Create persistent placeholders
@@ -2390,7 +2386,7 @@ def manual_search_worker_page():
                         emails_sent=0
                     )
                     session.add(automation_log)
-        session.commit()
+                    session.commit()
 
                     # Start the worker process
                     process = subprocess.Popen([
@@ -2409,7 +2405,7 @@ def manual_search_worker_page():
                     st.error(f"Failed to start search: {e}")
                     if 'automation_log' in locals():
                         session.delete(automation_log)
-                session.commit()
+                        session.commit()
 
         # Display active searches
         if st.session_state.active_searches:
@@ -2445,7 +2441,7 @@ def manual_search_worker_page():
                             search_info['last_check'] = time.time()
                             if status['status'] in ['completed', 'error', 'stopped']:
                                 search_info['active'] = False
-                    st.rerun()
+                            st.rerun()
 
     # Cleanup function
     def cleanup():
@@ -2459,6 +2455,23 @@ def manual_search_worker_page():
 
     # Register cleanup
     st.on_change(cleanup)
+
+def cleanup_dead_processes():
+    """Clean up any dead search processes"""
+    for automation_log_id in list(st.session_state.active_searches.keys()):
+        process_info = st.session_state.active_searches[automation_log_id]
+        try:
+            if not is_process_running(process_info.get('pid')):
+                with db_session() as session:
+                    log = session.query(AutomationLog).get(automation_log_id)
+                    if log and log.status not in ['completed', 'error', 'stopped']:
+                        log.status = 'stopped'
+                        log.end_time = datetime.utcnow()
+                        session.commit()
+                del st.session_state.active_searches[automation_log_id]
+        except Exception as e:
+            logging.error(f"Error cleaning up process {automation_log_id}: {e}")
+            del st.session_state.active_searches[automation_log_id]
 
 # Utility Functions
 def safe_google_search(query, num_results=10, lang='es'):
@@ -2487,7 +2500,7 @@ def get_automation_status(automation_log_id):
                 'emails_sent': log.emails_sent or 0,
                 'latest_logs': log.logs[-10:] if log.logs else []
             }
-                except Exception as e:
+    except Exception as e:
         logging.error(f"Error getting automation status: {e}")
         return {'status': 'error', 'leads_gathered': 0, 'emails_sent': 0, 'latest_logs': []}
 
