@@ -3,7 +3,10 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 # Replace the google search import with a more reliable version
-from googlesearch import search as google_search
+try:
+    from googlesearch import search as google_search
+except ImportError:
+    from googlesearch.googlesearch import search as google_search
 from fake_useragent import UserAgent
 from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session, joinedload
