@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 # Replace the google search import with a more reliable version
 try:
-    from googlesearch import search as google_search
+from googlesearch import search as google_search
 except ImportError:
     from googlesearch.googlesearch import search as google_search
 from fake_useragent import UserAgent
@@ -2390,7 +2390,7 @@ def manual_search_worker_page():
                         emails_sent=0
                     )
                     session.add(automation_log)
-                    session.commit()
+        session.commit()
 
                     # Start the worker process
                     process = subprocess.Popen([
@@ -2409,7 +2409,7 @@ def manual_search_worker_page():
                     st.error(f"Failed to start search: {e}")
                     if 'automation_log' in locals():
                         session.delete(automation_log)
-                        session.commit()
+                session.commit()
 
         # Display active searches
         if st.session_state.active_searches:
@@ -2445,7 +2445,7 @@ def manual_search_worker_page():
                             search_info['last_check'] = time.time()
                             if status['status'] in ['completed', 'error', 'stopped']:
                                 search_info['active'] = False
-                            st.rerun()
+                    st.rerun()
 
     # Cleanup function
     def cleanup():
@@ -2487,7 +2487,7 @@ def get_automation_status(automation_log_id):
                 'emails_sent': log.emails_sent or 0,
                 'latest_logs': log.logs[-10:] if log.logs else []
             }
-    except Exception as e:
+                except Exception as e:
         logging.error(f"Error getting automation status: {e}")
         return {'status': 'error', 'leads_gathered': 0, 'emails_sent': 0, 'latest_logs': []}
 

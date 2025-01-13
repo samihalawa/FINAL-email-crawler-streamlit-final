@@ -1,0 +1,477 @@
+                                View "extensions.pg_stat_statements"
+         Column         |       Type       | Collation | Nullable | Default | Storage  | Description 
+------------------------+------------------+-----------+----------+---------+----------+-------------
+ userid                 | oid              |           |          |         | plain    | 
+ dbid                   | oid              |           |          |         | plain    | 
+ toplevel               | boolean          |           |          |         | plain    | 
+ queryid                | bigint           |           |          |         | plain    | 
+ query                  | text             |           |          |         | extended | 
+ plans                  | bigint           |           |          |         | plain    | 
+ total_plan_time        | double precision |           |          |         | plain    | 
+ min_plan_time          | double precision |           |          |         | plain    | 
+ max_plan_time          | double precision |           |          |         | plain    | 
+ mean_plan_time         | double precision |           |          |         | plain    | 
+ stddev_plan_time       | double precision |           |          |         | plain    | 
+ calls                  | bigint           |           |          |         | plain    | 
+ total_exec_time        | double precision |           |          |         | plain    | 
+ min_exec_time          | double precision |           |          |         | plain    | 
+ max_exec_time          | double precision |           |          |         | plain    | 
+ mean_exec_time         | double precision |           |          |         | plain    | 
+ stddev_exec_time       | double precision |           |          |         | plain    | 
+ rows                   | bigint           |           |          |         | plain    | 
+ shared_blks_hit        | bigint           |           |          |         | plain    | 
+ shared_blks_read       | bigint           |           |          |         | plain    | 
+ shared_blks_dirtied    | bigint           |           |          |         | plain    | 
+ shared_blks_written    | bigint           |           |          |         | plain    | 
+ local_blks_hit         | bigint           |           |          |         | plain    | 
+ local_blks_read        | bigint           |           |          |         | plain    | 
+ local_blks_dirtied     | bigint           |           |          |         | plain    | 
+ local_blks_written     | bigint           |           |          |         | plain    | 
+ temp_blks_read         | bigint           |           |          |         | plain    | 
+ temp_blks_written      | bigint           |           |          |         | plain    | 
+ blk_read_time          | double precision |           |          |         | plain    | 
+ blk_write_time         | double precision |           |          |         | plain    | 
+ temp_blk_read_time     | double precision |           |          |         | plain    | 
+ temp_blk_write_time    | double precision |           |          |         | plain    | 
+ wal_records            | bigint           |           |          |         | plain    | 
+ wal_fpi                | bigint           |           |          |         | plain    | 
+ wal_bytes              | numeric          |           |          |         | main     | 
+ jit_functions          | bigint           |           |          |         | plain    | 
+ jit_generation_time    | double precision |           |          |         | plain    | 
+ jit_inlining_count     | bigint           |           |          |         | plain    | 
+ jit_inlining_time      | double precision |           |          |         | plain    | 
+ jit_optimization_count | bigint           |           |          |         | plain    | 
+ jit_optimization_time  | double precision |           |          |         | plain    | 
+ jit_emission_count     | bigint           |           |          |         | plain    | 
+ jit_emission_time      | double precision |           |          |         | plain    | 
+View definition:
+ SELECT pg_stat_statements.userid,
+    pg_stat_statements.dbid,
+    pg_stat_statements.toplevel,
+    pg_stat_statements.queryid,
+    pg_stat_statements.query,
+    pg_stat_statements.plans,
+    pg_stat_statements.total_plan_time,
+    pg_stat_statements.min_plan_time,
+    pg_stat_statements.max_plan_time,
+    pg_stat_statements.mean_plan_time,
+    pg_stat_statements.stddev_plan_time,
+    pg_stat_statements.calls,
+    pg_stat_statements.total_exec_time,
+    pg_stat_statements.min_exec_time,
+    pg_stat_statements.max_exec_time,
+    pg_stat_statements.mean_exec_time,
+    pg_stat_statements.stddev_exec_time,
+    pg_stat_statements.rows,
+    pg_stat_statements.shared_blks_hit,
+    pg_stat_statements.shared_blks_read,
+    pg_stat_statements.shared_blks_dirtied,
+    pg_stat_statements.shared_blks_written,
+    pg_stat_statements.local_blks_hit,
+    pg_stat_statements.local_blks_read,
+    pg_stat_statements.local_blks_dirtied,
+    pg_stat_statements.local_blks_written,
+    pg_stat_statements.temp_blks_read,
+    pg_stat_statements.temp_blks_written,
+    pg_stat_statements.blk_read_time,
+    pg_stat_statements.blk_write_time,
+    pg_stat_statements.temp_blk_read_time,
+    pg_stat_statements.temp_blk_write_time,
+    pg_stat_statements.wal_records,
+    pg_stat_statements.wal_fpi,
+    pg_stat_statements.wal_bytes,
+    pg_stat_statements.jit_functions,
+    pg_stat_statements.jit_generation_time,
+    pg_stat_statements.jit_inlining_count,
+    pg_stat_statements.jit_inlining_time,
+    pg_stat_statements.jit_optimization_count,
+    pg_stat_statements.jit_optimization_time,
+    pg_stat_statements.jit_emission_count,
+    pg_stat_statements.jit_emission_time
+   FROM pg_stat_statements(true) pg_stat_statements(userid, dbid, toplevel, queryid, query, plans, total_plan_time, min_plan_time, max_plan_time, mean_plan_time, stddev_plan_time, calls, total_exec_time, min_exec_time, max_exec_time, mean_exec_time, stddev_exec_time, rows, shared_blks_hit, shared_blks_read, shared_blks_dirtied, shared_blks_written, local_blks_hit, local_blks_read, local_blks_dirtied, local_blks_written, temp_blks_read, temp_blks_written, blk_read_time, blk_write_time, temp_blk_read_time, temp_blk_write_time, wal_records, wal_fpi, wal_bytes, jit_functions, jit_generation_time, jit_inlining_count, jit_inlining_time, jit_optimization_count, jit_optimization_time, jit_emission_count, jit_emission_time);
+
+                            View "extensions.pg_stat_statements_info"
+   Column    |           Type           | Collation | Nullable | Default | Storage | Description 
+-------------+--------------------------+-----------+----------+---------+---------+-------------
+ dealloc     | bigint                   |           |          |         | plain   | 
+ stats_reset | timestamp with time zone |           |          |         | plain   | 
+View definition:
+ SELECT pg_stat_statements_info.dealloc,
+    pg_stat_statements_info.stats_reset
+   FROM pg_stat_statements_info() pg_stat_statements_info(dealloc, stats_reset);
+
+                                          Table "pg_catalog.pg_aggregate"
+      Column      |   Type   | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+------------------+----------+-----------+----------+---------+----------+-------------+--------------+-------------
+ aggfnoid         | regproc  |           | not null |         | plain    |             |              | 
+ aggkind          | "char"   |           | not null |         | plain    |             |              | 
+ aggnumdirectargs | smallint |           | not null |         | plain    |             |              | 
+ aggtransfn       | regproc  |           | not null |         | plain    |             |              | 
+ aggfinalfn       | regproc  |           | not null |         | plain    |             |              | 
+ aggcombinefn     | regproc  |           | not null |         | plain    |             |              | 
+ aggserialfn      | regproc  |           | not null |         | plain    |             |              | 
+ aggdeserialfn    | regproc  |           | not null |         | plain    |             |              | 
+ aggmtransfn      | regproc  |           | not null |         | plain    |             |              | 
+ aggminvtransfn   | regproc  |           | not null |         | plain    |             |              | 
+ aggmfinalfn      | regproc  |           | not null |         | plain    |             |              | 
+ aggfinalextra    | boolean  |           | not null |         | plain    |             |              | 
+ aggmfinalextra   | boolean  |           | not null |         | plain    |             |              | 
+ aggfinalmodify   | "char"   |           | not null |         | plain    |             |              | 
+ aggmfinalmodify  | "char"   |           | not null |         | plain    |             |              | 
+ aggsortop        | oid      |           | not null |         | plain    |             |              | 
+ aggtranstype     | oid      |           | not null |         | plain    |             |              | 
+ aggtransspace    | integer  |           | not null |         | plain    |             |              | 
+ aggmtranstype    | oid      |           | not null |         | plain    |             |              | 
+ aggmtransspace   | integer  |           | not null |         | plain    |             |              | 
+ agginitval       | text     | C         |          |         | extended |             |              | 
+ aggminitval      | text     | C         |          |         | extended |             |              | 
+Indexes:
+    "pg_aggregate_fnoid_index" PRIMARY KEY, btree (aggfnoid)
+Access method: heap
+
+           Index "pg_catalog.pg_aggregate_fnoid_index"
+  Column  |  Type   | Key? | Definition | Storage | Stats target 
+----------+---------+------+------------+---------+--------------
+ aggfnoid | regproc | yes  | aggfnoid   | plain   | 
+primary key, btree, for table "pg_catalog.pg_aggregate"
+
+                                         Table "pg_catalog.pg_am"
+  Column   |  Type   | Collation | Nullable | Default | Storage | Compression | Stats target | Description 
+-----------+---------+-----------+----------+---------+---------+-------------+--------------+-------------
+ oid       | oid     |           | not null |         | plain   |             |              | 
+ amname    | name    |           | not null |         | plain   |             |              | 
+ amhandler | regproc |           | not null |         | plain   |             |              | 
+ amtype    | "char"  |           | not null |         | plain   |             |              | 
+Indexes:
+    "pg_am_oid_index" PRIMARY KEY, btree (oid)
+    "pg_am_name_index" UNIQUE CONSTRAINT, btree (amname)
+Access method: heap
+
+              Index "pg_catalog.pg_am_name_index"
+ Column |  Type   | Key? | Definition | Storage | Stats target 
+--------+---------+------+------------+---------+--------------
+ amname | cstring | yes  | amname     | plain   | 
+unique, btree, for table "pg_catalog.pg_am"
+
+             Index "pg_catalog.pg_am_oid_index"
+ Column | Type | Key? | Definition | Storage | Stats target 
+--------+------+------+------------+---------+--------------
+ oid    | oid  | yes  | oid        | plain   | 
+primary key, btree, for table "pg_catalog.pg_am"
+
+                                           Table "pg_catalog.pg_amop"
+     Column     |   Type   | Collation | Nullable | Default | Storage | Compression | Stats target | Description 
+----------------+----------+-----------+----------+---------+---------+-------------+--------------+-------------
+ oid            | oid      |           | not null |         | plain   |             |              | 
+ amopfamily     | oid      |           | not null |         | plain   |             |              | 
+ amoplefttype   | oid      |           | not null |         | plain   |             |              | 
+ amoprighttype  | oid      |           | not null |         | plain   |             |              | 
+ amopstrategy   | smallint |           | not null |         | plain   |             |              | 
+ amoppurpose    | "char"   |           | not null |         | plain   |             |              | 
+ amopopr        | oid      |           | not null |         | plain   |             |              | 
+ amopmethod     | oid      |           | not null |         | plain   |             |              | 
+ amopsortfamily | oid      |           | not null |         | plain   |             |              | 
+Indexes:
+    "pg_amop_oid_index" PRIMARY KEY, btree (oid)
+    "pg_amop_fam_strat_index" UNIQUE CONSTRAINT, btree (amopfamily, amoplefttype, amoprighttype, amopstrategy)
+    "pg_amop_opr_fam_index" UNIQUE CONSTRAINT, btree (amopopr, amoppurpose, amopfamily)
+Access method: heap
+
+                Index "pg_catalog.pg_amop_fam_strat_index"
+    Column     |   Type   | Key? |  Definition   | Storage | Stats target 
+---------------+----------+------+---------------+---------+--------------
+ amopfamily    | oid      | yes  | amopfamily    | plain   | 
+ amoplefttype  | oid      | yes  | amoplefttype  | plain   | 
+ amoprighttype | oid      | yes  | amoprighttype | plain   | 
+ amopstrategy  | smallint | yes  | amopstrategy  | plain   | 
+unique, btree, for table "pg_catalog.pg_amop"
+
+            Index "pg_catalog.pg_amop_oid_index"
+ Column | Type | Key? | Definition | Storage | Stats target 
+--------+------+------+------------+---------+--------------
+ oid    | oid  | yes  | oid        | plain   | 
+primary key, btree, for table "pg_catalog.pg_amop"
+
+              Index "pg_catalog.pg_amop_opr_fam_index"
+   Column    |  Type  | Key? | Definition  | Storage | Stats target 
+-------------+--------+------+-------------+---------+--------------
+ amopopr     | oid    | yes  | amopopr     | plain   | 
+ amoppurpose | "char" | yes  | amoppurpose | plain   | 
+ amopfamily  | oid    | yes  | amopfamily  | plain   | 
+unique, btree, for table "pg_catalog.pg_amop"
+
+                                           Table "pg_catalog.pg_amproc"
+     Column      |   Type   | Collation | Nullable | Default | Storage | Compression | Stats target | Description 
+-----------------+----------+-----------+----------+---------+---------+-------------+--------------+-------------
+ oid             | oid      |           | not null |         | plain   |             |              | 
+ amprocfamily    | oid      |           | not null |         | plain   |             |              | 
+ amproclefttype  | oid      |           | not null |         | plain   |             |              | 
+ amprocrighttype | oid      |           | not null |         | plain   |             |              | 
+ amprocnum       | smallint |           | not null |         | plain   |             |              | 
+ amproc          | regproc  |           | not null |         | plain   |             |              | 
+Indexes:
+    "pg_amproc_oid_index" PRIMARY KEY, btree (oid)
+    "pg_amproc_fam_proc_index" UNIQUE CONSTRAINT, btree (amprocfamily, amproclefttype, amprocrighttype, amprocnum)
+Access method: heap
+
+                 Index "pg_catalog.pg_amproc_fam_proc_index"
+     Column      |   Type   | Key? |   Definition    | Storage | Stats target 
+-----------------+----------+------+-----------------+---------+--------------
+ amprocfamily    | oid      | yes  | amprocfamily    | plain   | 
+ amproclefttype  | oid      | yes  | amproclefttype  | plain   | 
+ amprocrighttype | oid      | yes  | amprocrighttype | plain   | 
+ amprocnum       | smallint | yes  | amprocnum       | plain   | 
+unique, btree, for table "pg_catalog.pg_amproc"
+
+           Index "pg_catalog.pg_amproc_oid_index"
+ Column | Type | Key? | Definition | Storage | Stats target 
+--------+------+------+------------+---------+--------------
+ oid    | oid  | yes  | oid        | plain   | 
+primary key, btree, for table "pg_catalog.pg_amproc"
+
+                                         Table "pg_catalog.pg_attrdef"
+ Column  |     Type     | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+---------+--------------+-----------+----------+---------+----------+-------------+--------------+-------------
+ oid     | oid          |           | not null |         | plain    |             |              | 
+ adrelid | oid          |           | not null |         | plain    |             |              | 
+ adnum   | smallint     |           | not null |         | plain    |             |              | 
+ adbin   | pg_node_tree | C         | not null |         | extended |             |              | 
+Indexes:
+    "pg_attrdef_oid_index" PRIMARY KEY, btree (oid)
+    "pg_attrdef_adrelid_adnum_index" UNIQUE CONSTRAINT, btree (adrelid, adnum)
+Access method: heap
+
+        Index "pg_catalog.pg_attrdef_adrelid_adnum_index"
+ Column  |   Type   | Key? | Definition | Storage | Stats target 
+---------+----------+------+------------+---------+--------------
+ adrelid | oid      | yes  | adrelid    | plain   | 
+ adnum   | smallint | yes  | adnum      | plain   | 
+unique, btree, for table "pg_catalog.pg_attrdef"
+
+          Index "pg_catalog.pg_attrdef_oid_index"
+ Column | Type | Key? | Definition | Storage | Stats target 
+--------+------+------+------------+---------+--------------
+ oid    | oid  | yes  | oid        | plain   | 
+primary key, btree, for table "pg_catalog.pg_attrdef"
+
+                                          Table "pg_catalog.pg_attribute"
+     Column     |   Type    | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+----------------+-----------+-----------+----------+---------+----------+-------------+--------------+-------------
+ attrelid       | oid       |           | not null |         | plain    |             |              | 
+ attname        | name      |           | not null |         | plain    |             |              | 
+ atttypid       | oid       |           | not null |         | plain    |             |              | 
+ attstattarget  | integer   |           | not null |         | plain    |             |              | 
+ attlen         | smallint  |           | not null |         | plain    |             |              | 
+ attnum         | smallint  |           | not null |         | plain    |             |              | 
+ attndims       | integer   |           | not null |         | plain    |             |              | 
+ attcacheoff    | integer   |           | not null |         | plain    |             |              | 
+ atttypmod      | integer   |           | not null |         | plain    |             |              | 
+ attbyval       | boolean   |           | not null |         | plain    |             |              | 
+ attalign       | "char"    |           | not null |         | plain    |             |              | 
+ attstorage     | "char"    |           | not null |         | plain    |             |              | 
+ attcompression | "char"    |           | not null |         | plain    |             |              | 
+ attnotnull     | boolean   |           | not null |         | plain    |             |              | 
+ atthasdef      | boolean   |           | not null |         | plain    |             |              | 
+ atthasmissing  | boolean   |           | not null |         | plain    |             |              | 
+ attidentity    | "char"    |           | not null |         | plain    |             |              | 
+ attgenerated   | "char"    |           | not null |         | plain    |             |              | 
+ attisdropped   | boolean   |           | not null |         | plain    |             |              | 
+ attislocal     | boolean   |           | not null |         | plain    |             |              | 
+ attinhcount    | integer   |           | not null |         | plain    |             |              | 
+ attcollation   | oid       |           | not null |         | plain    |             |              | 
+ attacl         | aclitem[] |           |          |         | extended |             |              | 
+ attoptions     | text[]    | C         |          |         | extended |             |              | 
+ attfdwoptions  | text[]    | C         |          |         | extended |             |              | 
+ attmissingval  | anyarray  |           |          |         | extended |             |              | 
+Indexes:
+    "pg_attribute_relid_attnum_index" PRIMARY KEY, btree (attrelid, attnum)
+    "pg_attribute_relid_attnam_index" UNIQUE CONSTRAINT, btree (attrelid, attname)
+Access method: heap
+
+       Index "pg_catalog.pg_attribute_relid_attnam_index"
+  Column  |  Type   | Key? | Definition | Storage | Stats target 
+----------+---------+------+------------+---------+--------------
+ attrelid | oid     | yes  | attrelid   | plain   | 
+ attname  | cstring | yes  | attname    | plain   | 
+unique, btree, for table "pg_catalog.pg_attribute"
+
+        Index "pg_catalog.pg_attribute_relid_attnum_index"
+  Column  |   Type   | Key? | Definition | Storage | Stats target 
+----------+----------+------+------------+---------+--------------
+ attrelid | oid      | yes  | attrelid   | plain   | 
+ attnum   | smallint | yes  | attnum     | plain   | 
+primary key, btree, for table "pg_catalog.pg_attribute"
+
+                                      Table "pg_catalog.pg_auth_members"
+    Column    |  Type   | Collation | Nullable | Default | Storage | Compression | Stats target | Description 
+--------------+---------+-----------+----------+---------+---------+-------------+--------------+-------------
+ roleid       | oid     |           | not null |         | plain   |             |              | 
+ member       | oid     |           | not null |         | plain   |             |              | 
+ grantor      | oid     |           | not null |         | plain   |             |              | 
+ admin_option | boolean |           | not null |         | plain   |             |              | 
+Indexes:
+    "pg_auth_members_role_member_index" PRIMARY KEY, btree (roleid, member), tablespace "pg_global"
+    "pg_auth_members_member_role_index" UNIQUE CONSTRAINT, btree (member, roleid), tablespace "pg_global"
+Tablespace: "pg_global"
+Access method: heap
+
+    Index "pg_catalog.pg_auth_members_member_role_index"
+ Column | Type | Key? | Definition | Storage | Stats target 
+--------+------+------+------------+---------+--------------
+ member | oid  | yes  | member     | plain   | 
+ roleid | oid  | yes  | roleid     | plain   | 
+unique, btree, for table "pg_catalog.pg_auth_members"
+Tablespace: "pg_global"
+
+    Index "pg_catalog.pg_auth_members_role_member_index"
+ Column | Type | Key? | Definition | Storage | Stats target 
+--------+------+------+------------+---------+--------------
+ roleid | oid  | yes  | roleid     | plain   | 
+ member | oid  | yes  | member     | plain   | 
+primary key, btree, for table "pg_catalog.pg_auth_members"
+Tablespace: "pg_global"
+
+                                                   Table "pg_catalog.pg_authid"
+     Column     |           Type           | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+----------------+--------------------------+-----------+----------+---------+----------+-------------+--------------+-------------
+ oid            | oid                      |           | not null |         | plain    |             |              | 
+ rolname        | name                     |           | not null |         | plain    |             |              | 
+ rolsuper       | boolean                  |           | not null |         | plain    |             |              | 
+ rolinherit     | boolean                  |           | not null |         | plain    |             |              | 
+ rolcreaterole  | boolean                  |           | not null |         | plain    |             |              | 
+ rolcreatedb    | boolean                  |           | not null |         | plain    |             |              | 
+ rolcanlogin    | boolean                  |           | not null |         | plain    |             |              | 
+ rolreplication | boolean                  |           | not null |         | plain    |             |              | 
+ rolbypassrls   | boolean                  |           | not null |         | plain    |             |              | 
+ rolconnlimit   | integer                  |           | not null |         | plain    |             |              | 
+ rolpassword    | text                     | C         |          |         | extended |             |              | 
+ rolvaliduntil  | timestamp with time zone |           |          |         | plain    |             |              | 
+Indexes:
+    "pg_authid_oid_index" PRIMARY KEY, btree (oid), tablespace "pg_global"
+    "pg_authid_rolname_index" UNIQUE CONSTRAINT, btree (rolname), tablespace "pg_global"
+Tablespace: "pg_global"
+Access method: heap
+
+           Index "pg_catalog.pg_authid_oid_index"
+ Column | Type | Key? | Definition | Storage | Stats target 
+--------+------+------+------------+---------+--------------
+ oid    | oid  | yes  | oid        | plain   | 
+primary key, btree, for table "pg_catalog.pg_authid"
+Tablespace: "pg_global"
+
+           Index "pg_catalog.pg_authid_rolname_index"
+ Column  |  Type   | Key? | Definition | Storage | Stats target 
+---------+---------+------+------------+---------+--------------
+ rolname | cstring | yes  | rolname    | plain   | 
+unique, btree, for table "pg_catalog.pg_authid"
+Tablespace: "pg_global"
+
+                View "pg_catalog.pg_available_extension_versions"
+   Column    |  Type   | Collation | Nullable | Default | Storage  | Description 
+-------------+---------+-----------+----------+---------+----------+-------------
+ name        | name    |           |          |         | plain    | 
+ version     | text    |           |          |         | extended | 
+ installed   | boolean |           |          |         | plain    | 
+ superuser   | boolean |           |          |         | plain    | 
+ trusted     | boolean |           |          |         | plain    | 
+ relocatable | boolean |           |          |         | plain    | 
+ schema      | name    |           |          |         | plain    | 
+ requires    | name[]  |           |          |         | extended | 
+ comment     | text    |           |          |         | extended | 
+View definition:
+ SELECT e.name,
+    e.version,
+    x.extname IS NOT NULL AS installed,
+    e.superuser,
+    e.trusted,
+    e.relocatable,
+    e.schema,
+    e.requires,
+    e.comment
+   FROM pg_available_extension_versions() e(name, version, superuser, trusted, relocatable, schema, requires, comment)
+     LEFT JOIN pg_extension x ON e.name = x.extname AND e.version = x.extversion;
+
+                     View "pg_catalog.pg_available_extensions"
+      Column       | Type | Collation | Nullable | Default | Storage  | Description 
+-------------------+------+-----------+----------+---------+----------+-------------
+ name              | name |           |          |         | plain    | 
+ default_version   | text |           |          |         | extended | 
+ installed_version | text | C         |          |         | extended | 
+ comment           | text |           |          |         | extended | 
+View definition:
+ SELECT e.name,
+    e.default_version,
+    x.extversion AS installed_version,
+    e.comment
+   FROM pg_available_extensions() e(name, default_version, comment)
+     LEFT JOIN pg_extension x ON e.name = x.extname;
+
+                   View "pg_catalog.pg_backend_memory_contexts"
+    Column     |  Type   | Collation | Nullable | Default | Storage  | Description 
+---------------+---------+-----------+----------+---------+----------+-------------
+ name          | text    |           |          |         | extended | 
+ ident         | text    |           |          |         | extended | 
+ parent        | text    |           |          |         | extended | 
+ level         | integer |           |          |         | plain    | 
+ total_bytes   | bigint  |           |          |         | plain    | 
+ total_nblocks | bigint  |           |          |         | plain    | 
+ free_bytes    | bigint  |           |          |         | plain    | 
+ free_chunks   | bigint  |           |          |         | plain    | 
+ used_bytes    | bigint  |           |          |         | plain    | 
+View definition:
+ SELECT pg_get_backend_memory_contexts.name,
+    pg_get_backend_memory_contexts.ident,
+    pg_get_backend_memory_contexts.parent,
+    pg_get_backend_memory_contexts.level,
+    pg_get_backend_memory_contexts.total_bytes,
+    pg_get_backend_memory_contexts.total_nblocks,
+    pg_get_backend_memory_contexts.free_bytes,
+    pg_get_backend_memory_contexts.free_chunks,
+    pg_get_backend_memory_contexts.used_bytes
+   FROM pg_get_backend_memory_contexts() pg_get_backend_memory_contexts(name, ident, parent, level, total_bytes, total_nblocks, free_bytes, free_chunks, used_bytes);
+
+                                         Table "pg_catalog.pg_cast"
+   Column    |  Type  | Collation | Nullable | Default | Storage | Compression | Stats target | Description 
+-------------+--------+-----------+----------+---------+---------+-------------+--------------+-------------
+ oid         | oid    |           | not null |         | plain   |             |              | 
+ castsource  | oid    |           | not null |         | plain   |             |              | 
+ casttarget  | oid    |           | not null |         | plain   |             |              | 
+ castfunc    | oid    |           | not null |         | plain   |             |              | 
+ castcontext | "char" |           | not null |         | plain   |             |              | 
+ castmethod  | "char" |           | not null |         | plain   |             |              | 
+Indexes:
+    "pg_cast_oid_index" PRIMARY KEY, btree (oid)
+    "pg_cast_source_target_index" UNIQUE CONSTRAINT, btree (castsource, casttarget)
+Access method: heap
+
+            Index "pg_catalog.pg_cast_oid_index"
+ Column | Type | Key? | Definition | Storage | Stats target 
+--------+------+------+------------+---------+--------------
+ oid    | oid  | yes  | oid        | plain   | 
+primary key, btree, for table "pg_catalog.pg_cast"
+
+         Index "pg_catalog.pg_cast_source_target_index"
+   Column   | Type | Key? | Definition | Storage | Stats target 
+------------+------+------+------------+---------+--------------
+ castsource | oid  | yes  | castsource | plain   | 
+ casttarget | oid  | yes  | casttarget | plain   | 
+unique, btree, for table "pg_catalog.pg_cast"
+
+                                                Table "pg_catalog.pg_class"
+       Column        |     Type     | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+---------------------+--------------+-----------+----------+---------+----------+-------------+--------------+-------------
+ oid                 | oid          |           | not null |         | plain    |             |              | 
+ relname             | name         |           | not null |         | plain    |             |              | 
+ relnamespace        | oid          |           | not null |         | plain    |             |              | 
+ reltype             | oid          |           | not null |         | plain    |             |              | 
+ reloftype           | oid          |           | not null |         | plain    |             |              | 
+ relowner            | oid          |           | not null |         | plain    |             |              | 
+ relam               | oid          |           | not null |         | plain    |             |              | 
+ relfilenode         | oid          |           | not null |         | plain    |             |              | 
+ reltablespace       | oid          |           | not null |         | plain    |             |              | 
+ relpages            | integer      |           | not null |         | plain    |             |              | 
+ reltuples           | real         |           | not null |         | plain    |             |              | 
+ relallvisible       | integer      |           | not null |         | plain    |             |              | 
+ reltoastrelid       | oid          |           | not null |         | plain    |             |              | 
+ relhasindex         | boolean      |           | not null |         | plain    |             |              | 
+ re
