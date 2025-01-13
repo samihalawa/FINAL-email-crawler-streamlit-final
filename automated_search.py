@@ -52,7 +52,7 @@ class LogContainer:
             'level': 'info',
             'message': text
         }
-        automation_log = self.session.query(AutomationLog).get(self.automation_log_id)
+        automation_log = self.session.query(AutomationLog).with_for_update().get(self.automation_log_id)
         if automation_log:
             if automation_log.logs:
                 automation_log.logs.append(log_entry)
@@ -69,9 +69,9 @@ class SearchState:
 
     @classmethod
     def load_from_db(cls, session, automation_log_id: int) -> 'SearchState':
-        automation_log = session.query(AutomationLog).get(automation_log_id)
+        automation_log = session.query(AutomationLog).with_for_update().get(automation_log_id)
         state = cls(automation_log_id)
-        if automation_log.logs:
+        if automation_log and automation_log.logs:
             # Look for the most recent search_settings entry
             for log in reversed(automation_log.logs):
                 if isinstance(log, dict) and 'search_settings' in log:
@@ -83,7 +83,7 @@ class SearchState:
         return state
 
     def save_to_db(self, session):
-        automation_log = session.query(AutomationLog).get(self.automation_log_id)
+        automation_log = session.query(AutomationLog).with_for_update().get(self.automation_log_id)
         if not automation_log.logs:
             automation_log.logs = []
         automation_log.logs.append({
@@ -113,7 +113,7 @@ def main():
 
     try:
         with db_session() as session:
-            automation_log = session.query(AutomationLog).get(args.automation_log_id)
+            automation_log = session.query(AutomationLog).with_for_update().get(args.automation_log_id)
             if automation_log is None:
                 logging.error("Automation log is None")
                 return
@@ -122,23 +122,21 @@ def main():
                 logging.error(f"No automation log found with ID {args.automation_log_id}")
                 return
 
+            # Retrieve search settings directly from the AutomationLog
+            search_settings = automation_log.search_settings or {}
+            if not search_settings:
+                logging.warning("No search settings found in AutomationLog.")
+                return
+
+            search_terms = search_settings.get('search_terms', [])
+            if not search_terms:
+                logging.warning("No search terms found in search settings.")
+                return
+
             search_state = SearchState.load_from_db(session, args.automation_log_id)
             log_container = LogContainer(session, args.automation_log_id)
             
             try:
-                # Get search settings from logs
-                search_settings = {}
-                if automation_log.logs:
-                    for log in reversed(automation_log.logs):
-                        if isinstance(log, dict) and 'search_settings' in log:
-                            search_settings = log['search_settings']
-                            break
-                
-                search_terms = search_settings.get('search_terms', [])
-                if not search_terms:
-                    logging.warning("No search terms found in search settings.")
-                    return
-                
                 for i, term in enumerate(search_terms[search_state.current_term_index:], search_state.current_term_index):
                     if automation_log.status != 'running':
                         logging.info("Search paused or stopped")
@@ -166,31 +164,37 @@ def main():
                     
                     # Update metrics
                     if results and 'results' in results:
-                        automation_log.leads_gathered = (automation_log.leads_gathered or 0) + len(results['results'])
-                        session.commit()
+                        automation_log = session.query(AutomationLog).with_for_update().get(args.automation_log_id)
+                        if automation_log:
+                            automation_log.leads_gathered = (automation_log.leads_gathered or 0) + len(results['results'])
+                            session.commit()
                     
                     # Save state after each term
                     search_state.save_to_db(session)
 
                 if automation_log.status == 'running':
-                    automation_log.status = 'completed'
-                    automation_log.end_time = datetime.utcnow()
-                    automation_log.logs.append({
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'level': 'success',
-                        'message': 'Search completed successfully'
-                    })
-                    session.commit()
+                    automation_log = session.query(AutomationLog).with_for_update().get(args.automation_log_id)
+                    if automation_log:
+                        automation_log.status = 'completed'
+                        automation_log.end_time = datetime.utcnow()
+                        automation_log.logs.append({
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'level': 'success',
+                            'message': 'Search completed successfully'
+                        })
+                        session.commit()
 
             except Exception as e:
                 logging.error(f"Error in search process: {str(e)}")
-                automation_log.status = 'error'
-                automation_log.logs.append({
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'level': 'error',
-                    'message': f"Error: {str(e)}"
-                })
-                session.commit()
+                automation_log = session.query(AutomationLog).with_for_update().get(args.automation_log_id)
+                if automation_log:
+                    automation_log.status = 'error'
+                    automation_log.logs.append({
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'level': 'error',
+                        'message': f"Error: {str(e)}"
+                    })
+                    session.commit()
     finally:
         cleanup_pid()
 

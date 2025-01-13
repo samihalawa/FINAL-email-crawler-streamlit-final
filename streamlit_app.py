@@ -2,6 +2,7 @@ import os, json, re, logging, asyncio, time, requests, pandas as pd, streamlit a
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+# Replace the google search import with a more reliable version
 from googlesearch import search as google_search
 from fake_useragent import UserAgent
 from sqlalchemy import func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, Boolean, JSON, select, text, distinct, and_
@@ -21,6 +22,8 @@ from requests.packages.urllib3.util.retry import Retry
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
+import signal
+import subprocess
 
 DB_HOST = os.getenv("SUPABASE_DB_HOST")
 DB_NAME = os.getenv("SUPABASE_DB_NAME")
@@ -990,7 +993,7 @@ def manual_search_page():
                         wrapped_content = wrap_email_body(template.body_content)
                         response, tracking_id = send_email_ses(session, from_email, result['Email'], template.subject, wrapped_content, reply_to=reply_to)
                         if response:
-                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), template.body_content)
+                            save_email_campaign(session, result['Email'], template.id, 'sent', datetime.utcnow(), template.subject, response.get('MessageId', 'Unknown'), wrapped_content)
                             emails_sent.append(f"✅ {result['Email']}")
                             status_text.text(f"Email sent to: {result['Email']}")
                         else:
@@ -2240,6 +2243,7 @@ def wrap_email_body(body_content):
     </body>
     </html>
     """
+import signal
 
 def fetch_sent_email_campaigns(session):
     try:
@@ -2308,6 +2312,204 @@ def view_sent_email_campaigns():
         st.error(f"An error occurred while fetching sent email campaigns: {str(e)}")
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
+def get_latest_logs(automation_log_id):
+    with db_session() as session:
+        log = session.query(AutomationLog).get(automation_log_id)
+        return log.logs if log else []
+
+def manual_search_worker_page():
+    st.title("Manual Search Worker")
+    
+    # Initialize session state with defaults
+    if 'active_searches' not in st.session_state:
+        st.session_state.active_searches = {}
+    if 'last_cleanup' not in st.session_state:
+        st.session_state.last_cleanup = time.time()
+    
+    # Periodic cleanup of dead processes (every 30 seconds)
+    if time.time() - st.session_state.last_cleanup > 30:
+        for automation_log_id in list(st.session_state.active_searches.keys()):
+            process_info = st.session_state.active_searches[automation_log_id]
+            if not is_process_running(process_info.get('pid')):
+                del st.session_state.active_searches[automation_log_id]
+        st.session_state.last_cleanup = time.time()
+    
+    # Create persistent placeholders
+    if 'status_placeholder' not in st.session_state:
+        st.session_state.status_placeholder = st.empty()
+    if 'metrics_placeholder' not in st.session_state:
+        st.session_state.metrics_placeholder = st.empty()
+    if 'log_placeholder' not in st.session_state:
+        st.session_state.log_placeholder = st.empty()
+    
+    with db_session() as session:
+        campaign_id = get_active_campaign_id()
+        if not campaign_id:
+            st.error("Please select an active campaign first")
+            return
+
+        # Search configuration section
+        with st.expander("Search Configuration", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                search_terms = st_tags(
+                    label='Enter Search Terms:',
+                    text='Press enter to add more',
+                    value=[],
+                    key=f'search_terms_{campaign_id}'
+                )
+                num_results = st.number_input("Results per term", 1, 100, 10)
+            
+            with col2:
+                optimize_english = st.checkbox("Optimize for English")
+                optimize_spanish = st.checkbox("Optimize for Spanish")
+                shuffle_keywords = st.checkbox("Shuffle Keywords")
+                language = st.selectbox("Search Language", ["ES", "EN"],
+                                     index=1 if optimize_english else 0)
+
+        # Start/Stop buttons
+        start_col, stop_col = st.columns(2)
+        with start_col:
+            if st.button("Start Search", type="primary", 
+                        disabled=bool(st.session_state.active_searches)):
+                if not search_terms:
+                    st.error("Please enter at least one search term")
+                    return
+
+                try:
+                    automation_log = AutomationLog(
+                        campaign_id=campaign_id,
+                        status='running',
+                        start_time=datetime.utcnow(),
+                        logs=[],
+                        search_term_id=None,
+                        leads_gathered=0,
+                        emails_sent=0
+                    )
+                    session.add(automation_log)
+                    session.commit()
+
+                    # Start the worker process
+                    process = subprocess.Popen([
+                        'python', 'automated_search.py',
+                        str(automation_log.id)
+                    ])
+
+                    st.session_state.active_searches[automation_log.id] = {
+                        'pid': process.pid,
+                        'start_time': automation_log.start_time,
+                        'active': True,
+                        'last_check': time.time()
+                    }
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to start search: {e}")
+                    if 'automation_log' in locals():
+                        session.delete(automation_log)
+                        session.commit()
+
+        # Display active searches
+        if st.session_state.active_searches:
+            st.subheader("Active Searches")
+            for automation_log_id, search_info in st.session_state.active_searches.items():
+                if search_info['active']:
+                    with st.expander(f"Search {automation_log_id}", expanded=True):
+                        status = get_automation_status(automation_log_id)
+                        
+                        # Control buttons
+                        if st.button("Stop", key=f"stop_{automation_log_id}"):
+                            try:
+                                os.kill(search_info['pid'], signal.SIGTERM)
+                                search_info['active'] = False
+                                with db_session() as s:
+                                    log = s.query(AutomationLog).get(automation_log_id)
+                                    if log:
+                                        log.status = 'stopped'
+                                        log.end_time = datetime.utcnow()
+                                        s.commit()
+                            except Exception as e:
+                                st.error(f"Failed to stop process: {e}")
+                        
+                        # Update UI components
+                        update_automation_ui(
+                            automation_log_id,
+                            st.session_state.log_placeholder.container(),
+                            st.session_state.metrics_placeholder.container()
+                        )
+
+                        # Check process status
+                        if time.time() - search_info['last_check'] > 2:
+                            search_info['last_check'] = time.time()
+                            if status['status'] in ['completed', 'error', 'stopped']:
+                                search_info['active'] = False
+                            st.rerun()
+
+    # Cleanup function
+    def cleanup():
+        for automation_log_id, search_info in st.session_state.active_searches.items():
+            try:
+                if is_process_running(search_info['pid']):
+                    os.kill(search_info['pid'], signal.SIGTERM)
+            except:
+                pass
+        st.session_state.active_searches = {}
+
+    # Register cleanup
+    st.on_change(cleanup)
+
+# Utility Functions
+def safe_google_search(query, num_results=10, lang='es'):
+    try:
+        return list(google_search(query, num_results=num_results, lang=lang, stop=num_results))
+    except Exception as e:
+        logging.error(f"Google search error for '{query}': {str(e)}")
+        return []
+
+def is_process_running(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+def get_automation_status(automation_log_id):
+    try:
+        with db_session() as session:
+            log = session.query(AutomationLog).get(automation_log_id)
+            if not log:
+                return {'status': 'unknown', 'leads_gathered': 0, 'emails_sent': 0, 'latest_logs': []}
+            return {
+                'status': log.status,
+                'leads_gathered': log.leads_gathered or 0,
+                'emails_sent': log.emails_sent or 0,
+                'latest_logs': log.logs[-10:] if log.logs else []
+            }
+    except Exception as e:
+        logging.error(f"Error getting automation status: {e}")
+        return {'status': 'error', 'leads_gathered': 0, 'emails_sent': 0, 'latest_logs': []}
+
+def update_automation_ui(automation_log_id, log_placeholder, metrics_placeholder):
+    try:
+        status = get_automation_status(automation_log_id)
+        
+        with metrics_placeholder:
+            col1, col2 = st.columns(2)
+            col1.metric("Leads Found", status['leads_gathered'])
+            col2.metric("Emails Sent", status['emails_sent'])
+        
+        with log_placeholder:
+            if status['latest_logs']:
+                log_text = "\n".join(
+                    f"{log.get('timestamp', '')}: {log.get('message', '')}" 
+                    for log in status['latest_logs']
+                    if isinstance(log, dict)
+                )
+                st.code(log_text)
+            else:
+                st.info("No logs available")
+    except Exception as e:
+        st.error(f"Error updating UI: {e}")
+
 def main():
     st.set_page_config(
         page_title="Autoclient.ai | Lead Generation AI App",
@@ -2315,9 +2517,6 @@ def main():
         initial_sidebar_state="expanded",
         page_icon=""
     )
-
-    st.sidebar.title("AutoclientAI")
-    st.sidebar.markdown("Select a page to navigate through the application.")
 
     pages = {
         "🔍 Manual Search": manual_search_page,
@@ -2331,7 +2530,8 @@ def main():
         "⚙️ Automation Control": automation_control_panel_page,
         "📨 Email Logs": view_campaign_logs,
         "🔄 Settings": settings_page,
-        "📨 Sent Campaigns": view_sent_email_campaigns
+        "📨 Sent Campaigns": view_sent_email_campaigns,
+        "🔧 Manual Search Worker": manual_search_worker_page
     }
 
     with st.sidebar:
@@ -2355,4 +2555,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
