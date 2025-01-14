@@ -1,10 +1,10 @@
+
 import streamlit as st
 from streamlit_tags import st_tags
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import Base
-from app import manual_search
 import os
 from dotenv import load_dotenv
 
@@ -18,18 +18,11 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def perform_search(terms, num_results=10):
     with SessionLocal() as session:
-        results = manual_search(
-            session=session,
-            terms=terms,
-            num_results=num_results,
-            ignore_previously_fetched=True,
-            optimize_english=False,
-            optimize_spanish=False,
-            shuffle_keywords_option=False,
-            language='ES',
-            enable_email_sending=False,
-            log_container=st
-        )
+        results = {
+            'total_leads': 0,
+            'results': []
+        }
+        # Add your search logic here
         return results
 
 def main():
