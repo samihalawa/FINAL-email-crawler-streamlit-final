@@ -3,9 +3,9 @@ from streamlit_tags import st_tags
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models import * #Import models from models.py
 import os
 from dotenv import load_dotenv
+from attached_assets.streamlit_app import manual_search
 
 # Load environment variables
 load_dotenv()
