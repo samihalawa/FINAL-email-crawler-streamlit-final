@@ -47,4 +47,5 @@ dependencies = [
     "apscheduler>=3.10.0",
     "watchdog>=3.0.0",
     "debugpy>=1.6.0",
+    "trafilatura>=2.0.0",
 ]
