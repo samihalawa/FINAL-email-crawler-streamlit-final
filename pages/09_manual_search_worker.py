@@ -1,4 +1,3 @@
-
 import streamlit as st
 import subprocess
 import signal
@@ -24,7 +23,7 @@ try:
     with SessionLocal() as session:
         campaign_id = st.session_state.get('current_campaign_id', 1)
         campaign = session.query(Campaign).get(campaign_id)
-        
+
         if not campaign:
             st.warning("Please select a campaign first")
         else:
@@ -45,7 +44,7 @@ try:
                         )
                         session.add(new_log)
                         session.commit()
-                        
+
                         # Start search process
                         search_settings = {
                             'search_terms': [term.term for term in search_terms],
@@ -57,7 +56,7 @@ try:
                             'language': 'ES',
                             'enable_email_sending': False
                         }
-                        
+
                         new_log.logs.append({
                             'timestamp': datetime.utcnow().isoformat(),
                             'level': 'info',
@@ -65,12 +64,30 @@ try:
                             'search_settings': search_settings
                         })
                         session.commit()
-                        
-                        subprocess.Popen(['python', 'automated_search.py', str(new_log.id)])
-                        st.success(f"Search started! Automation Log ID: {new_log.id}")
+
+                        try:
+                            process = subprocess.Popen(
+                                ['python', 'automated_search.py', str(new_log.id)],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE
+                            )
+                            st.success(f"Search started! Automation Log ID: {new_log.id}")
+
+                            # Save process ID
+                            with open('.search_pid', 'w') as f:
+                                f.write(str(process.pid))
+                        except Exception as e:
+                            new_log.status = 'failed'
+                            new_log.logs.append({
+                                'timestamp': datetime.utcnow().isoformat(),
+                                'level': 'error',
+                                'message': f'Failed to start search: {str(e)}'
+                            })
+                            session.commit()
+                            st.error(f"Failed to start search: {str(e)}")
                 except Exception as e:
                     st.error(f"Error starting search: {str(e)}")
-            
+
             # Stop search if running
             if st.button("Stop Search"):
                 try:
@@ -87,20 +104,20 @@ try:
                         st.warning("No running search process found")
                 except Exception as e:
                     st.error(f"Error stopping search: {str(e)}")
-            
+
             # Display current automation log
             st.subheader("Current Automation Log")
             current_log = session.query(AutomationLog).filter_by(
                 campaign_id=campaign_id,
                 status='running'
             ).first()
-            
+
             if current_log:
                 st.write(f"Log ID: {current_log.id}")
                 st.write(f"Status: {current_log.status}")
                 st.write(f"Start Time: {current_log.start_time}")
                 st.write(f"Leads Gathered: {current_log.leads_gathered}")
-                
+
                 if current_log.logs:
                     st.subheader("Search Logs")
                     for log in current_log.logs:

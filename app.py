@@ -42,23 +42,9 @@ def initialize_session_state():
 
 
 def initialize_pages():
-    # Placeholder:  Replace with actual page initialization.  This likely involves defining functions for each page.
-    pages = {
-        "Manual Search": manual_search,
-        "View Leads": view_leads,
-        "Configure Search": configure_search,
-        "Settings": settings,
-        "Email": send_email_ses,
-        "Reporting": reporting,
-        "Automation": automation,
-        "Admin": admin,
-        "Tools": tools,
-        "Notes": notes,
-        "Advanced": advanced,
-        "Email Templates": email_templates,
-        "Launch": launch,
+    return {
+        "Home": lambda: st.title("Welcome to AutoclientAI")
     }
-    return pages
 
 def main():
     # Initialize settings and check database state
