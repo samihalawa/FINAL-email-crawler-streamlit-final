@@ -25,20 +25,18 @@ def initialize_settings():
         load_dotenv()
         DATABASE_URL = os.getenv('DATABASE_URL')
         if not DATABASE_URL:
+            st.error("DATABASE_URL not found in environment variables")
             return False
 
         engine = create_engine(DATABASE_URL)
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-        with engine.connect() as conn:
-            return True
+        return True
 
     except Exception as e:
         logging.exception(f"Error in initialize_settings: {str(e)}")
         return False
 
 def main():
-    # Initialize settings and check database state
     if not initialize_settings():
         st.error("Failed to initialize application. Please check the logs and configuration.")
         return
