@@ -48,4 +48,5 @@ dependencies = [
     "watchdog>=3.0.0",
     "debugpy>=1.6.0",
     "trafilatura>=2.0.0",
+    "psutil>=6.1.1",
 ]
