@@ -1,8 +1,18 @@
 import streamlit as st
-from health_checks import display_health_dashboard
+from health_checks import (
+    display_health_dashboard, 
+    check_database_connection,
+    get_system_metrics,
+    check_background_processes,
+    run_health_checks
+)
 
-# Add unique key to avoid duplicate widget IDs
+# Configure page
 st.set_page_config(page_title="Health Dashboard", page_icon="🏥")
 
-# Display the health dashboard
-display_health_dashboard()
+def main():
+    """Main function to display the health dashboard"""
+    display_health_dashboard()
+
+if __name__ == "__main__":
+    main()

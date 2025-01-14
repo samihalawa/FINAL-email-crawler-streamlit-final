@@ -14,7 +14,12 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def init():
+    """Initialize page configuration"""
+    st.set_page_config(page_title="Search Terms", page_icon="🔑")
+
 def main():
+    """Main function to handle search terms management"""
     st.title("🔑 Search Terms")
 
     try:
@@ -49,7 +54,11 @@ def main():
                 if submit and new_term:
                     try:
                         # Check if term already exists
-                        existing_term = session.query(SearchTerm).filter_by(term=new_term, campaign_id=campaign_id).first()
+                        existing_term = session.query(SearchTerm).filter_by(
+                            term=new_term, 
+                            campaign_id=campaign_id
+                        ).first()
+
                         if existing_term:
                             st.warning(f"Search term '{new_term}' already exists")
                         else:
@@ -90,4 +99,5 @@ def main():
         st.error(f"Error loading search terms: {str(e)}")
 
 if __name__ == "__main__":
+    init()
     main()
