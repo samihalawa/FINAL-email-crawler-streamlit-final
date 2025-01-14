@@ -1,6 +1,7 @@
 import logging, uuid, json, argparse, os, signal
 from datetime import datetime
-from streamlit_app import db_session, manual_search, get_active_campaign_id, get_active_project_id, EmailTemplate, EmailSettings, AutomationLog, SearchTerm
+from models import EmailTemplate, EmailSettings, AutomationLog, SearchTerm
+from app import db_session, manual_search, get_active_campaign_id, get_active_project_id
 from typing import Optional, Dict
 
 # Configure logging

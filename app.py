@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 from streamlit_option_menu import option_menu
-from streamlit_app import *
+from models import *
 
 def initialize_settings():
     # Placeholder:  Replace with actual initialization logic from streamlit_app.py or elsewhere
