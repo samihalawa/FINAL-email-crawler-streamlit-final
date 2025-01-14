@@ -11,7 +11,14 @@ st.set_page_config(
     page_title="AutoclientAI",
     page_icon="🤖",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    port=5000
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
 def initialize_settings():

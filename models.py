@@ -238,3 +238,26 @@ def init_db(database_url):
     engine = create_engine(database_url)
     Base.metadata.create_all(engine)
     return engine
+
+def get_db_session():
+    """Get database session"""
+    engine = create_engine(os.getenv('DATABASE_URL'))
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    return SessionLocal()
+
+class db_session:
+    """Database session context manager"""
+    def __init__(self):
+        self.session = get_db_session()
+    
+    def __enter__(self):
+        return self.session
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type is None:
+                self.session.commit()
+            else:
+                self.session.rollback()
+        finally:
+            self.session.close()

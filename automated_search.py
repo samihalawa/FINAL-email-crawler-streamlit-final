@@ -39,10 +39,14 @@ def signal_handler(signum, frame):
     exit(0)
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("automation_log_id", type=int)
-    parser.add_argument("--resume", action="store_true")
-    args = parser.parse_args()
+    try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("automation_log_id", type=int)
+        parser.add_argument("--resume", action="store_true")
+        args = parser.parse_args()
+    except Exception as e:
+        logging.error(f"Failed to parse arguments: {e}")
+        return
 
     # Set up signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
