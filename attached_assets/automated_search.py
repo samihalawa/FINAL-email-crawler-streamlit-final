@@ -32,10 +32,59 @@ def signal_handler(signum, frame):
     """Handle termination signals"""
     logging.info(f"Signal {signum} received. Cleaning up...")
     print(f"Signal {signum} received. Cleaning up...")
-    
     cleanup_pid()
-    
     exit(0)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("automation_log_id", type=int)
+    args = parser.parse_args()
+
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    save_pid()
+    
+    try:
+        with db_session() as session:
+            automation_log = session.query(AutomationLog).get(args.automation_log_id)
+            if not automation_log:
+                raise ValueError(f"Automation log {args.automation_log_id} not found")
+            
+            terms = session.query(SearchTerm).filter_by(campaign_id=automation_log.campaign_id).all()
+            if not terms:
+                raise ValueError("No search terms found")
+            
+            for term in terms:
+                results = manual_search(session, [term.term], 10)
+                automation_log.leads_gathered += len(results.get('results', []))
+                automation_log.logs.append({
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'level': 'info',
+                    'message': f"Found {len(results.get('results', []))} leads for term: {term.term}"
+                })
+                session.commit()
+            
+            automation_log.status = 'completed'
+            automation_log.end_time = datetime.utcnow()
+            session.commit()
+    except Exception as e:
+        logging.error(f"Error in search process: {str(e)}")
+        if 'automation_log' in locals():
+            automation_log.status = 'failed'
+            automation_log.end_time = datetime.utcnow()
+            automation_log.logs.append({
+                'timestamp': datetime.utcnow().isoformat(),
+                'level': 'error',
+                'message': str(e)
+            })
+            session.commit()
+    finally:
+        cleanup_pid()
+
+if __name__ == "__main__":
+    main()
 
 class LogContainer:
     def __init__(self, session, automation_log_id):

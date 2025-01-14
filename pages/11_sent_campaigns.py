@@ -17,14 +17,14 @@ st.title("📨 Sent Campaigns")
 
 try:
     with SessionLocal() as session:
-        from streamlit_app import Campaign, EmailCampaign
+        from streamlit_app import Campaign, EmailCampaign, Lead, EmailTemplate
         
         # Get all campaigns with email stats
         campaigns = session.query(
             Campaign,
             func.count(EmailCampaign.id).label('total_emails'),
-            func.sum(case((EmailCampaign.status == 'Sent', 1), else_=0)).label('sent'),
-            func.sum(case((EmailCampaign.status == 'Failed', 1), else_=0)).label('failed'),
+            func.sum(func.case([(EmailCampaign.status == 'Sent', 1)], else_=0)).label('sent'),
+            func.sum(func.case([(EmailCampaign.status == 'Failed', 1)], else_=0)).label('failed'),
             func.sum(EmailCampaign.open_count).label('opens'),
             func.sum(EmailCampaign.click_count).label('clicks')
         ).outerjoin(

@@ -3047,18 +3047,26 @@ def verify_ses_setup(session, email_settings_id):
 
 def validate_active_ids():
     """Validate that current project and campaign IDs exist in database."""
-    with db_session() as session:
-        project_id = st.session_state.get('current_project_id')
-        campaign_id = st.session_state.get('current_campaign_id')
-        
-        project = session.query(Project).filter_by(id=project_id).first()
-        campaign = session.query(Campaign).filter_by(id=campaign_id).first()
-        
-        if not project or not campaign:
-            # Reset to defaults if invalid
-            initialize_session_state()
-            return False
-        return True
+    try:
+        with db_session() as session:
+            project_id = st.session_state.get('current_project_id')
+            campaign_id = st.session_state.get('current_campaign_id')
+            
+            if not project_id or not campaign_id:
+                initialize_session_state()
+                return False
+                
+            project = session.query(Project).filter_by(id=project_id).first()
+            campaign = session.query(Campaign).filter_by(id=campaign_id).first()
+            
+            if not project or not campaign:
+                initialize_session_state()
+                return False
+            return True
+    except Exception as e:
+        logging.error(f"Error validating IDs: {str(e)}")
+        initialize_session_state()
+        return False
 
 def get_active_project_id():
     """Get the currently active project ID from session state"""
