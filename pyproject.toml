@@ -52,4 +52,7 @@ dependencies = [
     "importlib>=1.0.4",
     "google-search>=1.1.1",
     "googlesearch-python>=1.2.5",
+    "pytest-mock>=3.14.0",
+    "pytest-cov>=6.0.0",
+    "pytest-asyncio>=0.25.2",
 ]
