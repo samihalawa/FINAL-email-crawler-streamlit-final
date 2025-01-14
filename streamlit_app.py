@@ -1150,7 +1150,9 @@ def fetch_email_templates(session):
     return [f"{t.id}: {t.template_name}" for t in session.query(EmailTemplate).all()]
 
 def create_or_update_email_template(session, template_name, subject, body_content, template_id=None, is_ai_customizable=False, created_at=None, language='ES'):
-    template = session.query(EmailTemplate).filter_by(id=template_id).first() if template_id else EmailTemplate(template_name=template_name, subject=subject, body_content=body_content, is_ai_customizable=is_ai_customizable, campaign_id=get_active_campaign_id(), created_at=created_at or datetime.utcnow())
+    # Ensure campaign_id is an integer
+    campaign_id = int(get_active_campaign_id())
+    template = session.query(EmailTemplate).filter_by(id=template_id).first() if template_id else EmailTemplate(template_name=template_name, subject=subject, body_content=body_content, is_ai_customizable=is_ai_customizable, campaign_id=campaign_id, created_at=created_at or datetime.utcnow())
     if template_id: template.template_name, template.subject, template.body_content, template.is_ai_customizable = template_name, subject, body_content, is_ai_customizable
     template.language = language
     session.add(template)
@@ -1165,7 +1167,14 @@ def fetch_leads(session, template_id, send_option, specific_email, selected_term
         if send_option == "Specific Email":
             query = query.filter(Lead.email == specific_email)
         elif send_option in ["Leads from Chosen Search Terms", "Leads from Search Term Groups"] and selected_terms:
-            query = query.join(LeadSource).join(SearchTerm).filter(SearchTerm.term.in_(selected_terms))
+            # Fetch SearchTerm IDs based on the selected terms
+            search_term_ids = [
+                term.id
+                for term in session.query(SearchTerm.id)
+                .filter(SearchTerm.term.in_(selected_terms))
+                .all()
+            ]
+            query = query.join(LeadSource).join(SearchTerm).filter(SearchTerm.id.in_(search_term_ids))
         
         if exclude_previously_contacted:
             subquery = session.query(EmailCampaign.lead_id).filter(EmailCampaign.sent_at.isnot(None)).subquery()
@@ -2015,7 +2024,14 @@ def fetch_leads(session, template_id, send_option, specific_email, selected_term
         if send_option == "Specific Email":
             query = query.filter(Lead.email == specific_email)
         elif send_option in ["Leads from Chosen Search Terms", "Leads from Search Term Groups"] and selected_terms:
-            query = query.join(LeadSource).join(SearchTerm).filter(SearchTerm.term.in_(selected_terms))
+            # Fetch SearchTerm IDs based on the selected terms
+            search_term_ids = [
+                term.id
+                for term in session.query(SearchTerm.id)
+                .filter(SearchTerm.term.in_(selected_terms))
+                .all()
+            ]
+            query = query.join(LeadSource).join(SearchTerm).filter(SearchTerm.id.in_(search_term_ids))
         
         if exclude_previously_contacted:
             subquery = session.query(EmailCampaign.lead_id).filter(EmailCampaign.sent_at.isnot(None)).subquery()
@@ -2537,30 +2553,27 @@ def fetch_logs_for_automation_log(session, automation_log_id):
         return []
 
 def run_automated_search(automation_log_id):
-    """Runs the automated_search.py script."""
+    """Start an automated search process and return the process object."""
     try:
-        process = subprocess.Popen(
-            ["python", "automated_search.py", str(automation_log_id)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        return process
+        with db_session() as session:
+            automation_log = session.query(AutomationLog).get(automation_log_id)
+            if not automation_log:
+                logging.error(f"No automation log found with ID {automation_log_id}")
+                return None
+
+            # Start the background search process
+            thread = threading.Thread(
+                target=run_background_search,
+                args=(session, automation_log_id),
+                daemon=True
+            )
+            thread.start()
+            return thread
+
     except Exception as e:
-        logging.error(f"Failed to start automated search: {str(e)}")
+        logging.error(f"Error starting automated search: {str(e)}")
         return None
 
-def cleanup_search_state():
-    """Cleans up search state if it's been too long since the last update"""
-    if 'worker_log_state' in st.session_state:
-        current_time = time.time()
-        if current_time - st.session_state.worker_log_state['last_update'] > 3600:  # 1 hour timeout
-            st.session_state.worker_log_state = {
-                'buffer': [],
-                'last_count': 0,
-                'last_update': current_time,
-                'update_counter': 0,
-                'auto_scroll': True
-            }
 def manual_search_worker_page():
     """Page for manual search worker control."""
     st.title("⚙️ Manual Search Worker")
@@ -2577,129 +2590,169 @@ def manual_search_worker_page():
         """
     )
 
-    with db_session() as session:
-        active_project_id = get_active_project_id()
-        active_campaign_id = get_active_campaign_id()
+    try:
+        with db_session() as session:
+            active_project_id = get_active_project_id()
+            active_campaign_id = get_active_campaign_id()
 
-        # Fetch the active project and campaign details
-        project = session.query(Project).get(active_project_id)
-        campaign = session.query(Campaign).get(active_campaign_id)
+            # Fetch the active project and campaign details
+            project = session.query(Project).get(active_project_id)
+            campaign = session.query(Campaign).get(active_campaign_id)
 
-        if project:
-            st.subheader(f"Active Project: {project.name}")
-            st.write(f"Description: {project.description}")
+            if project:
+                st.subheader(f"Active Project: {project.project_name}")
 
-        if campaign:
-            st.subheader(f"Active Campaign: {campaign.name}")
-            st.write(f"Description: {campaign.description}")
+            if campaign:
+                st.subheader(f"Active Campaign: {campaign.campaign_name}")
 
-        # Button to start the automated search
-        if st.button("Start Automated Search"):
-            automation_log = AutomationLog(
-                project_id=active_project_id,
-                campaign_id=active_campaign_id,
-                start_time=datetime.now(),
-                status="running"
-            )
-            session.add(automation_log)
-            session.flush()  # Ensure automation_log has an ID
-            session.commit()
+                # Fetch search terms for the campaign
+                search_terms = session.query(SearchTerm).filter_by(campaign_id=campaign.id).all()
+                if not search_terms:
+                    st.warning("No search terms found for this campaign. Please add search terms first.")
+                    return
 
-            # Run the automated search process
-            process = run_automated_search(automation_log.id)
-            if process:
-                st.session_state.search_process = process
-                st.session_state.automation_log_id = automation_log.id
-                st.success(f"Automated search started with log ID: {automation_log.id}")
-            else:
-                st.error("Failed to start automated search.")
+                # Display search terms
+                st.subheader("Campaign Search Terms")
+                terms_df = pd.DataFrame([{
+                    'Term': term.term,
+                    'Category': term.category,
+                    'Language': term.language
+                } for term in search_terms])
+                st.dataframe(terms_df)
 
-        # Display logs if an automation log ID is in the session state
-        if 'automation_log_id' in st.session_state:
-            automation_log_id = st.session_state.automation_log_id
-            logs = fetch_logs_for_automation_log(session, automation_log_id)
-            if logs:
-                st.subheader("Search Logs:")
-                for log in logs:
-                    st.text(log)
+                # Add search configuration options
+                st.subheader("Search Configuration")
+                num_results = st.number_input("Results per search term", min_value=1, value=50)
+                ignore_previously_fetched = st.checkbox("Ignore previously fetched domains", value=True)
+                language = st.selectbox("Search Language", ["ES", "EN"], index=0)
+                
+                # Advanced options in expander
+                with st.expander("Advanced Options"):
+                    optimize_english = st.checkbox("Optimize English terms", value=False)
+                    optimize_spanish = st.checkbox("Optimize Spanish terms", value=False)
+                    shuffle_keywords = st.checkbox("Shuffle keywords", value=False)
 
-        # Button to stop the automated search
-        if 'search_process' in st.session_state and st.session_state.search_process:
-            if st.button("Stop Automated Search"):
-                st.session_state.search_process.terminate()
-                st.session_state.search_process = None
+                # Email settings if needed
+                with st.expander("Email Settings"):
+                    enable_email_sending = st.checkbox("Enable Email Sending", value=False)
+                    if enable_email_sending:
+                        email_templates = session.query(EmailTemplate).filter_by(campaign_id=campaign.id).all()
+                        if email_templates:
+                            template_options = {f"{t.template_name} (ID: {t.id})": t.id for t in email_templates}
+                            selected_template = st.selectbox("Select Email Template", list(template_options.keys()))
+                            template_id = template_options[selected_template]
+                            
+                            email_settings = session.query(EmailSettings).filter_by(is_active=True).all()
+                            if email_settings:
+                                from_email = st.selectbox("From Email", 
+                                    [setting.email for setting in email_settings])
+                                reply_to = st.text_input("Reply-To Email (optional)")
+                            else:
+                                st.warning("No active email settings found. Please configure email settings first.")
+                                enable_email_sending = False
+                        else:
+                            st.warning("No email templates found. Please create an email template first.")
+                            enable_email_sending = False
 
-                # Update the automation log status
-                automation_log = session.query(AutomationLog).get(st.session_state.automation_log_id)
-                if automation_log:
-                    automation_log.status = "stopped"
-                    automation_log.end_time = datetime.now()
+                # Button to start the automated search
+                if st.button("Start Automated Search"):
+                    # Create automation log entry
+                    automation_log = AutomationLog(
+                        campaign_id=active_campaign_id,
+                        start_time=datetime.now(),
+                        status="running",
+                        logs=[{
+                            'timestamp': datetime.now().isoformat(),
+                            'level': 'info',
+                            'message': 'Starting automated search',
+                            'search_settings': {
+                                'num_results': num_results,
+                                'ignore_previously_fetched': ignore_previously_fetched,
+                                'language': language,
+                                'optimize_english': optimize_english,
+                                'optimize_spanish': optimize_spanish,
+                                'shuffle_keywords_option': shuffle_keywords,
+                                'enable_email_sending': enable_email_sending,
+                                'from_email': from_email if enable_email_sending else None,
+                                'reply_to': reply_to if enable_email_sending else None,
+                                'template_id': template_id if enable_email_sending else None,
+                                'search_terms': [term.term for term in search_terms]
+                            }
+                        }]
+                    )
+                    session.add(automation_log)
                     session.commit()
-                    st.success("Automated search stopped.")
 
-        # Display worker logs
-        if 'worker_log_state' in st.session_state:
-            st.subheader("Worker Logs:")
-            worker_log_state = st.session_state.worker_log_state
-            if worker_log_state['buffer']:
-                for log in worker_log_state['buffer']:
-                    st.text(log)
-            else:
-                st.info("No logs available.")
+                    # Start the search process
+                    process = run_automated_search(automation_log.id)
+                    if process:
+                        st.session_state.search_process = process
+                        st.session_state.automation_log_id = automation_log.id
+                        st.success(f"Automated search started with log ID: {automation_log.id}")
+                    else:
+                        st.error("Failed to start automated search.")
 
-            # Auto-scroll functionality
-            if worker_log_state['auto_scroll']:
-                js = f"""
-                <script>
-                    var element = window.parent.document.getElementById('worker-logs');
-                    if (element) {{
-                        element.scrollTop = element.scrollHeight;
-                    }}
-                </script>
-                """
-                st.components.v1.html(js)
+                # Display logs if an automation log ID exists
+                if 'automation_log_id' in st.session_state:
+                    automation_log = session.query(AutomationLog).get(st.session_state.automation_log_id)
+                    if automation_log:
+                        st.subheader("Search Progress")
+                        
+                        # Display status and metrics
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Status", automation_log.status)
+                        col2.metric("Leads Gathered", automation_log.leads_gathered or 0)
+                        col3.metric("Emails Sent", automation_log.emails_sent or 0)
+                        
+                        # Display logs
+                        st.subheader("Search Logs")
+                        log_container = st.container()
+                        with log_container:
+                            if automation_log.logs:
+                                for log in automation_log.logs:
+                                    if isinstance(log, dict):
+                                        timestamp = log.get('timestamp', '')
+                                        level = log.get('level', 'info')
+                                        message = log.get('message', '')
+                                        
+                                        icon = {
+                                            'info': 'ℹ️',
+                                            'success': '✅',
+                                            'warning': '⚠️',
+                                            'error': '❌'
+                                        }.get(level, 'ℹ️')
+                                        
+                                        st.markdown(f"{icon} `{timestamp}` {message}")
 
-            # Button to toggle auto-scroll
-            if st.button("Toggle Auto-Scroll"):
-                worker_log_state['auto_scroll'] = not worker_log_state['auto_scroll']
-                st.experimental_rerun()
-
-        # Button to refresh logs
-        if st.button("Refresh Logs"):
-            st.experimental_rerun()
-
-        # Button to clear logs
-        if st.button("Clear Logs"):
-            if 'worker_log_state' in st.session_state:
-                st.session_state.worker_log_state['buffer'] = []
-                st.session_state.worker_log_state['last_count'] = 0
-                st.session_state.worker_log_state['update_counter'] = 0
-            st.experimental_rerun()
-
-        # Cleanup search state if it's been too long since the last update
-        cleanup_search_state()
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        logging.exception("Error in manual search worker page")
 
 def get_active_project_id():
     """Get the currently active project ID from session state"""
     if not st.session_state.get("is_initialized"):
         initialize_session_state()
     validate_active_ids()
-    return st.session_state.get("current_project_id")
+    # Ensure the returned value is an integer
+    return int(st.session_state.get("current_project_id"))
 
 def set_active_project_id(project_id):
     """Set the active project ID in session state"""
-    st.session_state.current_project_id = project_id
+    # Ensure the ID is stored as an integer
+    st.session_state.current_project_id = int(project_id)
 
 def get_active_campaign_id():
     """Get the currently active campaign ID from session state"""
     if not st.session_state.get("is_initialized"):
         initialize_session_state()
     validate_active_ids()
-    return st.session_state.get("current_campaign_id")
+    # Ensure the returned value is an integer
+    return int(st.session_state.get("current_campaign_id"))
 
 def set_active_campaign_id(campaign_id):
     """Set the active campaign ID in session state"""
-    st.session_state.current_campaign_id = campaign_id
+    # Ensure the ID is stored as an integer
+    st.session_state.current_campaign_id = int(campaign_id)
 
 def safe_datetime_compare(date1, date2):
     """Safely compare two datetime objects, handling None values"""
@@ -3122,6 +3175,10 @@ def get_active_campaign_id():
     validate_active_ids()
     return st.session_state.get('current_campaign_id')
 
+def set_active_campaign_id(campaign_id):
+    """Set the active campaign ID in session state"""
+    st.session_state.current_campaign_id = campaign_id
+
 def perform_search(session, search_terms, project_id, campaign_id, num_results, language, 
                   ignore_previously_fetched=True, optimize_english=False, 
                   optimize_spanish=False, shuffle_keywords_option=False):
@@ -3202,7 +3259,9 @@ def process_search_result(session, result, project_id, campaign_id):
                 
                 # Save lead source information
                 if result.get('URL'):
-                    search_term = session.query(SearchTerm).filter_by(campaign_id=campaign_id).first()
+                    # Fetch the SearchTerm object using the ID
+                    search_term_id = result.get('Search Term ID')
+                    search_term = session.query(SearchTerm).get(search_term_id)
                     if search_term:
                         lead_source = LeadSource(
                             lead_id=lead.id,
