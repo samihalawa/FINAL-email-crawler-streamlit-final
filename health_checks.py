@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
-import importlib
+import importlib.machinery
 import glob
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -54,12 +54,11 @@ def check_page_imports(page_path: str) -> Dict:
     """Check if a page's imports are working and measure load time"""
     try:
         start_time = time.time()
-        spec = importlib.util.spec_from_file_location(
+        loader = importlib.machinery.SourceFileLoader(
             os.path.basename(page_path).replace(".py", ""),
             page_path
         )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = loader.load_module()
         load_time = time.time() - start_time
 
         return {
@@ -125,12 +124,12 @@ def display_health_dashboard():
     st.title("🏥 System Health Dashboard")
 
     # Add auto-refresh option
-    auto_refresh = st.checkbox("Auto-refresh (30s)", value=False)
+    auto_refresh = st.checkbox("Auto-refresh (30s)", value=False, key="health_refresh")
     if auto_refresh:
         st.empty()
         st.rerun()
 
-    if st.button("Run Health Check") or auto_refresh:
+    if st.button("Run Health Check", key="run_health_check") or auto_refresh:
         results = run_health_checks()
 
         # Display system metrics
