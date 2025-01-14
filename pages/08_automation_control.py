@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
@@ -5,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
 from dotenv import load_dotenv
+from models import AutomationLog, Campaign
 
 # Load environment variables
 load_dotenv()
@@ -18,8 +20,6 @@ st.title("⚙️ Automation Control")
 
 try:
     with SessionLocal() as session:
-        from streamlit_app import AutomationLog, Campaign
-        
         # Display Active Automations
         st.subheader("Active Automations")
         active_logs = session.query(AutomationLog).filter(
@@ -74,6 +74,8 @@ try:
                 for log_entry in automation_log.logs:
                     if isinstance(log_entry, dict):
                         st.text(f"[{log_entry.get('timestamp', 'Unknown Time')}] {log_entry.get('message', '')}")
+            else:
+                st.info("No logs found for this automation")
 
 except Exception as e:
     st.error(f"Error in Automation Control: {str(e)}")

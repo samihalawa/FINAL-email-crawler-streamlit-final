@@ -1,8 +1,10 @@
+
 import streamlit as st
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
+from models import KnowledgeBase, EmailTemplate, Campaign
 
 # Load environment variables
 load_dotenv()
@@ -16,23 +18,27 @@ st.title("🤖 AutoclientAI")
 
 try:
     with SessionLocal() as session:
-        from streamlit_app import generate_or_adjust_email_template, KnowledgeBase, EmailTemplate
-        
         # Get knowledge base info
-        kb = session.query(KnowledgeBase).filter_by(project_id=1).first()
+        project_id = st.session_state.get('current_project_id', 1)
+        kb = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
+        
         if not kb:
             st.warning("Please set up your Knowledge Base first")
         else:
             st.subheader("Email Template Generation")
             
             with st.form("generate_template"):
-                prompt = st.text_area("Describe what kind of email template you want to generate", 
-                                    help="Provide details about the tone, purpose, and key points to include.")
+                prompt = st.text_area(
+                    "Describe what kind of email template you want to generate", 
+                    help="Provide details about the tone, purpose, and key points to include."
+                )
                 
+                campaign_id = st.session_state.get('current_campaign_id', 1)
+                templates = session.query(EmailTemplate).filter_by(campaign_id=campaign_id).all()
                 template_to_adjust = st.selectbox(
                     "Select template to adjust (optional)",
                     options=[(None, "Create New Template")] + 
-                            [(t.id, t.template_name) for t in session.query(EmailTemplate).all()],
+                            [(t.id, t.template_name) for t in templates],
                     format_func=lambda x: x[1]
                 )
                 
@@ -47,7 +53,8 @@ try:
                                     "body": template.body_content
                                 }
                         
-                        result = generate_or_adjust_email_template(prompt, kb.to_dict() if kb else None, current_template)
+                        # This function would need to be implemented separately
+                        result = generate_ai_template(prompt, kb, current_template)
                         
                         if result:
                             st.subheader("Generated Template")
@@ -61,7 +68,7 @@ try:
                                     template_name=f"AI Generated - {result['subject'][:30]}",
                                     subject=result["subject"],
                                     body_content=result["body"],
-                                    campaign_id=1,
+                                    campaign_id=campaign_id,
                                     is_ai_customizable=True
                                 )
                                 session.add(new_template)
@@ -72,3 +79,11 @@ try:
 
 except Exception as e:
     st.error(f"Error in AutoclientAI: {str(e)}")
+
+def generate_ai_template(prompt, kb, current_template=None):
+    # Placeholder for AI template generation logic
+    # This would integrate with OpenAI or similar service
+    return {
+        "subject": "Sample AI Generated Subject",
+        "body": "Sample AI Generated Body"
+    }
