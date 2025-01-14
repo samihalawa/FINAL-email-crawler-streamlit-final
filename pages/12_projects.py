@@ -1,9 +1,11 @@
+
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
+from models import Project, Campaign, KnowledgeBase, Base
 
 # Load environment variables
 load_dotenv()
@@ -17,8 +19,6 @@ st.title("🚀 Projects & Campaigns")
 
 try:
     with SessionLocal() as session:
-        from streamlit_app import Project, Campaign, KnowledgeBase
-        
         # Project Management
         st.subheader("Projects")
         
@@ -37,10 +37,25 @@ try:
                     'Name': project.project_name,
                     'Campaigns': campaign_count,
                     'Has KB': 'Yes' if kb else 'No',
-                    'Created': project.created_at
+                    'Created': project.created_at.strftime('%Y-%m-%d %H:%M')
                 })
             
-            st.dataframe(pd.DataFrame(project_data))
+            df = pd.DataFrame(project_data)
+            st.dataframe(df, use_container_width=True)
+            
+            # Project selection
+            selected_project_name = st.selectbox(
+                "Select Active Project",
+                options=[p.project_name for p, _ in projects],
+                index=0 if 'current_project_id' not in st.session_state else 
+                      next((i for i, (p, _) in enumerate(projects) 
+                           if p.id == st.session_state.get('current_project_id')), 0)
+            )
+            
+            selected_project = next((p for p, _ in projects if p.project_name == selected_project_name), None)
+            if selected_project:
+                st.session_state['current_project_id'] = selected_project.id
+                st.success(f"Active project set to: {selected_project_name}")
         
         # Add new project
         with st.form("new_project"):
@@ -61,31 +76,21 @@ try:
                 else:
                     st.warning("Please enter a project name")
         
-        # Campaign Management
-        st.subheader("Campaigns")
-        
-        # Select project for campaign
-        selected_project = st.selectbox(
-            "Select Project",
-            options=[(p.id, p.project_name) for p, _ in projects],
-            format_func=lambda x: x[1]
-        )
-        
-        if selected_project:
-            # Display project's campaigns
-            campaigns = session.query(Campaign).filter_by(project_id=selected_project[0]).all()
+        # Campaign Management for selected project
+        if 'current_project_id' in st.session_state:
+            st.subheader("Project Campaigns")
+            campaigns = session.query(Campaign).filter_by(project_id=st.session_state['current_project_id']).all()
+            
             if campaigns:
-                campaign_data = []
-                for campaign in campaigns:
-                    campaign_data.append({
-                        'ID': campaign.id,
-                        'Name': campaign.campaign_name,
-                        'Type': campaign.campaign_type,
-                        'Auto Send': campaign.auto_send,
-                        'AI Customization': campaign.ai_customization,
-                        'Created': campaign.created_at
-                    })
-                st.dataframe(pd.DataFrame(campaign_data))
+                campaign_data = [{
+                    'ID': c.id,
+                    'Name': c.campaign_name,
+                    'Type': c.campaign_type,
+                    'Auto Send': '✓' if c.auto_send else '✗',
+                    'AI Custom': '✓' if c.ai_customization else '✗',
+                    'Created': c.created_at.strftime('%Y-%m-%d %H:%M')
+                } for c in campaigns]
+                st.dataframe(pd.DataFrame(campaign_data), use_container_width=True)
             
             # Add new campaign
             with st.form("new_campaign"):
@@ -101,7 +106,7 @@ try:
                             new_campaign = Campaign(
                                 campaign_name=campaign_name,
                                 campaign_type=campaign_type,
-                                project_id=selected_project[0],
+                                project_id=st.session_state['current_project_id'],
                                 auto_send=auto_send,
                                 ai_customization=ai_customization
                             )

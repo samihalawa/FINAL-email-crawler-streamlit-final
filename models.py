@@ -33,7 +33,7 @@ class Campaign(Base):
     project = relationship("Project", back_populates="campaigns")
     email_campaigns = relationship("EmailCampaign", back_populates="campaign")
     search_terms = relationship("SearchTerm", back_populates="campaign")
-    campaign_leads = relationship("CampaignLead", back_populates="campaign")
+    campaign_leads = relationship("CampaignLead", back_populates="campaign", cascade="all, delete-orphan")
 
 class CampaignLead(Base):
     __tablename__ = 'campaign_leads'
@@ -67,7 +67,7 @@ class KnowledgeBase(Base):
     example_email = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    project = relationship("Project", back_populates="knowledge_base")
+    project = relationship("Project", back_populates="knowledge_base", cascade="all, delete-orphan")
 
 class Lead(Base):
     __tablename__ = 'leads'

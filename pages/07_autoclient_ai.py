@@ -1,4 +1,3 @@
-
 import streamlit as st
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -21,18 +20,18 @@ try:
         # Get knowledge base info
         project_id = st.session_state.get('current_project_id', 1)
         kb = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
-        
+
         if not kb:
             st.warning("Please set up your Knowledge Base first")
         else:
             st.subheader("Email Template Generation")
-            
+
             with st.form("generate_template"):
                 prompt = st.text_area(
                     "Describe what kind of email template you want to generate", 
                     help="Provide details about the tone, purpose, and key points to include."
                 )
-                
+
                 campaign_id = st.session_state.get('current_campaign_id', 1)
                 templates = session.query(EmailTemplate).filter_by(campaign_id=campaign_id).all()
                 template_to_adjust = st.selectbox(
@@ -41,9 +40,12 @@ try:
                             [(t.id, t.template_name) for t in templates],
                     format_func=lambda x: x[1]
                 )
-                
-                if st.form_submit_button("Generate Template"):
+
+                if st.button("Generate Template"):
                     try:
+                        if 'current_project_id' not in st.session_state:
+                            st.error("Please select a project first")
+                            return
                         current_template = None
                         if template_to_adjust[0]:
                             template = session.query(EmailTemplate).get(template_to_adjust[0])
@@ -52,17 +54,17 @@ try:
                                     "subject": template.subject,
                                     "body": template.body_content
                                 }
-                        
+
                         # This function would need to be implemented separately
                         result = generate_ai_template(prompt, kb, current_template)
-                        
+
                         if result:
                             st.subheader("Generated Template")
                             st.text("Subject:")
                             st.write(result["subject"])
                             st.text("Body:")
                             st.markdown(result["body"], unsafe_allow_html=True)
-                            
+
                             if st.button("Save as New Template"):
                                 new_template = EmailTemplate(
                                     template_name=f"AI Generated - {result['subject'][:30]}",

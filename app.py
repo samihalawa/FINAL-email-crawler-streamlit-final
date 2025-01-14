@@ -1,5 +1,10 @@
 import streamlit as st
+from dotenv import load_dotenv
+from models import *
 import logging
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 # Must be first Streamlit command
 st.set_page_config(
@@ -23,10 +28,10 @@ def initialize_settings():
 
         engine = create_engine(DATABASE_URL)
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-        
+
         with engine.connect() as conn:
             return True
-        
+
     except Exception as e:
         logging.exception(f"Error in initialize_settings: {str(e)}")
         return False
