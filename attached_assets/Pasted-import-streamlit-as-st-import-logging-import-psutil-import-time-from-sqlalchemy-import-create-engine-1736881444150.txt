@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
-import importlib.machinery
+import importlib
 import glob
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -54,11 +54,12 @@ def check_page_imports(page_path: str) -> Dict:
     """Check if a page's imports are working and measure load time"""
     try:
         start_time = time.time()
-        loader = importlib.machinery.SourceFileLoader(
+        spec = importlib.util.spec_from_file_location(
             os.path.basename(page_path).replace(".py", ""),
             page_path
         )
-        module = loader.load_module()
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
         load_time = time.time() - start_time
 
         return {
@@ -124,12 +125,12 @@ def display_health_dashboard():
     st.title("🏥 System Health Dashboard")
 
     # Add auto-refresh option
-    auto_refresh = st.checkbox("Auto-refresh (30s)", value=False, key="health_refresh")
+    auto_refresh = st.checkbox("Auto-refresh (30s)", value=False)
     if auto_refresh:
         st.empty()
         st.rerun()
 
-    if st.button("Run Health Check", key="run_health_check") or auto_refresh:
+    if st.button("Run Health Check") or auto_refresh:
         results = run_health_checks()
 
         # Display system metrics
@@ -141,7 +142,7 @@ def display_health_dashboard():
             cols[1].metric("CPU Usage", system["cpu_usage"])
             cols[2].metric("Disk Usage", system["disk_usage"])
         else:
-            logging.error(f"System metrics error: {system.get('error', 'Unknown error')}")
+            st.error(f"System metrics error: {system.get('error', 'Unknown error')}")
 
         # Display database status
         st.subheader("Database Status")
@@ -152,66 +153,26 @@ def display_health_dashboard():
             cols[1].metric("Database Size", db_status["db_size"])
             cols[2].metric("Active Connections", str(db_status["active_connections"]))
         else:
-            logging.error(f"Database connection failed: {db_status.get('error', 'Unknown error')}")
+            st.error(f"Database connection failed: {db_status.get('error', 'Unknown error')}")
 
         # Display background processes
         st.subheader("Background Processes")
         bg_processes = results["background_processes"]
         if bg_processes["status"]:
-            logging.info(f"Search Worker: {bg_processes['search_worker']}")
+            st.info(f"Search Worker: {bg_processes['search_worker']}")
         else:
-            logging.error(f"Process check error: {bg_processes.get('error', 'Unknown error')}")
+            st.error(f"Process check error: {bg_processes.get('error', 'Unknown error')}")
 
         # Display page status
         st.subheader("Page Status")
         for page, status in results["pages"].items():
             if status["status"]:
-                logging.info(f"{page}: OK (Load time: {status['load_time']})")
+                st.success(f"{page}: OK (Load time: {status['load_time']})")
             else:
-                logging.error(f"{page}: Failed - {status.get('error', 'Unknown error')}")
+                st.error(f"{page}: Failed - {status.get('error', 'Unknown error')}")
 
         # Display timestamp
-        logging.info(f"Last checked: {results['timestamp']}")
-        return results
-
-def console_display_results(results: Dict):
-    """Display results in console format"""
-    print("\n=== Health Check Results ===")
-    print(f"Timestamp: {results['timestamp']}")
-
-    print("\nSystem Resources:")
-    system = results["system"]
-    if system["status"]:
-        print(f"Memory Usage: {system['memory_used']}")
-        print(f"CPU Usage: {system['cpu_usage']}")
-        print(f"Disk Usage: {system['disk_usage']}")
-    else:
-        print(f"Error: {system.get('error', 'Unknown error')}")
-
-    print("\nDatabase Status:")
-    db = results["database"]
-    if db["status"]:
-        print(f"Response Time: {db['response_time']}")
-        print(f"Database Size: {db['db_size']}")
-        print(f"Active Connections: {db['active_connections']}")
-    else:
-        print(f"Error: {db.get('error', 'Unknown error')}")
-
-    print("\nBackground Processes:")
-    bg = results["background_processes"]
-    if bg["status"]:
-        print(f"Search Worker: {bg['search_worker']}")
-    else:
-        print(f"Error: {bg.get('error', 'Unknown error')}")
-
-    print("\nPage Status:")
-    for page, status in results["pages"].items():
-        if status["status"]:
-            print(f"{page}: OK (Load time: {status['load_time']})")
-        else:
-            print(f"{page}: Failed - {status.get('error', 'Unknown error')}")
+        st.caption(f"Last checked: {results['timestamp']}")
 
 if __name__ == "__main__":
-    # When run directly, display results in console
-    results = run_health_checks()
-    console_display_results(results)
+    display_health_dashboard()

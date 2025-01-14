@@ -19,6 +19,10 @@ author = "agent"
 task = "workflow.run"
 args = "Streamlit App"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Search Worker"
+
 [[workflows.workflow]]
 name = "Streamlit App"
 author = "agent"
@@ -33,6 +37,20 @@ task = "packager.installForAll"
 task = "shell.exec"
 args = "streamlit run app.py"
 waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Search Worker"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python automated_search.py"
 
 [[ports]]
 localPort = 5000
