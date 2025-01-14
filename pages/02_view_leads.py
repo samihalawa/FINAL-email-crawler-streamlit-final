@@ -1,7 +1,9 @@
+
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
+from models import *
 import os
 from dotenv import load_dotenv
 
@@ -13,14 +15,31 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-st.title("👥 View Leads")
+st.title("📋 View Leads")
 
 # Fetch and display leads
 try:
     with SessionLocal() as session:
-        from streamlit_app import fetch_leads_with_sources
+        query = session.query(
+            Lead,
+            EmailCampaign.status.label('Last Email Status'),
+            EmailCampaign.sent_at.label('Last Contact')
+        ).outerjoin(EmailCampaign)
         
-        leads_df = fetch_leads_with_sources(session)
+        leads_data = []
+        for lead, status, last_contact in query.all():
+            leads_data.append({
+                'email': lead.email,
+                'company': lead.company,
+                'first_name': lead.first_name,
+                'last_name': lead.last_name,
+                'job_title': lead.job_title,
+                'Last Email Status': status,
+                'Last Contact': last_contact,
+                'created_at': lead.created_at
+            })
+        
+        leads_df = pd.DataFrame(leads_data)
         
         if not leads_df.empty:
             # Add filters
@@ -28,11 +47,11 @@ try:
             col1, col2 = st.columns(2)
             
             with col1:
-                companies = sorted(leads_df['company'].unique())
+                companies = sorted(leads_df['company'].dropna().unique())
                 selected_companies = st.multiselect("Filter by company", companies)
             
             with col2:
-                statuses = sorted(leads_df['Last Email Status'].unique())
+                statuses = sorted(leads_df['Last Email Status'].dropna().unique())
                 selected_statuses = st.multiselect("Filter by status", statuses)
             
             # Apply filters
@@ -51,13 +70,6 @@ try:
                     "Last Contact": st.column_config.DatetimeColumn("Last Contact"),
                     "created_at": st.column_config.DatetimeColumn("Created At")
                 }
-            )
-            
-            st.download_button(
-                "Download CSV",
-                leads_df.to_csv(index=False).encode('utf-8'),
-                "leads.csv",
-                "text/csv"
             )
         else:
             st.info("No leads found in the database")
