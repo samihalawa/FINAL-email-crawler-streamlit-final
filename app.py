@@ -1,65 +1,88 @@
 import streamlit as st
-from streamlit_option_menu import option_menu
-import os
-from dotenv import load_dotenv
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+import logging
 
-# Load environment variables
-load_dotenv()
-
-# Database configuration
-DATABASE_URL = os.getenv('DATABASE_URL')
-if not DATABASE_URL:
-    st.error("Database configuration missing!")
-    st.stop()
-
-# Initialize database connection
-try:
-    engine = create_engine(DATABASE_URL)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    
-    # Test connection
-    with engine.connect() as conn:
-        st.sidebar.success("Database connected!")
-except Exception as e:
-    st.error(f"Database connection failed: {str(e)}")
-    st.stop()
-
-# Page configuration
+# Must be first Streamlit command
 st.set_page_config(
-    page_title="Lead Management System",
-    page_icon="🎯",
-    layout="wide"
+    page_title="AutoclientAI",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Main navigation
-st.title("Lead Management System")
+from streamlit_option_menu import option_menu
+from streamlit_app import *
 
-# Welcome message
-st.write("""
-Welcome to the Lead Management System. Use the sidebar navigation to:
-- Search for leads manually
-- View and manage existing leads
-- Configure search terms
-- Adjust system settings
-""")
+def initialize_settings():
+    # Placeholder:  Replace with actual initialization logic from streamlit_app.py or elsewhere
+    try:
+        #Example: Load environment variables etc.
+        load_dotenv()
+        DATABASE_URL = os.getenv('DATABASE_URL')
+        if not DATABASE_URL:
+            return False
 
-# Display some basic stats
-try:
-    with SessionLocal() as session:
-        from streamlit_app import Lead, Campaign, SearchTerm
+        engine = create_engine(DATABASE_URL)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         
-        total_leads = session.query(Lead).count()
-        total_campaigns = session.query(Campaign).count()
-        total_search_terms = session.query(SearchTerm).count()
+        with engine.connect() as conn:
+            return True
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Leads", total_leads)
-        with col2:
-            st.metric("Active Campaigns", total_campaigns)
-        with col3:
-            st.metric("Search Terms", total_search_terms)
-except Exception as e:
-    st.error(f"Error loading statistics: {str(e)}")
+    except Exception as e:
+        logging.exception(f"Error in initialize_settings: {str(e)}")
+        return False
+
+def initialize_session_state():
+    # Placeholder: Replace with actual session state initialization logic
+    st.session_state.update({"key1": "value1"})
+
+
+def initialize_pages():
+    # Placeholder:  Replace with actual page initialization.  This likely involves defining functions for each page.
+    pages = {
+        "Manual Search": manual_search,
+        "View Leads": view_leads,
+        "Configure Search": configure_search,
+        "Settings": settings,
+        "Email": send_email_ses,
+        "Reporting": reporting,
+        "Automation": automation,
+        "Admin": admin,
+        "Tools": tools,
+        "Notes": notes,
+        "Advanced": advanced,
+        "Email Templates": email_templates,
+        "Launch": launch,
+    }
+    return pages
+
+def main():
+    # Initialize settings and check database state
+    if not initialize_settings():
+        st.error("Failed to initialize application. Please check the logs and configuration.")
+        return
+
+    # Initialize session state with defaults
+    initialize_session_state()
+
+    # Initialize pages
+    pages = initialize_pages()
+
+    # Create navigation menu
+    with st.sidebar:
+        selected = option_menu(
+            menu_title="Navigation",
+            options=list(pages.keys()),
+            icons=["search", "box-seam", "people", "key", "envelope", "book", "robot", 
+                  "gear", "tools", "journal-text", "sliders", "envelope-paper", "rocket"],
+            menu_icon="house",
+            default_index=0
+        )
+
+    try:
+        pages[selected]()
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        logging.exception("An error occurred in the main function")
+
+if __name__ == "__main__":
+    main()
