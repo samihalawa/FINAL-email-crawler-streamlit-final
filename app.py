@@ -11,8 +11,7 @@ st.set_page_config(
     page_title="AutoclientAI",
     page_icon="🤖",
     layout="wide",
-    initial_sidebar_state="expanded",
-    port=5000
+    initial_sidebar_state="expanded"
 )
 
 # Configure logging

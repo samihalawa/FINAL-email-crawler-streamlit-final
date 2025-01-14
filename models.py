@@ -67,7 +67,7 @@ class KnowledgeBase(Base):
     example_email = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    project = relationship("Project", back_populates="knowledge_base", cascade="all, delete-orphan")
+    project = relationship("Project", back_populates="knowledge_base")
 
 class Lead(Base):
     __tablename__ = 'leads'

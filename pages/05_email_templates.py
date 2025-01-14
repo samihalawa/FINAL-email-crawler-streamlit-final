@@ -17,7 +17,7 @@ st.title("✉️ Email Templates")
 
 try:
     with SessionLocal() as session:
-        from streamlit_app import EmailTemplate
+        from models import EmailTemplate
         
         # Display existing templates
         st.subheader("Existing Templates")
