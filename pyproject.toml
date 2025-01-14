@@ -50,4 +50,6 @@ dependencies = [
     "trafilatura>=2.0.0",
     "psutil>=6.1.1",
     "importlib>=1.0.4",
+    "google-search>=1.1.1",
+    "googlesearch-python>=1.2.5",
 ]

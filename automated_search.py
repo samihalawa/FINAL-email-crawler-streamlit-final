@@ -1,9 +1,10 @@
-import logging, uuid, json, argparse, os, signal
+import logging, uuid, json, argparse, os, signal, time
+import time
 from datetime import datetime
-from models import EmailTemplate, EmailSettings, AutomationLog, SearchTerm
+from models import EmailTemplate, EmailSettings, AutomationLog, SearchTerm, Base
 from sqlalchemy import create_engine, func, distinct
 from sqlalchemy.orm import sessionmaker, aliased
-from app import manual_search, SessionLocal
+from googlesearch import search as google_search
 
 # Configure logging
 logging.basicConfig(
@@ -13,6 +14,15 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+# Initialize database
+DATABASE_URL = os.getenv('DATABASE_URL')
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL not set")
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base.metadata.create_all(bind=engine)
 
 def save_pid():
     """Save current process ID to file"""
@@ -63,14 +73,13 @@ def main():
 
             logging.info(f"Created new automation log with ID: {automation_log.id}")
 
-            # Run until stopped
             while True:
                 if automation_log.status != 'running':
                     logging.info("Search worker stopped")
                     break
 
-                # Sleep to prevent high CPU usage
-                signal.pause()
+                # Add a small sleep to prevent high CPU usage
+                time.sleep(1)  # Use time.sleep instead of signal.pause()
 
         except Exception as e:
             logging.error(f"Error in search process: {str(e)}")
