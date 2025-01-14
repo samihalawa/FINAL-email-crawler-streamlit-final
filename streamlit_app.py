@@ -62,8 +62,8 @@ class Campaign(Base):
     auto_send = Column(Boolean, default=False)
     loop_automation = Column(Boolean, default=False)
     ai_customization = Column(Boolean, default=False)
-    max_emails_per_group = Column(BigInteger, default=40)
-    loop_interval = Column(BigInteger, default=60)
+    max_emails_per_group = Column(BigInteger, default=1000)
+    loop_interval = Column(BigInteger, default=600)
     project = relationship("Project", back_populates="campaigns")
     email_campaigns = relationship("EmailCampaign", back_populates="campaign")
     search_terms = relationship("SearchTerm", back_populates="campaign")
@@ -932,7 +932,7 @@ def manual_search_page():
             maxtags=10,
             key='search_terms_input'
         )
-        num_results = st.slider("Results per term", 1, 500, 10)
+        num_results = st.slider("Results per term", 1, 50000, 100)
 
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
