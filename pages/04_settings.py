@@ -16,7 +16,7 @@ st.title("⚙️ Settings")
 
 try:
     with SessionLocal() as session:
-        from streamlit_app import EmailSettings, Settings
+        from models import EmailSettings, Settings
         
         # Email Settings
         st.subheader("Email Settings")
