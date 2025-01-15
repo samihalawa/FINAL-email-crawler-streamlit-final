@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from sqlalchemy import (
     func, create_engine, Column, BigInteger, Text, DateTime, ForeignKey, 
-    Boolean, JSON, select, text, distinct, and_, or_, inspect
+    Boolean, JSON, select, text, distinct, and_, or_, inspect, String, Integer
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.exc import SQLAlchemyError
@@ -97,18 +97,18 @@ class EmailTemplate(Base):
 
 class EmailCampaign(Base):
     __tablename__ = 'email_campaigns'
-    
+
     id = Column(BigInteger, primary_key=True)
     lead_id = Column(BigInteger, ForeignKey('leads.id'))
     campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     template_id = Column(BigInteger, ForeignKey('email_templates.id'))
-    status = Column(String)
+    status = Column(String(50))
     sent_at = Column(DateTime(timezone=True))
     opened_at = Column(DateTime(timezone=True))
     clicked_at = Column(DateTime(timezone=True))
     open_count = Column(Integer, default=0)
     click_count = Column(Integer, default=0)
-    
+
     # Relationships
     lead = relationship("Lead", back_populates="email_campaigns")
     campaign = relationship("Campaign", back_populates="email_campaigns")
@@ -235,7 +235,7 @@ class AIRequestLog(Base):
 
 class MigrationLog(Base):
     __tablename__ = 'migration_logs'
-    
+
     id = Column(BigInteger, primary_key=True)
     table_name = Column(Text)
     column_name = Column(Text)
