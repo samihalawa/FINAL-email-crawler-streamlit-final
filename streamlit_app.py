@@ -780,21 +780,49 @@ def log_ai_request(session, function_name, prompt, response, lead_id=None, email
 
 def save_lead(session, email, first_name=None, last_name=None, company=None, job_title=None, phone=None, url=None, search_term_id=None, created_at=None):
     try:
+        # Check if lead already exists
         existing_lead = session.query(Lead).filter_by(email=email).first()
         if existing_lead:
+            # Update existing lead's information if provided
             for attr in ['first_name', 'last_name', 'company', 'job_title', 'phone', 'created_at']:
-                if locals()[attr]: setattr(existing_lead, attr, locals()[attr])
+                if locals()[attr]: 
+                    setattr(existing_lead, attr, locals()[attr])
             lead = existing_lead
         else:
-            lead = Lead(email=email, first_name=first_name, last_name=last_name, company=company, job_title=job_title, phone=phone, created_at=created_at or datetime.utcnow())
+            # Create new lead
+            lead = Lead(
+                email=email, 
+                first_name=first_name, 
+                last_name=last_name, 
+                company=company, 
+                job_title=job_title, 
+                phone=phone, 
+                created_at=created_at or datetime.utcnow()
+            )
             session.add(lead)
-        session.flush()
-        lead_source = LeadSource(lead_id=lead.id, url=url, search_term_id=search_term_id)
+        
+        session.flush()  # Ensure lead has an ID
+
+        # Save lead source
+        lead_source = LeadSource(
+            lead_id=lead.id, 
+            url=url, 
+            search_term_id=search_term_id
+        )
         session.add(lead_source)
-        campaign_lead = CampaignLead(campaign_id=get_active_campaign_id(), lead_id=lead.id, status="Not Contacted", created_at=datetime.utcnow())
+
+        # Create campaign lead association
+        campaign_lead = CampaignLead(
+            campaign_id=get_active_campaign_id(), 
+            lead_id=lead.id, 
+            status="Not Contacted", 
+            created_at=datetime.utcnow()
+        )
         session.add(campaign_lead)
+        
         session.commit()
         return lead
+
     except Exception as e:
         logging.error(f"Error saving lead: {str(e)}")
         session.rollback()
@@ -928,7 +956,7 @@ def manual_search_page():
             maxtags=10,
             key='search_terms_input'
         )
-        num_results = st.slider("Results per term", 1, 500, 10)
+        num_results = st.slider("Results per term", 1, 50000, 10)
 
     with col2:
         enable_email_sending = st.checkbox("Enable email sending", value=True)
