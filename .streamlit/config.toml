@@ -1,3 +1,4 @@
+
 [server]
 headless = true
 address = "0.0.0.0"
@@ -8,12 +9,9 @@ primaryColor = "#007bff"
 backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#f8f9fa"
 textColor = "#212529"
+
 [browser]
 gatherUsageStats = false
-
-[server]
-port = 5000
-address = "0.0.0.0"
 
 [logger]
 level = "info"
