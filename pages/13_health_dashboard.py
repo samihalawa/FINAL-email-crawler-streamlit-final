@@ -16,3 +16,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+import streamlit as st
+from health_checks import display_health_dashboard
+
+st.title("🏥 System Health Dashboard")
+display_health_dashboard()

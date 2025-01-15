@@ -40,7 +40,7 @@ def display_logs(automation_log_id):
 try:
     with SessionLocal() as session:
         campaign_id = st.session_state.get('current_campaign_id', 1)
-        campaign = session.query(Campaign).get(campaign_id)
+        campaign = session.get(Campaign, campaign_id)
 
         if not campaign:
             st.warning("Please select a campaign first")
