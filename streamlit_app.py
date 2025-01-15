@@ -458,22 +458,34 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
         logging.error(f"Error saving email campaign: {str(e)}")
         session.rollback()
 
-def update_log(log_container, message, level='info'):
+def update_log(log_container, message, level='info', url=None):
     icon = {'info': '🔵', 'success': '🟢', 'warning': '🟠', 'error': '🔴', 'email_sent': '🟣'}.get(level, '⚪')
-    log_entry = f"{icon} {message}"
     
-    # Simple console logging without HTML
-    print(f"{icon} {message.split('<')[0]}")  # Only print the first part of the message before any HTML tags
-    
-    if 'log_entries' not in st.session_state:
-        st.session_state.log_entries = []
-    
-    # HTML-formatted log entry for Streamlit display
-    html_log_entry = f"{icon} {message}"
-    st.session_state.log_entries.append(html_log_entry)
-    
+    if url:
+        # Handle URL-specific logs (make them collapsible)
+        if 'url_logs' not in st.session_state:
+            st.session_state.url_logs = {}
+        if url not in st.session_state.url_logs:
+            st.session_state.url_logs[url] = []
+        st.session_state.url_logs[url].append(f"{icon} {message}")
+    else:
+        # General log entry
+        log_entry = f"{icon} {message}"
+        print(f"{icon} {message.split('<')[0]}")  # Simple console logging
+        if 'log_entries' not in st.session_state:
+            st.session_state.log_entries = []
+        st.session_state.log_entries.append(log_entry)
+
     # Update the Streamlit display with all logs
-    log_html = f"<div style='height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
+    log_html = ""
+    if 'log_entries' in st.session_state:
+        log_html += f"<div style='font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(st.session_state.log_entries)}</div>"
+    if 'url_logs' in st.session_state:
+        for url, logs in st.session_state.url_logs.items():
+            log_html += f"<details><summary>Log for {url}</summary>"
+            log_html += f"<div style='height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.8em; line-height: 1.2;'>{'<br>'.join(logs)}</div>"
+            log_html += "</details>"
+    
     log_container.markdown(log_html, unsafe_allow_html=True)
 
 def optimize_search_term(search_term, language):
@@ -531,39 +543,48 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                 html_content, soup = response.text, BeautifulSoup(response.text, 'html.parser')
                 emails = extract_emails_from_html(html_content)
                 update_log(log_container, f"Found {len(emails)} email(s) on {url}", 'success')
-                for email in filter(is_valid_email, emails):
-                    if domain not in domains_processed:
-                        name, company, job_title = extract_info_from_page(soup)
-                        lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
-                        if lead:
-                            total_leads += 1
-                            results.append({
-                                'Email': email, 'URL': url, 'Lead Source': original_term, 
-                                'Title': get_page_title(html_content), 'Description': get_page_description(html_content),
-                                'Tags': [], 'Name': name, 'Company': company, 'Job Title': job_title,
-                                'Search Term ID': search_term_id
-                            })
-                            update_log(log_container, f"Saved lead: {email}", 'success')
-                            domains_processed.add(domain)
-                            if enable_email_sending:
-                                if not from_email or not email_template:
-                                    update_log(log_container, "Email sending is enabled but from_email or email_template is not provided", 'error')
-                                    return {"total_leads": total_leads, "results": results}
 
-                                template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
-                                if not template:
-                                    update_log(log_container, "Email template not found", 'error')
-                                    return {"total_leads": total_leads, "results": results}
+                # Process all unique emails found
+                unique_emails = set(filter(is_valid_email, emails))
+                
+                # Log a summary of emails found
+                update_log(log_container, f"Found {len(unique_emails)} unique emails on {url}", 'success', url=url)
 
-                                wrapped_content = wrap_email_body(template.body_content)
-                                response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
-                                if response:
-                                    update_log(log_container, f"Sent email to: {email}", 'email_sent')
-                                    save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
-                                else:
-                                    update_log(log_container, f"Failed to send email to: {email}", 'error')
-                                    save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
-                                break
+                for email in unique_emails:
+                    name, company, job_title = extract_info_from_page(soup)
+                    lead = save_lead(session, email=email, first_name=name, company=company, job_title=job_title, url=url, search_term_id=search_term_id, created_at=datetime.utcnow())
+                    if lead:
+                        total_leads += 1
+                        results.append({
+                            'Email': email, 'URL': url, 'Lead Source': original_term, 
+                            'Title': get_page_title(html_content), 'Description': get_page_description(html_content),
+                            'Tags': [], 'Name': name, 'Company': company, 'Job Title': job_title,
+                            'Search Term ID': search_term_id
+                        })
+                        update_log(log_container, f"Saved lead: {email}", 'success')
+                        
+                        # Send email if enabled (no 'break' here anymore)
+                        if enable_email_sending:
+                            if not from_email or not email_template:
+                                update_log(log_container, "Email sending is enabled but from_email or email_template is not provided", 'error')
+                                continue  # Continue to the next email if sending fails
+
+                            template = session.query(EmailTemplate).filter_by(id=int(email_template.split(":")[0])).first()
+                            if not template:
+                                update_log(log_container, "Email template not found", 'error')
+                                continue  # Continue to the next email if template is not found
+
+                            wrapped_content = wrap_email_body(template.body_content)
+                            response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
+                            if response:
+                                update_log(log_container, f"Sent email to: {email}", 'email_sent')
+                                save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
+                            else:
+                                update_log(log_container, f"Failed to send email to: {email}", 'error')
+                                save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
+
+                domains_processed.add(domain)  # Add domain to processed set after processing all emails
+
             except requests.RequestException as e:
                 update_log(log_container, f"Error processing URL {url}: {str(e)}", 'error')
         
