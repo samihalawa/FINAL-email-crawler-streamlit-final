@@ -28,6 +28,8 @@ import openai
 import boto3
 import aiohttp
 import urllib3
+import plotly.express as px
+import plotly.graph_objects as go
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from googlesearch import search as google_search
@@ -466,7 +468,7 @@ def send_email_ses(session, from_email, to_email, subject, body, charset='UTF-8'
         logging.error(f"Error in send_email_ses: {str(e)}")
         return None, None
 
-def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body):
+def save_email_campaign(session, lead_email, template_id, status, sent_at, subject, message_id, email_body, tracking_id=None):
     try:
         lead = session.query(Lead).filter_by(email=lead_email).first()
         if not lead:
@@ -482,7 +484,7 @@ def save_email_campaign(session, lead_email, template_id, status, sent_at, subje
             message_id=message_id or f"unknown-{uuid.uuid4()}",
             customized_content=email_body or "No content",
             campaign_id=get_active_campaign_id(),
-            tracking_id=str(uuid.uuid4())
+            tracking_id=tracking_id or str(uuid.uuid4())
         )
         session.add(new_campaign)
         session.commit()
@@ -737,10 +739,10 @@ def manual_search(session, terms, num_results, ignore_previously_fetched=True, o
                                 response, tracking_id = send_email_ses(session, from_email, email, template.subject, wrapped_content, reply_to=reply_to)
                                 if response:
                                     update_log(log_container, f"Sent email to: {email}", 'email_sent')
-                                    save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content)
+                                    save_email_campaign(session, email, template.id, 'Sent', datetime.utcnow(), template.subject, response['MessageId'], wrapped_content, tracking_id=tracking_id)
                                 else:
                                     update_log(log_container, f"Failed to send email to: {email}", 'error')
-                                    save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content)
+                                    save_email_campaign(session, email, template.id, 'Failed', datetime.utcnow(), template.subject, None, wrapped_content, tracking_id=tracking_id)
                     
                     # Add domain to processed list after processing all its emails
                     domains_processed.add(domain)
@@ -1294,18 +1296,30 @@ def display_search_settings():
     }
 
 def display_email_options(email_settings, email_templates):
-    """Display and handle email settings and template selection."""
-    if not email_settings or not email_templates:
-        return None, None
-
     # Create columns for email settings
     col1, col2 = st.columns(2)
     
     with col1:
-        # Email template selection - Fix for template object handling
-        template_options = [{'id': t['id'] if isinstance(t, dict) else t.id, 
-                           'name': t['template_name'] if isinstance(t, dict) else t.template_name} 
-                          for t in email_templates]
+        # Email template selection with proper type handling
+        template_options = []
+        for t in email_templates:
+            if isinstance(t, dict):
+                template_options.append({
+                    'id': t['id'],
+                    'name': t['template_name']
+                })
+            elif hasattr(t, 'id') and hasattr(t, 'template_name'):
+                template_options.append({
+                    'id': t.id,
+                    'name': t.template_name
+                })
+            else:
+                continue
+                
+        if not template_options:
+            st.error("No valid email templates found")
+            return None, None
+            
         selected_template = st.selectbox(
             "Email Template",
             options=template_options,
@@ -1315,10 +1329,26 @@ def display_email_options(email_settings, email_templates):
         selected_template_id = selected_template['id'] if selected_template else None
 
     with col2:
-        # Email settings selection - Fix for settings object handling
-        setting_options = [{'id': s['id'] if isinstance(s, dict) else s.id, 
-                          'name': f"{s['name'] if isinstance(s, dict) else s.name} ({s['email'] if isinstance(s, dict) else s.email})"} 
-                         for s in email_settings]
+        # Email settings selection with proper type handling
+        setting_options = []
+        for s in email_settings:
+            if isinstance(s, dict):
+                setting_options.append({
+                    'id': s['id'],
+                    'name': f"{s['name']} ({s['email']})"
+                })
+            elif hasattr(s, 'id') and hasattr(s, 'name') and hasattr(s, 'email'):
+                setting_options.append({
+                    'id': s.id,
+                    'name': f"{s.name} ({s.email})"
+                })
+            else:
+                continue
+                
+        if not setting_options:
+            st.error("No valid email settings found")
+            return None, None
+            
         selected_setting = st.selectbox(
             "From Email",
             options=setting_options,
@@ -2277,7 +2307,6 @@ def autoclient_ai_page():
     st.json(st.session_state)
     st.write("Current function:", autoclient_ai_page.__name__)
     st.write("Session state keys:", list(st.session_state.keys()))
-
 def update_search_terms(session, classified_terms):
     for group, terms in classified_terms.items():
         for term in terms:
@@ -2546,7 +2575,7 @@ def view_sent_email_campaigns():
         logging.error(f"Error in view_sent_email_campaigns: {str(e)}")
 
 def fetch_logs_for_automation_log(session, automation_log_id):
-    automation_log = session.query(AutomationLog).get(automation_log_id)
+    automation_log = session.get(AutomationLog, automation_log_id)
     if automation_log and automation_log.logs:
         return automation_log.logs
     else:
@@ -2556,7 +2585,7 @@ def run_automated_search(automation_log_id):
     """Start an automated search process and return the process object."""
     try:
         with db_session() as session:
-            automation_log = session.query(AutomationLog).get(automation_log_id)
+            automation_log = session.get(AutomationLog, automation_log_id)
             if not automation_log:
                 logging.error(f"No automation log found with ID {automation_log_id}")
                 return None
@@ -2577,16 +2606,9 @@ def run_automated_search(automation_log_id):
 def manual_search_worker_page():
     """Page for manual search worker control."""
     st.title("⚙️ Manual Search Worker")
-
-    # Check for active project and campaign
-    if not get_active_project_id() or not get_active_campaign_id():
-        st.warning("Please select a project and campaign first.")
-        return
-
     st.markdown(
         """
-        This page allows you to run and monitor automated search processes. 
-        Configure your search settings below and start a worker to begin searching.
+        This page allows you to configure and run automated searches in the background.
         """
     )
 
@@ -3104,9 +3126,9 @@ def main():
 def verify_ses_setup(session, email_settings_id):
     """Verify SES configuration and permissions."""
     try:
-        email_settings = session.query(EmailSettings).get(email_settings_id)
-        if not email_settings or email_settings.provider.lower() != 'ses':
-            return False, "Invalid email settings or not SES provider"
+        email_settings = session.get(EmailSettings, email_settings_id)
+        if not email_settings:
+            return False, "Email settings not found"
 
         ses_client = boto3.client(
             'ses',
@@ -3147,19 +3169,11 @@ def verify_ses_setup(session, email_settings_id):
         return False, f"Setup verification error: {str(e)}"
 
 def validate_active_ids():
-    """Validate that current project and campaign IDs exist in database."""
+    """Validate and return active project and campaign."""
     with db_session() as session:
-        project_id = st.session_state.get('current_project_id')
-        campaign_id = st.session_state.get('current_campaign_id')
-        
-        project = session.query(Project).filter_by(id=project_id).first()
-        campaign = session.query(Campaign).filter_by(id=campaign_id).first()
-        
-        if not project or not campaign:
-            # Reset to defaults if invalid
-            initialize_session_state()
-            return False
-        return True
+        project = session.get(Project, get_active_project_id())
+        campaign = session.get(Campaign, get_active_campaign_id())
+        return project, campaign
 
 def get_active_project_id():
     """Get the currently active project ID from session state"""
@@ -3636,54 +3650,61 @@ def view_campaign_logs():
             # Display metrics
             col1, col2, col3 = st.columns(3)
             col1.metric("Total Emails", len(logs))
-            col2.metric("Success Rate", f"{(df['Status'] == 'sent').mean():.1%}")
-            col3.metric("Open Rate", f"{(df['Opens'] > 0).mean():.1%}")
             
-            # Add filters
-            status_filter = st.multiselect(
-                "Filter by Status",
-                options=sorted(df['Status'].unique()),
-                default=sorted(df['Status'].unique())
-            )
+            # Calculate success rate
+            success_count = len([log for log in logs if log.status == 'Sent'])
+            success_rate = (success_count / len(logs)) * 100 if logs else 0
+            col2.metric("Success Rate", f"{success_rate:.1f}%")
             
-            # Apply filters
-            filtered_df = df[df['Status'].isin(status_filter)]
+            # Calculate engagement rate
+            engaged_count = len([log for log in logs if log.open_count > 0 or log.click_count > 0])
+            engagement_rate = (engaged_count / len(logs)) * 100 if logs else 0
+            col3.metric("Engagement Rate", f"{engagement_rate:.1f}%")
             
-            # Display logs
-            st.dataframe(
-                filtered_df,
-                column_config={
-                    "Date": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, HH:mm"),
-                    "Email": st.column_config.TextColumn("Email"),
-                    "Template": st.column_config.TextColumn("Template"),
-                    "Status": st.column_config.TextColumn("Status"),
-                    "Opens": st.column_config.NumberColumn("Opens"),
-                    "Clicks": st.column_config.NumberColumn("Clicks")
-                },
-                hide_index=True
-            )
-            
-            # Display charts
-            st.subheader("Campaign Analytics")
+            # Display status distribution and daily volume
             col1, col2 = st.columns(2)
             
             with col1:
-                status_counts = df['Status'].value_counts()
-                fig = px.pie(
-                    values=status_counts.values,
-                    names=status_counts.index,
-                    title="Email Status Distribution"
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                try:
+                    status_counts = df['Status'].value_counts()
+                    fig = go.Figure(data=[go.Pie(
+                        labels=status_counts.index,
+                        values=status_counts.values,
+                        hole=0.3
+                    )])
+                    fig.update_layout(
+                        title="Email Status Distribution",
+                        showlegend=True,
+                        height=400
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not generate status distribution chart: {str(e)}")
             
             with col2:
-                daily_sends = df.resample('D', on='Date')['Email'].count()
-                fig = px.line(
-                    x=daily_sends.index,
-                    y=daily_sends.values,
-                    title="Daily Email Volume"
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                try:
+                    df['Date'] = pd.to_datetime(df['Date'])
+                    daily_sends = df.resample('D', on='Date')['Email'].count()
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=daily_sends.index,
+                        y=daily_sends.values,
+                        mode='lines+markers',
+                        name='Daily Emails'
+                    ))
+                    fig.update_layout(
+                        title="Daily Email Volume",
+                        xaxis_title="Date",
+                        yaxis_title="Number of Emails",
+                        height=400
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not generate daily volume chart: {str(e)}")
+            
+            # Display detailed logs table
+            st.subheader("Detailed Logs")
+            st.dataframe(df)
                 
     except Exception as e:
         st.error(f"An error occurred while loading campaign logs: {str(e)}")
