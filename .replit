@@ -53,5 +53,27 @@ task = "shell.exec"
 args = "python automated_search.py"
 
 [[ports]]
+localPort = 443
+externalPort = 3002
+
+[[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8501
+externalPort = 3001
+
+[[ports]]
+localPort = 34361
+externalPort = 3000
+exposeLocalhost = true
+
+[[ports]]
+localPort = 37323
+externalPort = 3003
+exposeLocalhost = true

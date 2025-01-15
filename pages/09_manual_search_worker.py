@@ -39,9 +39,20 @@ def display_logs(automation_log_id):
 
 try:
     with SessionLocal() as session:
-        campaign_id = st.session_state.get('current_campaign_id', 1)
+        # Set default campaign
+        campaign_id = 1
         campaign = session.get(Campaign, campaign_id)
 
+        if not campaign:
+            # Create default campaign if it doesn't exist
+            campaign = Campaign(
+                id=1,
+                campaign_name="Default Campaign",
+                project_id=1
+            )
+            session.add(campaign)
+            session.commit()
+            
         if not campaign:
             st.warning("Please select a campaign first")
         else:

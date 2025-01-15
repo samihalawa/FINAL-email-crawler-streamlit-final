@@ -31,8 +31,11 @@ def main():
 
     try:
         with SessionLocal() as session:
+            # Set default project and campaign
+            project_id = 1
+            campaign_id = 1
+            
             # Get knowledge base info
-            project_id = st.session_state.get('current_project_id', 1)
             kb = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
 
             if not kb:
@@ -46,7 +49,6 @@ def main():
                         help="Provide details about the tone, purpose, and key points to include."
                     )
 
-                    campaign_id = st.session_state.get('current_campaign_id', 1)
                     templates = session.query(EmailTemplate).filter_by(campaign_id=campaign_id).all()
                     template_to_adjust = st.selectbox(
                         "Select template to adjust (optional)",

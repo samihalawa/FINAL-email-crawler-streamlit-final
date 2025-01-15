@@ -45,7 +45,7 @@ try:
                     'Failed': failed or 0,
                     'Opens': opens or 0,
                     'Clicks': clicks or 0,
-                    'Success Rate': f"{(sent/total*100 if total else 0):.1f}%",
+                    'Success Rate': f"{(sent/total*100 if total else 0):.1f}%" if total else "0.0%",
                     'Created': campaign.created_at
                 })
             

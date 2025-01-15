@@ -44,22 +44,19 @@ try:
             if st.form_submit_button("Save Email Settings"):
                 try:
                     if not email_settings:
-                        email_settings = EmailSettings()
+                        email_settings = EmailSettings(is_active=True)
                     
                     email_settings.email = email
                     email_settings.provider = provider
-                    email_settings.is_active = True
                     
                     if provider == "smtp":
                         email_settings.smtp_server = smtp_server
                         email_settings.smtp_port = smtp_port
                         email_settings.smtp_username = smtp_username
-                        if smtp_password:
-                            email_settings.smtp_password = smtp_password
+                        email_settings.smtp_password = smtp_password
                     else:
                         email_settings.aws_access_key_id = aws_access_key
-                        if aws_secret_key:
-                            email_settings.aws_secret_access_key = aws_secret_key
+                        email_settings.aws_secret_access_key = aws_secret_key
                         email_settings.aws_region = aws_region
                     
                     session.add(email_settings)

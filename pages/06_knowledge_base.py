@@ -1,4 +1,3 @@
-
 import streamlit as st
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -15,20 +14,26 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-st.title("📚 Knowledge Base")
+def main():
+    st.title("📚 Knowledge Base")
 
-try:
-    with SessionLocal() as session:
-        # Get or create knowledge base for current project
-        project_id = st.session_state.get('current_project_id', 1)
-        kb = session.query(KnowledgeBase).filter_by(project_id=project_id).first()
-        project = session.query(Project).get(project_id)
-        
-        if not project:
-            st.warning("Please select a project first")
-        else:
+    try:
+        with SessionLocal() as session:
+            # Set default project
+            st.session_state.current_project_id = 1
+            project = session.query(Project).get(1)
+            
+            if not project:
+                # Create default project if it doesn't exist
+                project = Project(id=1, project_name="Default Project")
+                session.add(project)
+                session.commit()
+            
+            # Get or create knowledge base for current project
+            kb = session.query(KnowledgeBase).filter_by(project_id=st.session_state.current_project_id).first()
+            
             if not kb:
-                kb = KnowledgeBase(project_id=project_id)
+                kb = KnowledgeBase(project_id=st.session_state.current_project_id)
                 session.add(kb)
                 session.commit()
             
@@ -89,5 +94,5 @@ try:
                         st.error(f"Error updating knowledge base: {str(e)}")
                         session.rollback()
 
-except Exception as e:
-    st.error(f"Error loading knowledge base: {str(e)}")
+    except Exception as e:
+        st.error(f"Error loading knowledge base: {str(e)}")

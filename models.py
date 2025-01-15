@@ -1,4 +1,3 @@
-
 import os
 from datetime import datetime
 from sqlalchemy import (
@@ -98,27 +97,27 @@ class EmailTemplate(Base):
 
 class EmailCampaign(Base):
     __tablename__ = 'email_campaigns'
+    
     id = Column(BigInteger, primary_key=True)
-    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     lead_id = Column(BigInteger, ForeignKey('leads.id'))
+    campaign_id = Column(BigInteger, ForeignKey('campaigns.id'))
     template_id = Column(BigInteger, ForeignKey('email_templates.id'))
-    customized_subject = Column(Text)
-    customized_content = Column(Text)
-    original_subject = Column(Text)
-    original_content = Column(Text)
-    status = Column(Text)
-    engagement_data = Column(JSON)
-    message_id = Column(Text)
-    tracking_id = Column(Text, unique=True)
+    status = Column(String)
     sent_at = Column(DateTime(timezone=True))
-    ai_customized = Column(Boolean, default=False)
     opened_at = Column(DateTime(timezone=True))
     clicked_at = Column(DateTime(timezone=True))
-    open_count = Column(BigInteger, default=0)
-    click_count = Column(BigInteger, default=0)
-    campaign = relationship("Campaign", back_populates="email_campaigns")
+    open_count = Column(Integer, default=0)
+    click_count = Column(Integer, default=0)
+    
+    # Relationships
     lead = relationship("Lead", back_populates="email_campaigns")
+    campaign = relationship("Campaign", back_populates="email_campaigns")
     template = relationship("EmailTemplate", back_populates="email_campaigns")
+
+    @property
+    def email(self):
+        """Get email from associated lead"""
+        return self.lead.email if self.lead else None
 
 class SearchTerm(Base):
     __tablename__ = 'search_terms'
@@ -233,6 +232,17 @@ class AIRequestLog(Base):
     email_campaign_id = Column(BigInteger, ForeignKey('email_campaigns.id'))
     lead = relationship("Lead")
     email_campaign = relationship("EmailCampaign")
+
+class MigrationLog(Base):
+    __tablename__ = 'migration_logs'
+    
+    id = Column(BigInteger, primary_key=True)
+    table_name = Column(Text)
+    column_name = Column(Text)
+    sql_executed = Column(Text)
+    executed_at = Column(DateTime(timezone=True), server_default=func.now())
+    status = Column(Text)
+    error = Column(Text, nullable=True)
 
 def init_db(database_url):
     engine = create_engine(database_url)
