@@ -1,0 +1,12 @@
+<<<<<<< HEAD
+#!/Users/samihalawa/git/FINAL-email-crawler-streamlit-final-1/venv/bin/python3.11
+=======
+#!/Users/samihalawa/git/FINAL-email-crawler-streamlit-final/venv/bin/python3
+>>>>>>> cf0e256707a9e28a431f6f91ab4164b50c1adf47
+# -*- coding: utf-8 -*-
+import re
+import sys
+from pip._internal.cli.main import main
+if __name__ == '__main__':
+    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
+    sys.exit(main())

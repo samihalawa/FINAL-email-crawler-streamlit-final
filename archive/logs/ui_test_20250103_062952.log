@@ -1,0 +1,60 @@
+2025-01-03 06:29:54,795 - INFO - Browser setup completed
+2025-01-03 06:29:54,798 - INFO - Testing Manual Search page...
+2025-01-03 06:30:02,373 - ERROR - Click failed for text="Enter search terms:": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Enter search terms:\"") to be visible
+
+2025-01-03 06:30:08,405 - ERROR - Click failed for text="Results per term": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Results per term\"") to be visible
+
+2025-01-03 06:30:14,419 - ERROR - Click failed for text="Enable email sending": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Enable email sending\"") to be visible
+
+2025-01-03 06:30:19,422 - ERROR - Click failed for text="Ignore fetched domains": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Ignore fetched domains\"") to be visible
+
+2025-01-03 06:30:24,427 - ERROR - Click failed for text="Advanced Options": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Advanced Options\"") to be visible
+
+2025-01-03 06:30:29,429 - ERROR - Click failed for text="Shuffle Keywords": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Shuffle Keywords\"") to be visible
+
+2025-01-03 06:30:34,434 - ERROR - Click failed for text="Optimize (English)": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Optimize (English)\"") to be visible
+
+2025-01-03 06:30:39,437 - ERROR - Click failed for text="Start Search": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Start Search\"") to be visible
+
+2025-01-03 06:30:39,437 - INFO - Manual search test completed
+2025-01-03 06:30:39,438 - INFO - Testing Automation Control Panel...
+2025-01-03 06:30:44,442 - ERROR - Click failed for text="Automation Control Panel": Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("text=\"Automation Control Panel\"") to be visible
+
+2025-01-03 06:30:44,443 - INFO - Testing Log Display...
+2025-01-03 06:30:49,472 - ERROR - Log display test failed: Locator expected to be visible
+Actual value: <element(s) not found> 
+Call log:
+  - LocatorAssertions.to_be_visible with timeout 5000ms
+  -   - waiting for locator(".log-container")
+
+2025-01-03 06:30:49,474 - INFO - 
+Test Results:
+2025-01-03 06:30:49,474 - INFO - Passed: 0
+2025-01-03 06:30:49,474 - INFO - Failed: 7
+2025-01-03 06:30:49,474 - INFO - 
+Errors:
+2025-01-03 06:30:49,474 - INFO - - Locator expected to be visible
+Actual value: <element(s) not found> 
+Call log:
+  - LocatorAssertions.to_be_visible with timeout 5000ms
+  -   - waiting for locator(".log-container")
+
+2025-01-03 06:30:49,610 - INFO - Teardown completed

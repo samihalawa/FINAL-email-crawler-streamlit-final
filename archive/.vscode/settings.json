@@ -1,0 +1,10 @@
+{
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "cursor.aipreview.enabled": true,
+    "cursor.general.enableShadowWorkspace": true,
+    "editor.lightbulb.enabled": "onCode"
+}

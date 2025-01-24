@@ -1,0 +1,31 @@
+2025-01-06 04:22:27,176 - INFO - Browser setup completed
+2025-01-06 04:22:27,177 - INFO - Testing Manual Search page...
+2025-01-06 04:22:27,347 - ERROR - Manual search test failed: Page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:8501/
+Call log:
+  - navigating to "http://localhost:8501/", waiting until "load"
+
+2025-01-06 04:22:28,328 - INFO - Screenshot saved: debug_manual_search_error_20250106_042227.png
+2025-01-06 04:22:28,328 - INFO - Testing Automation Control Panel...
+2025-01-06 04:22:58,334 - ERROR - Automation panel test failed: Page.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("button:has-text('Automation Control Panel')")
+
+2025-01-06 04:22:58,444 - INFO - Screenshot saved: debug_automation_panel_error_20250106_042258.png
+2025-01-06 04:22:58,444 - INFO - Testing Log Display...
+2025-01-06 04:22:58,450 - ERROR - Log container not visible
+2025-01-06 04:22:58,535 - INFO - Screenshot saved: debug_log_container_missing_20250106_042258.png
+2025-01-06 04:22:58,535 - INFO - 
+Test Results:
+2025-01-06 04:22:58,535 - INFO - Passed: 0
+2025-01-06 04:22:58,535 - INFO - Failed: 1
+2025-01-06 04:22:58,535 - INFO - 
+Errors:
+2025-01-06 04:22:58,535 - INFO - - Page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:8501/
+Call log:
+  - navigating to "http://localhost:8501/", waiting until "load"
+
+2025-01-06 04:22:58,535 - INFO - - Page.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("button:has-text('Automation Control Panel')")
+
+2025-01-06 04:22:58,629 - INFO - Teardown completed

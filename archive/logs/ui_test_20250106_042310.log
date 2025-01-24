@@ -1,0 +1,32 @@
+2025-01-06 04:23:13,134 - INFO - Browser setup completed
+2025-01-06 04:23:13,134 - INFO - Testing Manual Search page...
+2025-01-06 04:23:20,220 - INFO - Screenshot saved: debug_initial_load_20250106_042320.png
+2025-01-06 04:23:50,232 - ERROR - Manual search test failed: Page.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("button:has-text('Manual Search')")
+
+2025-01-06 04:23:50,364 - INFO - Screenshot saved: debug_manual_search_error_20250106_042350.png
+2025-01-06 04:23:50,364 - INFO - Testing Automation Control Panel...
+2025-01-06 04:24:20,367 - ERROR - Automation panel test failed: Page.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("button:has-text('Automation Control Panel')")
+
+2025-01-06 04:24:20,533 - INFO - Screenshot saved: debug_automation_panel_error_20250106_042420.png
+2025-01-06 04:24:20,534 - INFO - Testing Log Display...
+2025-01-06 04:24:20,565 - ERROR - Log container not visible
+2025-01-06 04:24:20,675 - INFO - Screenshot saved: debug_log_container_missing_20250106_042420.png
+2025-01-06 04:24:20,675 - INFO - 
+Test Results:
+2025-01-06 04:24:20,675 - INFO - Passed: 0
+2025-01-06 04:24:20,675 - INFO - Failed: 1
+2025-01-06 04:24:20,675 - INFO - 
+Errors:
+2025-01-06 04:24:20,675 - INFO - - Page.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("button:has-text('Manual Search')")
+
+2025-01-06 04:24:20,675 - INFO - - Page.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("button:has-text('Automation Control Panel')")
+
+2025-01-06 04:24:20,856 - INFO - Teardown completed

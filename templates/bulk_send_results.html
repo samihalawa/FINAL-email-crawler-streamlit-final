@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bulk Send Results</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .error {
+            color: red;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h2>Bulk Send Results</h2>
+    <p>Sent Emails: {{ sent_count }}</p>
+    {% if error %}
+    <div class="error">
+        {{ error }}
+    </div>
+    {% endif %}
+    <hr/>
+    <a href="/bulk_send">Back to Bulk Send</a> |
+    <a href="/">Home</a>
+</body>
+</html> 

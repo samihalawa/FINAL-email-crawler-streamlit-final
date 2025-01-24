@@ -1,28 +1,51 @@
-import logging
+import sys
+sys.path.append('.')
 from streamlit_app import manual_search, db_session
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+class MockContainer:
+    def markdown(self, text, unsafe_allow_html=False):
+        print(text)
+    def text(self, text):
+        print(text)
 
-def test_manual_search():
-    logger.info("Starting manual search test...")
+def test_basic_search():
+    print('Test 1: Basic Search')
     with db_session() as session:
-        logger.info("Created database session")
-        try:
-            results = manual_search(
-                session=session,
-                search_terms=['software engineer'],
-                num_results=2,
-                ignore_previously_fetched=True,
-                optimize_english=False,
-                optimize_spanish=False,
-                shuffle_keywords=False,
-                language='ES',
-                enable_email_sending=True
-            )
-            logger.info(f"Search completed. Results: {results}")
-        except Exception as e:
-            logger.error(f"Error during search: {str(e)}", exc_info=True)
+        mock_container = MockContainer()
+        result = manual_search(
+            session=session,
+            terms=['software developer'],
+            num_results=2,
+            language='ES',
+            ignore_previously_fetched=True,
+            optimize_english=False,
+            optimize_spanish=False,
+            shuffle_keywords_option=False,
+            enable_email_sending=False,
+            log_container=mock_container
+        )
+        print('Basic Search Results:', result)
+
+def test_optimized_search():
+    print('Test 2: Optimized Search (English)')
+    with db_session() as session:
+        mock_container = MockContainer()
+        result = manual_search(
+            session=session,
+            terms=['software engineer'],
+            num_results=2,
+            language='EN',
+            ignore_previously_fetched=True,
+            optimize_english=True,
+            optimize_spanish=False,
+            shuffle_keywords_option=True,
+            enable_email_sending=False,
+            log_container=mock_container
+        )
+        print('Optimized Search Results:', result)
 
 if __name__ == '__main__':
-    test_manual_search() 
+    print('Starting tests...')
+    test_basic_search()
+    test_optimized_search()
+    print('Tests completed.')
