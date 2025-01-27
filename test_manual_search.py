@@ -1,1 +1,0 @@
-from streamlit_app import manual_search, db_session; def test_search(): with db_session() as session: result = manual_search(session=session, terms=["software developer"], num_results=2, language="ES", ignore_previously_fetched=True, optimize_english=False, optimize_spanish=False, shuffle_keywords_option=False, enable_email_sending=False); print("Results:", result); test_search()
