@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Email Crawler</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f2f6;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .search-panel {
+            flex: 2;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .results-panel {
+            flex: 3;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .search-form {
+            margin-bottom: 20px;
+        }
+        .results {
+            margin-top: 20px;
+        }
+        .result-item {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+        }
+        .emails {
+            color: #28a745;
+            margin-top: 10px;
+            font-weight: 500;
+        }
+        .loading {
+            display: none;
+            color: #666;
+            text-align: center;
+            padding: 20px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .options {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+        }
+        .checkbox-group {
+            margin: 10px 0;
+        }
+        .stats {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            flex: 1;
+            padding: 15px;
+            background-color: #e9ecef;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background-color: #007bff;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .error-container {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #fff3f3;
+            border: 1px solid #dc3545;
+            color: #dc3545;
+            display: none;
+        }
+        .export-button {
+            margin-top: 10px;
+            background-color: #28a745;
+        }
+        .export-button:hover {
+            background-color: #218838;
+        }
+    </style>
+    <script>
+        let eventSource;
+        let totalResults = 0;
+        let totalEmails = 0;
+        let searchResults = [];
+        
+        function updateProgress(processed, total) {
+            const progressContainer = document.getElementById('progress-container');
+            const progressBarFill = document.getElementById('progress-bar-fill');
+            const progressText = document.getElementById('progress-text');
+            
+            progressContainer.style.display = 'block';
+            const percentage = (processed / total) * 100;
+            progressBarFill.style.width = `${percentage}%`;
+            progressText.textContent = `Processing: ${processed}/${total}`;
+        }
+        
+        function showError(message) {
+            const errorContainer = document.getElementById('error-container');
+            errorContainer.style.display = 'block';
+            errorContainer.innerHTML = `<strong>Error:</strong> ${message}`;
+        }
+        
+        function exportResults() {
+            const csvContent = "data:text/csv;charset=utf-8," 
+                + "Email,URL,Title,Domain\n"
+                + searchResults.map(result => {
+                    return result.emails.map(email => 
+                        `${email},"${result.url}","${result.title}","${result.domain}"`
+                    ).join('\n');
+                }).join('\n');
+            
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "search_results.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        
+        document.getElementById('export-button').addEventListener('click', exportResults);
+        
+        function startSearch() {
+            const searchTerm = document.getElementById('search-term').value;
+            const resultsDiv = document.getElementById('results');
+            const loadingDiv = document.getElementById('loading');
+            const statsDiv = document.getElementById('stats');
+            
+            totalResults = 0;
+            totalEmails = 0;
+            searchResults = [];
+            resultsDiv.innerHTML = '';
+            loadingDiv.style.display = 'block';
+            document.getElementById('export-button').style.display = 'none';
+            document.getElementById('error-container').style.display = 'none';
+            
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            const searchParams = new URLSearchParams({
+                term: searchTerm,
+                optimize_english: document.getElementById('optimize-english').checked,
+                optimize_spanish: document.getElementById('optimize-spanish').checked,
+                shuffle_keywords: document.getElementById('shuffle-keywords').checked,
+                ignore_previously_fetched: document.getElementById('ignore-fetched').checked,
+                num_results: document.getElementById('num-results').value,
+                language: document.getElementById('language').value,
+                enable_email_sending: document.getElementById('enable-email-sending').checked,
+                email_template_id: document.getElementById('email-template').value,
+                from_email: document.getElementById('from-email').value,
+                reply_to: document.getElementById('reply-to').value
+            });
+            
+            eventSource = new EventSource(`/stream-search?${searchParams.toString()}`);
+            
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'result') {
+                    if (data.emails.length > 0) {
+                        searchResults.push(data);
+                    }
+                    
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = 'result-item';
+                    resultDiv.innerHTML = `
+                        <div><strong>URL:</strong> <a href="${data.url}" target="_blank">${data.url}</a></div>
+                        <div><strong>Title:</strong> ${data.title || 'N/A'}</div>
+                        <div><strong>Domain:</strong> ${data.domain}</div>
+                        <div class="emails"><strong>Emails:</strong> ${data.emails.join(', ') || 'None found'}</div>
+                    `;
+                    resultsDiv.appendChild(resultDiv);
+                    
+                    updateProgress(data.total_processed, data.total);
+                    
+                    statsDiv.innerHTML = `
+                        <div class="stat-card">
+                            <div class="stat-value">${data.total_processed}</div>
+                            <div class="stat-label">Pages Scanned</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${data.total_emails_found}</div>
+                            <div class="stat-label">Emails Found</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${data.total_emails_sent}</div>
+                            <div class="stat-label">Emails Sent</div>
+                        </div>
+                    `;
+                } else if (data.type === 'complete') {
+                    loadingDiv.style.display = 'none';
+                    document.getElementById('progress-container').style.display = 'none';
+                    document.getElementById('export-button').style.display = searchResults.length > 0 ? 'block' : 'none';
+                    
+                    if (data.errors && data.errors.length > 0) {
+                        showError(data.errors.join('<br>'));
+                    }
+                    
+                    eventSource.close();
+                } else if (data.type === 'error') {
+                    loadingDiv.style.display = 'none';
+                    document.getElementById('progress-container').style.display = 'none';
+                    showError(data.message);
+                    eventSource.close();
+                }
+            };
+            
+            eventSource.onerror = function() {
+                loadingDiv.style.display = 'none';
+                document.getElementById('progress-container').style.display = 'none';
+                showError('Connection lost. Please try again.');
+                eventSource.close();
+            };
+            
+            return false;
+        }
+        
+        document.getElementById('enable-email-sending').addEventListener('change', function() {
+            document.getElementById('email-options').style.display = this.checked ? 'block' : 'none';
+        });
+        
+        window.addEventListener('load', async function() {
+            try {
+                const [templatesResponse, settingsResponse] = await Promise.all([
+                    fetch('/email-templates'),
+                    fetch('/email-settings')
+                ]);
+                
+                const templates = await templatesResponse.json();
+                const settings = await settingsResponse.json();
+                
+                const templateSelect = document.getElementById('email-template');
+                const fromEmailSelect = document.getElementById('from-email');
+                
+                templates.forEach(template => {
+                    const option = document.createElement('option');
+                    option.value = template.id;
+                    option.textContent = template.name;
+                    templateSelect.appendChild(option);
+                });
+                
+                settings.forEach(setting => {
+                    const option = document.createElement('option');
+                    option.value = setting.email;
+                    option.textContent = `${setting.name} (${setting.email})`;
+                    fromEmailSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading email settings:', error);
+            }
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="search-panel">
+            <h2>Search Settings</h2>
+            <form class="search-form" onsubmit="return startSearch()">
+                <input type="text" id="search-term" placeholder="Enter search term..." required>
+                
+                <div class="options">
+                    <h3>Search Options</h3>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="optimize-english">
+                        <label for="optimize-english">Optimize for English</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="optimize-spanish">
+                        <label for="optimize-spanish">Optimize for Spanish</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="shuffle-keywords">
+                        <label for="shuffle-keywords">Shuffle Keywords</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="ignore-fetched" checked>
+                        <label for="ignore-fetched">Ignore Previously Fetched</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="number" id="num-results" value="10" min="1" max="100" style="width: 80px;">
+                        <label for="num-results">Results per term</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <select id="language" style="width: 120px;">
+                            <option value="ES">Spanish</option>
+                            <option value="EN">English</option>
+                        </select>
+                        <label for="language">Language</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enable-email-sending">
+                        <label for="enable-email-sending">Enable Email Sending</label>
+                    </div>
+                </div>
+                
+                <div class="email-options" id="email-options" style="display: none;">
+                    <h3>Email Settings</h3>
+                    <div class="checkbox-group">
+                        <select id="email-template" style="width: 100%;">
+                            <option value="">Select Email Template...</option>
+                        </select>
+                    </div>
+                    <div class="checkbox-group">
+                        <select id="from-email" style="width: 100%;">
+                            <option value="">Select From Email...</option>
+                        </select>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="text" id="reply-to" placeholder="Reply-To Email">
+                    </div>
+                </div>
+                
+                <div id="progress-container" style="display: none;">
+                    <div class="progress-bar">
+                        <div class="progress-bar-fill" id="progress-bar-fill"></div>
+                    </div>
+                    <div id="progress-text" style="text-align: center;"></div>
+                </div>
+                <div id="error-container" class="error-container"></div>
+                <button id="export-button" class="export-button" style="display: none;">Export Results</button>
+                
+                <button type="submit">Search</button>
+            </form>
+            
+            <div id="stats" class="stats">
+                <div class="stat-card">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">Pages Scanned</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">Emails Found</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="results-panel">
+            <h2>Search Results</h2>
+            <div id="loading" class="loading">Searching...</div>
+            <div id="results" class="results"></div>
+        </div>
+    </div>
+</body>
+</html>
